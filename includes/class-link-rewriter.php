@@ -192,7 +192,13 @@ class Link_Rewriter {
 		$quote       = $matches[1];
 		$raw_url     = html_entity_decode( $matches[2], ENT_QUOTES, 'UTF-8' );
 		$url         = rawurldecode( $raw_url );
-		$preview_url = self::filetoweb_preview_url_for_html_url( $url );
+		$html_url    = Security::sanitize_filetoweb_url( $url );
+
+		if ( ! $html_url ) {
+			$html_url = self::filetoweb_url_for_wordpress_url( $url );
+		}
+
+		$preview_url = $html_url ? self::filetoweb_preview_url_for_html_url( $html_url ) : '';
 
 		if ( ! $preview_url ) {
 			return $matches[0];
