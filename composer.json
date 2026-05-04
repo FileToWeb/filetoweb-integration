@@ -1,0 +1,35 @@
+{
+  "name": "filetoweb/filetoweb-integration",
+  "description": "WordPress plugin for FileToWeb PDF-to-HTML conversion and public link replacement.",
+  "type": "wordpress-plugin",
+  "keywords": [
+    "wordpress",
+    "filetoweb",
+    "pdf",
+    "accessibility"
+  ],
+  "homepage": "https://filetoweb.com",
+  "license": "GPL-2.0-or-later",
+  "authors": [
+    {
+      "name": "FileToWeb",
+      "homepage": "https://filetoweb.com"
+    }
+  ],
+  "require": {
+    "composer/installers": "~1.0.0",
+    "php": ">=7.4"
+  },
+  "require-dev": {
+    "brain/monkey": "^2.6",
+    "phpunit/phpunit": "^9.6 || ^10.0 || ^11.0"
+  },
+  "scripts": {
+    "test": "phpunit --testdox"
+  },
+  "config": {
+    "allow-plugins": {
+      "composer/installers": true
+    }
+  }
+}
