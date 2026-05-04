@@ -221,7 +221,7 @@ class Settings {
 		$clear_key = false;
 
 		if ( isset( $_POST['filetoweb_integration_clear_api_key'] ) ) {
-			$clear_key = ! empty( $_POST['filetoweb_integration_clear_api_key'] );
+			$clear_key = '1' === sanitize_text_field( wp_unslash( $_POST['filetoweb_integration_clear_api_key'] ) );
 		}
 
 		if ( $clear_key ) {

@@ -46,4 +46,11 @@ class SettingsTest extends TestCase {
 
 		$this->assertSame( 'ftw_api_existing', Settings::sanitize_api_key( '' ) );
 	}
+
+	public function test_clear_api_key_checkbox_removes_key(): void {
+		Functions\when( 'sanitize_text_field' )->returnArg();
+		$_POST['filetoweb_integration_clear_api_key'] = '1';
+
+		$this->assertSame( '', Settings::sanitize_api_key( '' ) );
+	}
 }
