@@ -42,6 +42,16 @@ class SecurityTest extends TestCase {
 				return rtrim( (string) $value, '/' );
 			}
 		);
+		Functions\when( 'home_url' )->alias(
+			function ( $path = '' ) {
+				return 'https://example.test' . $path;
+			}
+		);
+		Functions\when( 'site_url' )->alias(
+			function ( $path = '' ) {
+				return 'https://example.test' . $path;
+			}
+		);
 	}
 
 	protected function tearDown(): void {
@@ -53,6 +63,11 @@ class SecurityTest extends TestCase {
 		$this->assertFalse( Security::is_safe_source_url( 'http://localhost/file.pdf' ) );
 		$this->assertFalse( Security::is_safe_source_url( 'http://127.0.0.1/file.pdf' ) );
 		$this->assertFalse( Security::is_safe_source_url( 'http://10.0.0.1/file.pdf' ) );
+		$this->assertFalse( Security::is_safe_source_url( 'https://user:pass@example.test/file.pdf' ) );
+	}
+
+	public function test_source_url_allows_current_site_hostname(): void {
+		$this->assertTrue( Security::is_safe_source_url( 'https://example.test/wp-content/uploads/file.pdf' ) );
 	}
 
 	public function test_filetoweb_url_requires_allowed_https_host(): void {

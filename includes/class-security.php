@@ -27,12 +27,19 @@ class Security {
 			return false;
 		}
 
-		if ( false !== parse_url( $url, PHP_URL_USER ) || false !== parse_url( $url, PHP_URL_PASS ) ) {
+		$user = parse_url( $url, PHP_URL_USER );
+		$pass = parse_url( $url, PHP_URL_PASS );
+
+		if ( ( null !== $user && false !== $user ) || ( null !== $pass && false !== $pass ) ) {
 			return false;
 		}
 
 		if ( self::is_private_or_local_host( $host ) ) {
 			return false;
+		}
+
+		if ( self::is_current_site_host( $host ) ) {
+			return true;
 		}
 
 		$resolved_ips = @gethostbynamel( $host );
@@ -146,6 +153,30 @@ class Security {
 
 		if ( filter_var( $host, FILTER_VALIDATE_IP ) ) {
 			return self::is_private_or_local_ip( $host );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Is this host the configured WordPress site host?
+	 *
+	 * Some managed/container deployments resolve the public site hostname to a
+	 * private runtime address internally. The generated source URL is still the
+	 * public WordPress media URL FileToWeb will fetch externally.
+	 *
+	 * @param string $host Host.
+	 * @return bool
+	 */
+	private static function is_current_site_host( $host ) {
+		$host = strtolower( trim( $host, " \t\n\r\0\x0B[]" ) );
+
+		foreach ( array( home_url( '/' ), site_url( '/' ) ) as $site_url ) {
+			$site_host = strtolower( (string) parse_url( $site_url, PHP_URL_HOST ) );
+
+			if ( $site_host && $host === $site_host && ! self::is_private_or_local_host( $site_host ) ) {
+				return true;
+			}
 		}
 
 		return false;
