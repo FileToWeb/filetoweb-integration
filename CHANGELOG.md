@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Corrects external service disclosure links.
+
 ## 0.1.2
 
 - Adds WordPress.org-style external service disclosure.

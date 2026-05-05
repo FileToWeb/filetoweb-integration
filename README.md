@@ -54,8 +54,8 @@ This plugin connects to the FileToWeb API at `https://filetoweb.com`. When a PDF
 FileToWeb service information:
 
 - Website: https://filetoweb.com
-- Terms: https://filetoweb.com/terms
-- Privacy: https://filetoweb.com/privacy
+- Terms: https://filetoweb.com/terms-of-service
+- Privacy: https://filetoweb.com/privacy-policy
 
 ## Development
 
