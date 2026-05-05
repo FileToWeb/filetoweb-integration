@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.1
+Stable tag: 0.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -53,7 +53,23 @@ Yes. Disable the plugin or turn off the Enabled setting. When disabled, sync, po
 
 The API key is stored in the single WordPress option row owned by this plugin. Only users with `manage_options` can access the settings page.
 
+== External services ==
+
+This plugin connects to the FileToWeb API at `https://filetoweb.com`.
+
+When a PDF is synced, the plugin sends FileToWeb the PDF source URL, filename, source fingerprint, and basic WordPress metadata needed to keep the conversion idempotent. FileToWeb imports the PDF, converts it to HTML, and returns conversion status plus generated page/editor URLs. A FileToWeb account and scoped API key are required.
+
+FileToWeb service information:
+
+* Website: https://filetoweb.com
+* Terms: https://filetoweb.com/terms
+* Privacy: https://filetoweb.com/privacy
+
 == Changelog ==
+
+= 0.1.2 =
+
+* Adds WordPress.org-style external service disclosure.
 
 = 0.1.1 =
 

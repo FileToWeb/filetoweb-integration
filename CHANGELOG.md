@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Adds WordPress.org-style external service disclosure.
+
 ## 0.1.1
 
 - Consolidates plugin settings into a single Settings API option row.

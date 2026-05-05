@@ -47,6 +47,16 @@ The original WordPress file remains intact.
 - Admin actions use nonces and capability checks.
 - No global output buffering is used for public rewriting.
 
+## External Service
+
+This plugin connects to the FileToWeb API at `https://filetoweb.com`. When a PDF is synced, WordPress sends FileToWeb the PDF source URL, filename, source fingerprint, and basic WordPress metadata needed to keep the conversion idempotent. FileToWeb then imports the PDF, converts it to HTML, and returns conversion status plus generated page/editor URLs. A FileToWeb account and scoped API key are required.
+
+FileToWeb service information:
+
+- Website: https://filetoweb.com
+- Terms: https://filetoweb.com/terms
+- Privacy: https://filetoweb.com/privacy
+
 ## Development
 
 ```bash
