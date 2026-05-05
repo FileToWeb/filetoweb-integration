@@ -9,11 +9,18 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 	exit;
 }
 
-delete_option( 'filetoweb_integration_enabled' );
-delete_option( 'filetoweb_integration_api_base_url' );
-delete_option( 'filetoweb_integration_api_key' );
-delete_option( 'filetoweb_integration_replace_links' );
-delete_option( 'filetoweb_integration_batch_size' );
+$option_names = array(
+	'filetoweb_integration_settings',
+	'filetoweb_integration_enabled',
+	'filetoweb_integration_api_base_url',
+	'filetoweb_integration_api_key',
+	'filetoweb_integration_replace_links',
+	'filetoweb_integration_batch_size',
+);
+
+foreach ( $option_names as $option_name ) {
+	delete_option( $option_name );
+}
 
 global $wpdb;
 

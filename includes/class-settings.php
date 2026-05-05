@@ -12,11 +12,19 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Settings {
-	const OPTION_ENABLED       = 'filetoweb_integration_enabled';
-	const OPTION_API_BASE_URL  = 'filetoweb_integration_api_base_url';
-	const OPTION_API_KEY       = 'filetoweb_integration_api_key';
-	const OPTION_REPLACE_LINKS = 'filetoweb_integration_replace_links';
-	const OPTION_BATCH_SIZE    = 'filetoweb_integration_batch_size';
+	const OPTION_SETTINGS = 'filetoweb_integration_settings';
+
+	const KEY_ENABLED       = 'enabled';
+	const KEY_API_BASE_URL  = 'api_base_url';
+	const KEY_API_KEY       = 'api_key';
+	const KEY_REPLACE_LINKS = 'replace_links';
+	const KEY_BATCH_SIZE    = 'batch_size';
+
+	const LEGACY_OPTION_ENABLED       = 'filetoweb_integration_enabled';
+	const LEGACY_OPTION_API_BASE_URL  = 'filetoweb_integration_api_base_url';
+	const LEGACY_OPTION_API_KEY       = 'filetoweb_integration_api_key';
+	const LEGACY_OPTION_REPLACE_LINKS = 'filetoweb_integration_replace_links';
+	const LEGACY_OPTION_BATCH_SIZE    = 'filetoweb_integration_batch_size';
 
 	const DEFAULT_API_BASE_URL = 'https://filetoweb.com';
 
@@ -25,17 +33,53 @@ class Settings {
 	 */
 	public static function init() {
 		add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
+		add_action( 'init', array( __CLASS__, 'migrate_legacy_options' ), 5 );
 	}
 
 	/**
-	 * Register plugin-owned settings.
+	 * Register the plugin-owned settings row.
 	 */
 	public static function register_settings() {
-		register_setting( 'filetoweb_integration', self::OPTION_ENABLED, array( __CLASS__, 'sanitize_checkbox' ) );
-		register_setting( 'filetoweb_integration', self::OPTION_API_BASE_URL, array( __CLASS__, 'sanitize_api_base_url' ) );
-		register_setting( 'filetoweb_integration', self::OPTION_API_KEY, array( __CLASS__, 'sanitize_api_key' ) );
-		register_setting( 'filetoweb_integration', self::OPTION_REPLACE_LINKS, array( __CLASS__, 'sanitize_checkbox' ) );
-		register_setting( 'filetoweb_integration', self::OPTION_BATCH_SIZE, array( __CLASS__, 'sanitize_batch_size' ) );
+		register_setting(
+			'filetoweb_integration',
+			self::OPTION_SETTINGS,
+			array(
+				'type'              => 'array',
+				'sanitize_callback' => array( __CLASS__, 'sanitize_settings' ),
+				'default'           => self::defaults(),
+			)
+		);
+	}
+
+	/**
+	 * Return an HTML input name for a settings key.
+	 *
+	 * @param string $key Settings key.
+	 * @return string
+	 */
+	public static function field_name( $key ) {
+		return self::OPTION_SETTINGS . '[' . sanitize_key( $key ) . ']';
+	}
+
+	/**
+	 * Return a stable field id for a settings key.
+	 *
+	 * @param string $key Settings key.
+	 * @return string
+	 */
+	public static function field_id( $key ) {
+		return self::OPTION_SETTINGS . '_' . sanitize_key( $key );
+	}
+
+	/**
+	 * Return normalized plugin settings.
+	 *
+	 * @return array
+	 */
+	public static function settings() {
+		$settings = get_option( self::OPTION_SETTINGS, array() );
+
+		return self::normalize_settings( $settings, self::defaults(), false, false );
 	}
 
 	/**
@@ -44,7 +88,9 @@ class Settings {
 	 * @return bool
 	 */
 	public static function enabled() {
-		return get_option( self::OPTION_ENABLED, '1' ) === '1';
+		$settings = self::settings();
+
+		return '1' === $settings[ self::KEY_ENABLED ];
 	}
 
 	/**
@@ -53,7 +99,9 @@ class Settings {
 	 * @return bool
 	 */
 	public static function replace_links_enabled() {
-		return self::enabled() && get_option( self::OPTION_REPLACE_LINKS, '1' ) === '1';
+		$settings = self::settings();
+
+		return self::enabled() && '1' === $settings[ self::KEY_REPLACE_LINKS ];
 	}
 
 	/**
@@ -62,8 +110,8 @@ class Settings {
 	 * @return string
 	 */
 	public static function api_base_url() {
-		$value = get_option( self::OPTION_API_BASE_URL, self::DEFAULT_API_BASE_URL );
-		$value = self::normalize_url( $value );
+		$settings = self::settings();
+		$value    = self::normalize_url( $settings[ self::KEY_API_BASE_URL ] );
 
 		if ( ! self::is_api_base_url_allowed( $value ) ) {
 			return self::DEFAULT_API_BASE_URL;
@@ -78,7 +126,9 @@ class Settings {
 	 * @return string
 	 */
 	public static function api_key() {
-		return trim( (string) get_option( self::OPTION_API_KEY, '' ) );
+		$settings = self::settings();
+
+		return trim( (string) $settings[ self::KEY_API_KEY ] );
 	}
 
 	/**
@@ -96,7 +146,9 @@ class Settings {
 	 * @return int
 	 */
 	public static function batch_size() {
-		return max( 1, min( 100, absint( get_option( self::OPTION_BATCH_SIZE, 25 ) ) ) );
+		$settings = self::settings();
+
+		return max( 1, min( 100, absint( $settings[ self::KEY_BATCH_SIZE ] ) ) );
 	}
 
 	/**
@@ -128,7 +180,6 @@ class Settings {
 			'filetoweb.com',
 			'www.filetoweb.com',
 			'app.filetoweb.com',
-			'bundle-canary.filetoweb.com',
 		);
 
 		$api_host = parse_url( self::api_base_url(), PHP_URL_HOST );
@@ -186,27 +237,38 @@ class Settings {
 	}
 
 	/**
+	 * Sanitize the complete settings row.
+	 *
+	 * @param mixed $value Raw settings array.
+	 * @return array
+	 */
+	public static function sanitize_settings( $value ) {
+		return self::normalize_settings( $value, self::settings(), true, true );
+	}
+
+	/**
 	 * Sanitize API base URL.
 	 *
 	 * @param mixed $value Raw URL.
 	 * @return string
 	 */
 	public static function sanitize_api_base_url( $value ) {
-		$value = self::normalize_url( $value );
+		$previous = self::settings();
+		$value    = self::normalize_url( $value );
 
 		if ( self::is_api_base_url_allowed( $value ) ) {
 			return untrailingslashit( $value );
 		}
 
 		add_settings_error(
-			self::OPTION_API_BASE_URL,
+			self::OPTION_SETTINGS,
 			'filetoweb_invalid_api_base_url',
 			__( 'FileToWeb API URL must be HTTPS and use an allowed FileToWeb host.', 'filetoweb-integration' )
 		);
 
-		$previous = get_option( self::OPTION_API_BASE_URL, self::DEFAULT_API_BASE_URL );
+		$previous_url = $previous[ self::KEY_API_BASE_URL ];
 
-		return self::is_api_base_url_allowed( $previous ) ? untrailingslashit( $previous ) : self::DEFAULT_API_BASE_URL;
+		return self::is_api_base_url_allowed( $previous_url ) ? untrailingslashit( $previous_url ) : self::DEFAULT_API_BASE_URL;
 	}
 
 	/**
@@ -218,9 +280,135 @@ class Settings {
 	 * @return string
 	 */
 	public static function sanitize_api_key( $value ) {
+		$previous = self::settings();
+
+		return self::sanitize_api_key_value( $value, $previous[ self::KEY_API_KEY ], true );
+	}
+
+	/**
+	 * Migrate the pre-0.1.1 multi-option model into the single settings row.
+	 */
+	public static function migrate_legacy_options() {
+		$existing = get_option( self::OPTION_SETTINGS, null );
+
+		if ( is_array( $existing ) ) {
+			return;
+		}
+
+		$legacy = array(
+			self::KEY_ENABLED       => get_option( self::LEGACY_OPTION_ENABLED, null ),
+			self::KEY_API_BASE_URL  => get_option( self::LEGACY_OPTION_API_BASE_URL, null ),
+			self::KEY_API_KEY       => get_option( self::LEGACY_OPTION_API_KEY, null ),
+			self::KEY_REPLACE_LINKS => get_option( self::LEGACY_OPTION_REPLACE_LINKS, null ),
+			self::KEY_BATCH_SIZE    => get_option( self::LEGACY_OPTION_BATCH_SIZE, null ),
+		);
+
+		$has_legacy = false;
+
+		foreach ( $legacy as $value ) {
+			if ( null !== $value ) {
+				$has_legacy = true;
+				break;
+			}
+		}
+
+		if ( ! $has_legacy ) {
+			return;
+		}
+
+		update_option( self::OPTION_SETTINGS, self::normalize_settings( $legacy, self::defaults(), false, false ) );
+		self::delete_legacy_options();
+	}
+
+	/**
+	 * Delete legacy individual option rows.
+	 */
+	public static function delete_legacy_options() {
+		delete_option( self::LEGACY_OPTION_ENABLED );
+		delete_option( self::LEGACY_OPTION_API_BASE_URL );
+		delete_option( self::LEGACY_OPTION_API_KEY );
+		delete_option( self::LEGACY_OPTION_REPLACE_LINKS );
+		delete_option( self::LEGACY_OPTION_BATCH_SIZE );
+	}
+
+	/**
+	 * Default settings.
+	 *
+	 * @return array
+	 */
+	private static function defaults() {
+		return array(
+			self::KEY_ENABLED       => '1',
+			self::KEY_API_BASE_URL  => self::DEFAULT_API_BASE_URL,
+			self::KEY_API_KEY       => '',
+			self::KEY_REPLACE_LINKS => '1',
+			self::KEY_BATCH_SIZE    => 25,
+		);
+	}
+
+	/**
+	 * Normalize a complete settings array.
+	 *
+	 * @param mixed $value Raw value.
+	 * @param array $previous Previous normalized settings.
+	 * @param bool  $add_errors Whether to register Settings API validation errors.
+	 * @param bool  $honor_clear_key Whether to honor the clear API key checkbox.
+	 * @return array
+	 */
+	private static function normalize_settings( $value, $previous, $add_errors, $honor_clear_key ) {
+		$value    = is_array( $value ) ? $value : array();
+		$previous = is_array( $previous ) ? array_merge( self::defaults(), $previous ) : self::defaults();
+
+		$settings = self::defaults();
+
+		$settings[ self::KEY_ENABLED ]       = self::sanitize_checkbox(
+			array_key_exists( self::KEY_ENABLED, $value ) ? $value[ self::KEY_ENABLED ] : $previous[ self::KEY_ENABLED ]
+		);
+		$settings[ self::KEY_REPLACE_LINKS ] = self::sanitize_checkbox(
+			array_key_exists( self::KEY_REPLACE_LINKS, $value ) ? $value[ self::KEY_REPLACE_LINKS ] : $previous[ self::KEY_REPLACE_LINKS ]
+		);
+		$settings[ self::KEY_BATCH_SIZE ]    = self::sanitize_batch_size(
+			array_key_exists( self::KEY_BATCH_SIZE, $value ) ? $value[ self::KEY_BATCH_SIZE ] : $previous[ self::KEY_BATCH_SIZE ]
+		);
+
+		$api_base_url = array_key_exists( self::KEY_API_BASE_URL, $value ) ? $value[ self::KEY_API_BASE_URL ] : $previous[ self::KEY_API_BASE_URL ];
+		$api_base_url = self::normalize_url( $api_base_url );
+
+		if ( self::is_api_base_url_allowed( $api_base_url ) ) {
+			$settings[ self::KEY_API_BASE_URL ] = untrailingslashit( $api_base_url );
+		} else {
+			if ( $add_errors ) {
+				add_settings_error(
+					self::OPTION_SETTINGS,
+					'filetoweb_invalid_api_base_url',
+					__( 'FileToWeb API URL must be HTTPS and use an allowed FileToWeb host.', 'filetoweb-integration' )
+				);
+			}
+
+			$settings[ self::KEY_API_BASE_URL ] = self::is_api_base_url_allowed( $previous[ self::KEY_API_BASE_URL ] )
+				? untrailingslashit( $previous[ self::KEY_API_BASE_URL ] )
+				: self::DEFAULT_API_BASE_URL;
+		}
+
+		$api_key = array_key_exists( self::KEY_API_KEY, $value ) ? $value[ self::KEY_API_KEY ] : '';
+
+		$settings[ self::KEY_API_KEY ] = self::sanitize_api_key_value( $api_key, $previous[ self::KEY_API_KEY ], $honor_clear_key );
+
+		return $settings;
+	}
+
+	/**
+	 * Sanitize API key input while preserving existing keys on blank saves.
+	 *
+	 * @param mixed  $value Raw key.
+	 * @param string $previous Previous key.
+	 * @param bool   $honor_clear_key Whether to honor the clear API key checkbox.
+	 * @return string
+	 */
+	private static function sanitize_api_key_value( $value, $previous, $honor_clear_key ) {
 		$clear_key = false;
 
-		if ( isset( $_POST['filetoweb_integration_clear_api_key'] ) ) {
+		if ( $honor_clear_key && isset( $_POST['filetoweb_integration_clear_api_key'] ) ) {
 			$clear_key = '1' === sanitize_text_field( wp_unslash( $_POST['filetoweb_integration_clear_api_key'] ) );
 		}
 
@@ -232,7 +420,7 @@ class Settings {
 		$value = trim( $value );
 
 		if ( '' === $value ) {
-			return self::api_key();
+			return trim( (string) $previous );
 		}
 
 		return $value;

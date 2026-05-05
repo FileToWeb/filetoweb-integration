@@ -13,7 +13,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 
 ## Settings
 
-The plugin owns its settings through the WordPress Settings API:
+The plugin owns its settings through the WordPress Settings API and stores them in one WordPress option row, `filetoweb_integration_settings`:
 
 - Enabled
 - FileToWeb API URL

@@ -25,8 +25,14 @@ class SecurityTest extends TestCase {
 		);
 		Functions\when( 'get_option' )->alias(
 			function ( $name, $default = false ) {
-				if ( Settings::OPTION_API_BASE_URL === $name ) {
-					return 'https://filetoweb.com';
+				if ( Settings::OPTION_SETTINGS === $name ) {
+					return array(
+						Settings::KEY_ENABLED       => '1',
+						Settings::KEY_API_BASE_URL  => 'https://filetoweb.com',
+						Settings::KEY_API_KEY       => 'ftw_api_test',
+						Settings::KEY_REPLACE_LINKS => '1',
+						Settings::KEY_BATCH_SIZE    => 25,
+					);
 				}
 
 				return $default;

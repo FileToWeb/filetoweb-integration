@@ -67,7 +67,7 @@ class Admin {
 	 * Render settings page.
 	 */
 	public static function render_settings_page() {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! self::can_manage_settings() ) {
 			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
 		}
 
@@ -86,24 +86,24 @@ class Admin {
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Enabled', 'filetoweb-integration' ); ?></th>
 						<td>
-							<input type="hidden" name="<?php echo esc_attr( Settings::OPTION_ENABLED ); ?>" value="0" />
+							<input type="hidden" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_ENABLED ) ); ?>" value="0" />
 							<label>
-								<input type="checkbox" name="<?php echo esc_attr( Settings::OPTION_ENABLED ); ?>" value="1" <?php checked( Settings::enabled() ); ?> />
+								<input type="checkbox" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_ENABLED ) ); ?>" value="1" <?php checked( Settings::enabled() ); ?> />
 								<?php esc_html_e( 'Enable FileToWeb sync and public replacement', 'filetoweb-integration' ); ?>
 							</label>
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="<?php echo esc_attr( Settings::OPTION_API_BASE_URL ); ?>"><?php esc_html_e( 'API URL', 'filetoweb-integration' ); ?></label></th>
+						<th scope="row"><label for="<?php echo esc_attr( Settings::field_id( Settings::KEY_API_BASE_URL ) ); ?>"><?php esc_html_e( 'API URL', 'filetoweb-integration' ); ?></label></th>
 						<td>
-							<input class="regular-text" type="url" id="<?php echo esc_attr( Settings::OPTION_API_BASE_URL ); ?>" name="<?php echo esc_attr( Settings::OPTION_API_BASE_URL ); ?>" value="<?php echo esc_attr( Settings::api_base_url() ); ?>" />
+							<input class="regular-text" type="url" id="<?php echo esc_attr( Settings::field_id( Settings::KEY_API_BASE_URL ) ); ?>" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_API_BASE_URL ) ); ?>" value="<?php echo esc_attr( Settings::api_base_url() ); ?>" />
 							<p class="description"><?php esc_html_e( 'HTTPS FileToWeb API host. Authorization is only sent to allowed FileToWeb hosts.', 'filetoweb-integration' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="<?php echo esc_attr( Settings::OPTION_API_KEY ); ?>"><?php esc_html_e( 'API key', 'filetoweb-integration' ); ?></label></th>
+						<th scope="row"><label for="<?php echo esc_attr( Settings::field_id( Settings::KEY_API_KEY ) ); ?>"><?php esc_html_e( 'API key', 'filetoweb-integration' ); ?></label></th>
 						<td>
-							<input class="regular-text" type="password" id="<?php echo esc_attr( Settings::OPTION_API_KEY ); ?>" name="<?php echo esc_attr( Settings::OPTION_API_KEY ); ?>" value="" autocomplete="off" />
+							<input class="regular-text" type="password" id="<?php echo esc_attr( Settings::field_id( Settings::KEY_API_KEY ) ); ?>" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_API_KEY ) ); ?>" value="" autocomplete="off" />
 							<p class="description">
 								<?php echo Settings::api_key() ? esc_html__( 'An API key is saved. Leave blank to keep it, paste a new key to replace it.', 'filetoweb-integration' ) : esc_html__( 'Paste a scoped FileToWeb API key.', 'filetoweb-integration' ); ?>
 							</p>
@@ -118,17 +118,17 @@ class Admin {
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Public replacement', 'filetoweb-integration' ); ?></th>
 						<td>
-							<input type="hidden" name="<?php echo esc_attr( Settings::OPTION_REPLACE_LINKS ); ?>" value="0" />
+							<input type="hidden" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_REPLACE_LINKS ) ); ?>" value="0" />
 							<label>
-								<input type="checkbox" name="<?php echo esc_attr( Settings::OPTION_REPLACE_LINKS ); ?>" value="1" <?php checked( Settings::replace_links_enabled() ); ?> />
+								<input type="checkbox" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_REPLACE_LINKS ) ); ?>" value="1" <?php checked( Settings::replace_links_enabled() ); ?> />
 								<?php esc_html_e( 'Replace front-end PDF links with generated FileToWeb HTML links when ready', 'filetoweb-integration' ); ?>
 							</label>
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="<?php echo esc_attr( Settings::OPTION_BATCH_SIZE ); ?>"><?php esc_html_e( 'Batch size', 'filetoweb-integration' ); ?></label></th>
+						<th scope="row"><label for="<?php echo esc_attr( Settings::field_id( Settings::KEY_BATCH_SIZE ) ); ?>"><?php esc_html_e( 'Batch size', 'filetoweb-integration' ); ?></label></th>
 						<td>
-							<input type="number" min="1" max="100" id="<?php echo esc_attr( Settings::OPTION_BATCH_SIZE ); ?>" name="<?php echo esc_attr( Settings::OPTION_BATCH_SIZE ); ?>" value="<?php echo esc_attr( Settings::batch_size() ); ?>" />
+							<input type="number" min="1" max="100" id="<?php echo esc_attr( Settings::field_id( Settings::KEY_BATCH_SIZE ) ); ?>" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_BATCH_SIZE ) ); ?>" value="<?php echo esc_attr( Settings::batch_size() ); ?>" />
 							<p class="description"><?php esc_html_e( 'Manual backfill and polling batches are bounded to protect site performance and customer credit usage.', 'filetoweb-integration' ); ?></p>
 						</td>
 					</tr>
@@ -207,7 +207,7 @@ class Admin {
 			echo '<p><a class="button button-primary" href="' . esc_url( $editor_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Edit in FileToWeb', 'filetoweb-integration' ) . '</a></p>';
 		}
 
-		if ( Settings::configured() && current_user_can( 'edit_post', $post->ID ) && current_user_can( 'upload_files' ) ) {
+		if ( Settings::configured() && self::can_sync_post( $post->ID ) ) {
 			echo '<p>';
 			echo '<a class="button" href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync PDF now', 'filetoweb-integration' ) . '</a> ';
 
@@ -237,7 +237,7 @@ class Admin {
 	 * Handle manual backfill.
 	 */
 	public static function handle_backfill() {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! self::can_manage_settings() ) {
 			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
 		}
 
@@ -254,7 +254,7 @@ class Admin {
 	 * Handle manual pending poll.
 	 */
 	public static function handle_poll_pending() {
-		if ( ! current_user_can( 'manage_options' ) ) {
+		if ( ! self::can_manage_settings() ) {
 			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
 		}
 
@@ -288,7 +288,7 @@ class Admin {
 	private static function handle_post_action( $action ) {
 		$post_id = isset( $_GET['post_id'] ) ? absint( wp_unslash( $_GET['post_id'] ) ) : 0;
 
-		if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) || ! current_user_can( 'upload_files' ) ) {
+		if ( ! self::can_sync_post( $post_id ) ) {
 			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
 		}
 
@@ -326,6 +326,27 @@ class Admin {
 			admin_url( 'admin-post.php?action=filetoweb_integration_' . $action . '&post_id=' . absint( $post_id ) ),
 			'filetoweb_integration_' . $action . '_' . absint( $post_id )
 		);
+	}
+
+	/**
+	 * Can the current user sync or poll one PDF-backed post?
+	 *
+	 * @param int $post_id Post ID.
+	 * @return bool
+	 */
+	public static function can_sync_post( $post_id ) {
+		$post_id = absint( $post_id );
+
+		return $post_id && current_user_can( 'edit_post', $post_id ) && current_user_can( 'upload_files' );
+	}
+
+	/**
+	 * Can the current user manage global FileToWeb settings and backfill?
+	 *
+	 * @return bool
+	 */
+	public static function can_manage_settings() {
+		return current_user_can( 'manage_options' );
 	}
 
 	/**

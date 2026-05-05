@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 0.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -18,7 +18,7 @@ Original WordPress media files remain intact. The plugin stores FileToWeb state 
 
 Features:
 
-* Plugin-owned settings page for API URL, API key, public replacement, and bounded batch size.
+* Plugin-owned settings page for API URL, API key, public replacement, and bounded batch size, stored in one option row.
 * Automatic sync for new PDF attachments and Proud Document saves.
 * Manual bounded backfill for existing PDF attachments and Proud Document posts.
 * WP-Cron polling for pending conversions.
@@ -51,9 +51,15 @@ Yes. Disable the plugin or turn off the Enabled setting. When disabled, sync, po
 
 = Where is the API key stored? =
 
-The API key is stored as a WordPress option owned by this plugin. Only users with `manage_options` can access the settings page.
+The API key is stored in the single WordPress option row owned by this plugin. Only users with `manage_options` can access the settings page.
 
 == Changelog ==
+
+= 0.1.1 =
+
+* Consolidates plugin settings into one Settings API option row.
+* Adds tests for capability gates, link rewriting, widget output, uninstall cleanup, settings registration, and legacy settings migration.
+* Preserves migration from the previous multi-option settings model.
 
 = 0.1.0 =
 
