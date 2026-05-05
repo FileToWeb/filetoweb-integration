@@ -34,6 +34,13 @@ class Link_Rewriter {
 	private static $resolved_public_urls = array();
 
 	/**
+	 * Current Proud Document being rewritten by the output buffer.
+	 *
+	 * @var int
+	 */
+	private static $document_viewer_post_id = 0;
+
+	/**
 	 * Register hooks.
 	 */
 	public static function init() {
@@ -42,6 +49,7 @@ class Link_Rewriter {
 		add_filter( 'the_content', array( __CLASS__, 'filter_content_pdf_links' ), 20 );
 		add_filter( 'widget_text', array( __CLASS__, 'filter_content_pdf_links' ), 20 );
 		add_filter( 'widget_text_content', array( __CLASS__, 'filter_content_pdf_links' ), 20 );
+		add_action( 'template_redirect', array( __CLASS__, 'maybe_start_document_viewer_buffer' ), 0 );
 	}
 
 	/**
@@ -76,6 +84,10 @@ class Link_Rewriter {
 		}
 
 		if ( 'document' !== get_post_type( $object_id ) ) {
+			return $value;
+		}
+
+		if ( self::is_current_document_single( $object_id ) ) {
 			return $value;
 		}
 
@@ -116,6 +128,58 @@ class Link_Rewriter {
 		}
 
 		return $content;
+	}
+
+	/**
+	 * Start a scoped output buffer for the ProudCity single Document viewer.
+	 */
+	public static function maybe_start_document_viewer_buffer() {
+		if ( ! self::should_rewrite_document_viewer() ) {
+			return;
+		}
+
+		$post_id    = absint( get_queried_object_id() );
+		$viewer_url = self::ready_document_viewer_url( $post_id );
+
+		if ( ! $post_id || ! $viewer_url ) {
+			return;
+		}
+
+		self::$document_viewer_post_id = $post_id;
+		ob_start( array( __CLASS__, 'filter_document_viewer_output' ) );
+	}
+
+	/**
+	 * Replace the ProudCity Google Docs preview iframe with FileToWeb HTML.
+	 *
+	 * @param string $html Rendered page HTML.
+	 * @return string
+	 */
+	public static function filter_document_viewer_output( $html ) {
+		if ( ! is_string( $html ) || false === stripos( $html, 'docs.google.com/gview' ) || false === stripos( $html, 'doc-preview' ) ) {
+			return $html;
+		}
+
+		$post_id = self::$document_viewer_post_id;
+
+		if ( ! $post_id && function_exists( 'get_queried_object_id' ) ) {
+			$post_id = absint( get_queried_object_id() );
+		}
+
+		$viewer_url = self::ready_document_viewer_url( $post_id );
+		$source_url = Source_Resolver::admin_original_source_url( get_post( $post_id ) );
+
+		if ( ! $viewer_url || ! $source_url ) {
+			return $html;
+		}
+
+		return preg_replace_callback(
+			'~<iframe\b[^>]*>~is',
+			function ( $matches ) use ( $viewer_url, $source_url ) {
+				return self::replace_document_viewer_iframe( $matches[0], $viewer_url, $source_url );
+			},
+			$html
+		);
 	}
 
 	/**
@@ -254,6 +318,25 @@ class Link_Rewriter {
 	}
 
 	/**
+	 * Return the public viewer URL for a ready Proud Document.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return string
+	 */
+	private static function ready_document_viewer_url( $post_id ) {
+		$post_id  = absint( $post_id );
+		$html_url = $post_id ? self::ready_document_html_url( $post_id ) : '';
+
+		if ( ! $html_url ) {
+			return '';
+		}
+
+		$continuous_url = Document_State::ready_continuous_url( $post_id );
+
+		return $continuous_url ? $continuous_url : $html_url;
+	}
+
+	/**
 	 * Build original-url => ready-html-url map once per request.
 	 *
 	 * @return array
@@ -359,6 +442,84 @@ class Link_Rewriter {
 		$key = Security::normalize_public_url_key( $url );
 
 		return isset( $map[ $key ] ) ? $map[ $key ] : '';
+	}
+
+	/**
+	 * Replace the src attribute on the ProudCity document preview iframe.
+	 *
+	 * @param string $iframe Iframe HTML.
+	 * @param string $viewer_url FileToWeb viewer URL.
+	 * @param string $source_url Original PDF URL.
+	 * @return string
+	 */
+	private static function replace_document_viewer_iframe( $iframe, $viewer_url, $source_url ) {
+		if ( ! preg_match( '~\bid=(["\'])doc-preview\1~i', $iframe ) ) {
+			return $iframe;
+		}
+
+		if ( ! preg_match( '~\bsrc=(["\'])(.*?)\1~is', $iframe, $src_match ) ) {
+			return $iframe;
+		}
+
+		$preview_source = self::google_docs_preview_source_url( $src_match[2] );
+
+		if ( ! $preview_source || ! self::public_urls_match( $preview_source, $source_url ) ) {
+			return $iframe;
+		}
+
+		return preg_replace_callback(
+			'~\bsrc=(["\'])(.*?)\1~is',
+			function ( $matches ) use ( $viewer_url ) {
+				return 'src=' . $matches[1] . esc_url( $viewer_url ) . $matches[1];
+			},
+			$iframe,
+			1
+		);
+	}
+
+	/**
+	 * Extract the source URL from a Google Docs preview URL.
+	 *
+	 * @param string $url Preview URL.
+	 * @return string
+	 */
+	private static function google_docs_preview_source_url( $url ) {
+		$url = html_entity_decode( trim( (string) $url ), ENT_QUOTES, 'UTF-8' );
+
+		if ( 0 === strpos( $url, '//' ) ) {
+			$url = 'https:' . $url;
+		}
+
+		$host = strtolower( (string) parse_url( $url, PHP_URL_HOST ) );
+		$path = (string) parse_url( $url, PHP_URL_PATH );
+
+		if ( 'docs.google.com' !== $host || '/gview' !== $path ) {
+			return '';
+		}
+
+		$query = parse_url( $url, PHP_URL_QUERY );
+
+		if ( ! $query ) {
+			return '';
+		}
+
+		parse_str( $query, $params );
+
+		return ! empty( $params['url'] ) ? esc_url_raw( (string) $params['url'] ) : '';
+	}
+
+	/**
+	 * Compare public URLs after normalizing host/path details.
+	 *
+	 * @param string $left First URL.
+	 * @param string $right Second URL.
+	 * @return bool
+	 */
+	private static function public_urls_match( $left, $right ) {
+		$left_key  = Security::normalize_public_url_key( $left );
+		$right_key = Security::normalize_public_url_key( $right );
+
+		return $left_key && $right_key && $left_key === $right_key;
 	}
 
 	/**
@@ -536,6 +697,40 @@ class Link_Rewriter {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Is this request rendering the queried Proud Document.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return bool
+	 */
+	private static function is_current_document_single( $post_id ) {
+		return function_exists( 'is_singular' )
+			&& is_singular( 'document' )
+			&& function_exists( 'get_queried_object_id' )
+			&& absint( get_queried_object_id() ) === absint( $post_id );
+	}
+
+	/**
+	 * Should the ProudCity document viewer buffer run?
+	 *
+	 * @return bool
+	 */
+	private static function should_rewrite_document_viewer() {
+		if ( ! self::is_public_replacement_context() ) {
+			return false;
+		}
+
+		if ( function_exists( 'is_preview' ) && is_preview() ) {
+			return false;
+		}
+
+		if ( ! function_exists( 'is_singular' ) || ! is_singular( 'document' ) || ! function_exists( 'get_queried_object_id' ) ) {
+			return false;
+		}
+
+		return (bool) apply_filters( 'filetoweb_integration_rewrite_document_viewer', true );
 	}
 
 	/**

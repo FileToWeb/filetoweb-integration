@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.3
+Stable tag: 0.1.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -23,6 +23,7 @@ Features:
 * Manual bounded backfill for existing PDF attachments and Proud Document posts.
 * WP-Cron polling for pending conversions.
 * Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata.
+* ProudCity Document preview replacement while preserving the original PDF download link.
 * Standard WordPress widget for linking to a PDF attachment or Proud Document.
 * Original PDF links are preserved in admin screens.
 
@@ -66,6 +67,10 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.4 =
+
+* Replaces the ProudCity single Document preview iframe with the ready FileToWeb HTML viewer while preserving the original PDF download link.
 
 = 0.1.3 =
 
