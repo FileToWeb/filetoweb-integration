@@ -5,9 +5,12 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 ## Behavior
 
 - Newly created or edited PDF attachments are submitted to FileToWeb.
+- Upload-triggered syncs nudge WP-Cron, and polling retries recently missed or transiently timed-out uploads.
 - Proud Document saves reuse the linked attachment when one is present; otherwise the plugin resolves the document URL back to a WordPress attachment with `attachment_url_to_postid()`.
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
 - Public front-end PDF links are replaced with FileToWeb HTML links only after the document is ready.
+- Add-on plugins can override the ready public replacement URL through `filetoweb_integration_ready_replacement_url`, for example to use a reviewed native WordPress page.
+- Sites can disable the bundled FileToWeb widget with `filetoweb_integration_enable_widget`.
 - Admin screens keep the original PDF link and show FileToWeb status, generated HTML, editor link, manual sync, and poll actions.
 - Manual backfill is available from **Settings > FileToWeb** and is bounded by the configured batch size.
 

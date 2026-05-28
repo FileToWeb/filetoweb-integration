@@ -29,6 +29,13 @@ class LinkRewriterTest extends TestCase {
 	 */
 	private $is_document_singular = false;
 
+	/**
+	 * Replacement URL returned by the add-on filter.
+	 *
+	 * @var string
+	 */
+	private $replacement_url = '';
+
 	protected function setUp(): void {
 		parent::setUp();
 		Monkey\setUp();
@@ -36,6 +43,7 @@ class LinkRewriterTest extends TestCase {
 		$this->post_types           = array();
 		$this->queried_object_id    = 0;
 		$this->is_document_singular = false;
+		$this->replacement_url      = '';
 
 		Functions\when( 'esc_url_raw' )->returnArg();
 		Functions\when( 'wp_unslash' )->returnArg();
@@ -65,6 +73,10 @@ class LinkRewriterTest extends TestCase {
 		);
 		Functions\when( 'apply_filters' )->alias(
 			function ( $tag, $value ) {
+				if ( 'filetoweb_integration_ready_replacement_url' === $tag && $this->replacement_url ) {
+					return $this->replacement_url;
+				}
+
 				return $value;
 			}
 		);
@@ -167,6 +179,40 @@ class LinkRewriterTest extends TestCase {
 		$this->assertStringContainsString( 'href="https://filetoweb.com/d/demo/1"', $rewritten );
 		$this->assertStringContainsString( 'href="https://example.test/services/"', $rewritten );
 		$this->assertSame( 1, $get_posts_calls );
+	}
+
+	public function test_ready_replacement_url_filter_can_override_pdf_links(): void {
+		$this->replacement_url = 'https://example.test/native-page/';
+
+		Functions\when( 'get_posts' )->justReturn( array( 123 ) );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) {
+				if ( 123 !== $post_id ) {
+					return '';
+				}
+
+				if ( Document_State::META_STATUS === $key ) {
+					return 'ready';
+				}
+
+				if ( Document_State::META_HTML_URL === $key ) {
+					return 'https://filetoweb.com/d/demo/1';
+				}
+
+				if ( Document_State::META_ORIGINAL_URL === $key ) {
+					return 'https://example.test/wp-content/uploads/file.pdf';
+				}
+
+				return '';
+			}
+		);
+
+		$content = '<p><a href="https://example.test/wp-content/uploads/file.pdf">PDF</a></p>';
+
+		$this->assertStringContainsString(
+			'href="https://example.test/native-page/"',
+			Link_Rewriter::filter_content_pdf_links( $content )
+		);
 	}
 
 	public function test_non_ready_pdf_link_stays_original(): void {

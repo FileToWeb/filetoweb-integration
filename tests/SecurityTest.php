@@ -43,6 +43,32 @@ class SecurityTest extends TestCase {
 				return $value;
 			}
 		);
+		Functions\when( 'FileToWeb\Integration\gethostbynamel' )->alias(
+			function ( $host ) {
+				if ( 'private-ipv4.example' === $host ) {
+					return array( '10.0.0.5' );
+				}
+
+				if ( 'example.test' === $host || 'public.example' === $host || 'private-ipv6.example' === $host ) {
+					return array( '93.184.216.34' );
+				}
+
+				return false;
+			}
+		);
+		Functions\when( 'FileToWeb\Integration\dns_get_record' )->alias(
+			function ( $host, $type ) {
+				if ( defined( 'DNS_AAAA' ) && DNS_AAAA === $type && 'private-ipv6.example' === $host ) {
+					return array(
+						array(
+							'ipv6' => '::1',
+						),
+					);
+				}
+
+				return array();
+			}
+		);
 		Functions\when( 'untrailingslashit' )->alias(
 			function ( $value ) {
 				return rtrim( (string) $value, '/' );
@@ -74,6 +100,11 @@ class SecurityTest extends TestCase {
 
 	public function test_source_url_allows_current_site_hostname(): void {
 		$this->assertTrue( Security::is_safe_source_url( 'https://example.test/wp-content/uploads/file.pdf' ) );
+	}
+
+	public function test_source_url_rejects_private_dns_records(): void {
+		$this->assertFalse( Security::is_safe_source_url( 'https://private-ipv4.example/file.pdf' ) );
+		$this->assertFalse( Security::is_safe_source_url( 'https://private-ipv6.example/file.pdf' ) );
 	}
 
 	public function test_filetoweb_url_requires_allowed_https_host(): void {

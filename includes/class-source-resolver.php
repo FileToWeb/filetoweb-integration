@@ -133,7 +133,7 @@ class Source_Resolver {
 
 		$filename      = get_post_meta( $post_id, 'document_filename', true );
 		$meta_raw      = get_post_meta( $post_id, 'document_meta', true );
-		$meta          = json_decode( (string) $meta_raw, true );
+		$meta          = self::parse_document_meta( $meta_raw );
 		$attachment_id = self::document_attachment_id( $meta, $url );
 
 		if ( $attachment_id ) {
@@ -208,6 +208,26 @@ class Source_Resolver {
 	}
 
 	/**
+	 * Parse Proud Document metadata defensively.
+	 *
+	 * @param mixed $meta_raw Raw metadata.
+	 * @return array|null
+	 */
+	public static function parse_document_meta( $meta_raw ) {
+		if ( is_array( $meta_raw ) ) {
+			return $meta_raw;
+		}
+
+		if ( ! is_string( $meta_raw ) || '' === trim( $meta_raw ) ) {
+			return null;
+		}
+
+		$decoded = json_decode( $meta_raw, true );
+
+		return is_array( $decoded ) ? $decoded : null;
+	}
+
+	/**
 	 * Build a stable source fingerprint.
 	 *
 	 * @param string $url URL.
@@ -269,8 +289,9 @@ class Source_Resolver {
 		$response = wp_remote_head(
 			$url,
 			array(
-				'timeout'     => 10,
-				'redirection' => 0,
+				'timeout'            => 10,
+				'redirection'        => 0,
+				'reject_unsafe_urls' => true,
 			)
 		);
 

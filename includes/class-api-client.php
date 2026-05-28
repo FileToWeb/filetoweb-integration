@@ -55,10 +55,11 @@ class Api_Client {
 
 		$url  = untrailingslashit( $base_url ) . '/v1' . $path;
 		$args = array(
-			'method'      => $method,
-			'timeout'     => 30,
-			'redirection' => 0,
-			'headers'     => array(
+			'method'             => $method,
+			'timeout'            => 60,
+			'redirection'        => 0,
+			'reject_unsafe_urls' => true,
+			'headers'            => array(
 				'Authorization' => 'Bearer ' . $api_key,
 				'Accept'        => 'application/json',
 				'Content-Type'  => 'application/json',
@@ -88,6 +89,24 @@ class Api_Client {
 			'error' => '',
 			'body'  => is_array( $decoded ) ? $decoded : array(),
 		);
+	}
+
+	/**
+	 * Should a failed request be retried instead of treated as a terminal conversion failure?
+	 *
+	 * @param string $message Error message.
+	 * @return bool
+	 */
+	public static function is_retryable_error( $message ) {
+		$message = strtolower( (string) $message );
+
+		foreach ( array( 'timed out', 'timeout', 'cURL error 28', 'failed to connect', 'connection reset', 'connection refused' ) as $needle ) {
+			if ( false !== strpos( $message, strtolower( $needle ) ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

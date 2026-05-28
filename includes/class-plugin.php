@@ -27,7 +27,10 @@ class Plugin {
 		Cron::init();
 		Admin::init();
 		Link_Rewriter::init();
-		Document_Widget::init();
+
+		if ( apply_filters( 'filetoweb_integration_enable_widget', true ) ) {
+			Document_Widget::init();
+		}
 	}
 
 	/**

@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.4
+Stable tag: 0.1.7
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -67,6 +67,22 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.7 =
+
+* Hardens source URL safety checks for IPv4/IPv6 private addresses and WordPress HTTP unsafe URL rejection.
+* Removes the current-site host SSRF bypass and adds defensive scalar/string guards for stricter PHP runtimes.
+* Adds a filter to disable the bundled FileToWeb widget and makes admin processing status more visible.
+
+= 0.1.6 =
+
+* Treats transient FileToWeb API timeouts as pending retries instead of terminal conversion failures.
+* Nudges WP-Cron when new PDF uploads are scheduled for sync and retries recently missed uploads during polling.
+* Adds sync/poll lifecycle hooks for companion plugins that create reviewed native WordPress drafts.
+
+= 0.1.5 =
+
+* Adds a public replacement URL filter so reviewed native WordPress pages can override ready FileToWeb HTML links.
 
 = 0.1.4 =
 

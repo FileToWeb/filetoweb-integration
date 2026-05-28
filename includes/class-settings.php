@@ -409,7 +409,8 @@ class Settings {
 		$clear_key = false;
 
 		if ( $honor_clear_key && isset( $_POST['filetoweb_integration_clear_api_key'] ) ) {
-			$clear_key = '1' === sanitize_text_field( wp_unslash( $_POST['filetoweb_integration_clear_api_key'] ) );
+			$raw_clear_key = wp_unslash( $_POST['filetoweb_integration_clear_api_key'] );
+			$clear_key     = is_scalar( $raw_clear_key ) && '1' === sanitize_text_field( $raw_clear_key );
 		}
 
 		if ( $clear_key ) {

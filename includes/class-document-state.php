@@ -148,6 +148,18 @@ class Document_State {
 	}
 
 	/**
+	 * Mark a post for retry after a transient API/network error.
+	 *
+	 * @param int    $post_id Post ID.
+	 * @param string $error Error.
+	 */
+	public static function mark_pending_retry( $post_id, $error ) {
+		update_post_meta( $post_id, self::META_STATUS, 'pending' );
+		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_error( $error ) );
+		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
+	}
+
+	/**
 	 * Array getter.
 	 *
 	 * @param array  $array Array.

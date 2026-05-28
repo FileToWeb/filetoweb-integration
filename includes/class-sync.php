@@ -137,6 +137,7 @@ class Sync {
 
 		if ( isset( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
 			Document_State::write_polled_state( $post_id, $response['body']['document'] );
+			do_action( 'filetoweb_integration_after_poll_post', $post_id, $response['body']['document'] );
 			return 'updated';
 		}
 
@@ -157,6 +158,8 @@ class Sync {
 			$counts['skipped'] = $limit;
 			return $counts;
 		}
+
+		$retry_counts = self::retry_pending_syncs( $limit );
 
 		$posts = get_posts(
 			array(
@@ -184,6 +187,77 @@ class Sync {
 			if ( 'updated' === $result ) {
 				++$counts['updated'];
 			} elseif ( 'failed' === $result ) {
+				++$counts['failed'];
+			} else {
+				++$counts['skipped'];
+			}
+		}
+
+		foreach ( $retry_counts as $key => $value ) {
+			if ( isset( $counts[ $key ] ) ) {
+				$counts[ $key ] += absint( $value );
+			}
+		}
+
+		return $counts;
+	}
+
+	/**
+	 * Retry recently missed or transiently failed PDF attachment syncs.
+	 *
+	 * @param int $limit Max items.
+	 * @return array
+	 */
+	public static function retry_pending_syncs( $limit ) {
+		$limit  = max( 1, min( 25, absint( $limit ) ) );
+		$counts = self::empty_counts();
+
+		if ( ! Settings::configured() ) {
+			$counts['skipped'] = $limit;
+			return $counts;
+		}
+
+		$posts = get_posts(
+			array(
+				'post_type'      => 'attachment',
+				'post_mime_type' => 'application/pdf',
+				'post_status'    => 'inherit',
+				'posts_per_page' => $limit,
+				'fields'         => 'ids',
+				'orderby'        => 'date',
+				'order'          => 'DESC',
+				'meta_query'     => array(
+					'relation' => 'OR',
+					array(
+						'key'     => Document_State::META_STATUS,
+						'compare' => 'NOT EXISTS',
+					),
+					array(
+						'key'   => Document_State::META_STATUS,
+						'value' => 'pending',
+					),
+					array(
+						'relation' => 'AND',
+						array(
+							'key'   => Document_State::META_STATUS,
+							'value' => 'failed',
+						),
+						array(
+							'key'     => Document_State::META_LAST_ERROR,
+							'value'   => 'timed out',
+							'compare' => 'LIKE',
+						),
+					),
+				),
+			)
+		);
+
+		foreach ( $posts as $post_id ) {
+			$result = self::sync_attachment_now( $post_id );
+
+			if ( isset( $result['status'] ) && ! in_array( $result['status'], array( 'failed', 'skipped' ), true ) ) {
+				++$counts['queued'];
+			} elseif ( isset( $result['status'] ) && 'failed' === $result['status'] ) {
 				++$counts['failed'];
 			} else {
 				++$counts['skipped'];
@@ -281,6 +355,28 @@ class Sync {
 		if ( ! wp_next_scheduled( self::HOOK_SYNC_ITEM, $args ) ) {
 			wp_schedule_single_event( time() + 5, self::HOOK_SYNC_ITEM, $args );
 		}
+
+		self::spawn_cron();
+	}
+
+	/**
+	 * Nudge WP-Cron so upload-triggered syncs run on low-traffic demo sites.
+	 */
+	private static function spawn_cron() {
+		if ( defined( 'DOING_CRON' ) && DOING_CRON ) {
+			return;
+		}
+
+		$url = site_url( 'wp-cron.php?doing_wp_cron=' . rawurlencode( microtime( true ) ) );
+
+		wp_remote_post(
+			$url,
+			array(
+				'timeout'   => 0.01,
+				'blocking'  => false,
+				'sslverify' => apply_filters( 'https_local_ssl_verify', false ),
+			)
+		);
 	}
 
 	/**
@@ -316,6 +412,14 @@ class Sync {
 		$response = Api_Client::upsert_document( $payload );
 
 		if ( ! $response['ok'] ) {
+			if ( Api_Client::is_retryable_error( $response['error'] ) ) {
+				Document_State::mark_pending_retry( $post_id, $response['error'] );
+				return array(
+					'status' => 'pending',
+					'error'  => $response['error'],
+				);
+			}
+
 			Document_State::mark_failed( $post_id, $response['error'] );
 			return array(
 				'status' => 'failed',
@@ -325,6 +429,8 @@ class Sync {
 
 		if ( isset( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
 			Document_State::write_from_api( $post_id, $response['body']['document'], $source );
+
+			do_action( 'filetoweb_integration_after_sync_post', $post_id, $source, $response['body']['document'] );
 
 			return array(
 				'status' => Security::sanitize_status( $response['body']['document']['status'] ),

@@ -181,20 +181,34 @@ class Document_Widget extends \WP_Widget {
 
 		if ( 'attachment' === $kind ) {
 			$html_url = Document_State::ready_html_url( $post_id );
-			return $html_url ? $html_url : Source_Resolver::original_attachment_url( $post_id );
+			return $html_url ? $this->ready_replacement_url( $html_url, $post_id, 'widget_attachment' ) : Source_Resolver::original_attachment_url( $post_id );
 		}
 
 		if ( 'document' === $kind ) {
 			$html_url = Document_State::ready_html_url( $post_id );
 
 			if ( $html_url ) {
-				return $html_url;
+				return $this->ready_replacement_url( $html_url, $post_id, 'widget_document' );
 			}
 
 			return Source_Resolver::admin_original_source_url( get_post( $post_id ) );
 		}
 
 		return '';
+	}
+
+	/**
+	 * Allow add-ons to replace widget FileToWeb links with reviewed native pages.
+	 *
+	 * @param string $html_url FileToWeb HTML URL.
+	 * @param int    $post_id Source post ID.
+	 * @param string $context Context.
+	 * @return string
+	 */
+	private function ready_replacement_url( $html_url, $post_id, $context ) {
+		$replacement = apply_filters( 'filetoweb_integration_ready_replacement_url', $html_url, absint( $post_id ), $context, '' );
+
+		return is_string( $replacement ) && $replacement ? esc_url_raw( $replacement ) : $html_url;
 	}
 
 	/**

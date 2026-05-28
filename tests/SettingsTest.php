@@ -133,6 +133,22 @@ class SettingsTest extends TestCase {
 		$this->assertSame( '', Settings::sanitize_api_key( '' ) );
 	}
 
+	public function test_array_clear_api_key_checkbox_is_ignored(): void {
+		Functions\when( 'sanitize_text_field' )->returnArg();
+		Functions\when( 'get_option' )->alias(
+			function ( $name, $default = false ) {
+				if ( Settings::OPTION_SETTINGS === $name ) {
+					return array( Settings::KEY_API_KEY => 'ftw_api_existing' );
+				}
+
+				return $default;
+			}
+		);
+		$_POST['filetoweb_integration_clear_api_key'] = array( '1' );
+
+		$this->assertSame( 'ftw_api_existing', Settings::sanitize_api_key( '' ) );
+	}
+
 	public function test_legacy_options_migrate_into_one_settings_row(): void {
 		$updated = array();
 		$deleted = array();

@@ -38,11 +38,7 @@ class Security {
 			return false;
 		}
 
-		if ( self::is_current_site_host( $host ) ) {
-			return true;
-		}
-
-		$resolved_ips = @gethostbynamel( $host );
+		$resolved_ips = self::resolve_host_ips( $host );
 
 		if ( is_array( $resolved_ips ) ) {
 			foreach ( $resolved_ips as $ip ) {
@@ -159,27 +155,38 @@ class Security {
 	}
 
 	/**
-	 * Is this host the configured WordPress site host?
-	 *
-	 * Some managed/container deployments resolve the public site hostname to a
-	 * private runtime address internally. The generated source URL is still the
-	 * public WordPress media URL FileToWeb will fetch externally.
+	 * Resolve IPv4 and IPv6 host addresses.
 	 *
 	 * @param string $host Host.
-	 * @return bool
+	 * @return array
 	 */
-	private static function is_current_site_host( $host ) {
+	private static function resolve_host_ips( $host ) {
+		$ips  = array();
 		$host = strtolower( trim( $host, " \t\n\r\0\x0B[]" ) );
 
-		foreach ( array( home_url( '/' ), site_url( '/' ) ) as $site_url ) {
-			$site_host = strtolower( (string) parse_url( $site_url, PHP_URL_HOST ) );
+		$ipv4_records = gethostbynamel( $host );
 
-			if ( $site_host && $host === $site_host && ! self::is_private_or_local_host( $site_host ) ) {
-				return true;
+		if ( is_array( $ipv4_records ) ) {
+			$ips = array_merge( $ips, $ipv4_records );
+		}
+
+		if ( function_exists( 'dns_get_record' ) && defined( 'DNS_AAAA' ) ) {
+			$ipv6_records = dns_get_record( $host, DNS_AAAA );
+
+			if ( is_array( $ipv6_records ) ) {
+				foreach ( $ipv6_records as $record ) {
+					if ( isset( $record['ipv6'] ) ) {
+						$ips[] = $record['ipv6'];
+					}
+				}
 			}
 		}
 
-		return false;
+		if ( empty( $ips ) ) {
+			self::debug_log( 'No DNS records found for source host: ' . $host );
+		}
+
+		return array_values( array_unique( $ips ) );
 	}
 
 	/**
@@ -196,5 +203,16 @@ class Security {
 		$flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
 
 		return false === filter_var( $ip, FILTER_VALIDATE_IP, $flags );
+	}
+
+	/**
+	 * Log validation diagnostics only when WordPress debugging is active.
+	 *
+	 * @param string $message Message.
+	 */
+	private static function debug_log( $message ) {
+		if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+			error_log( '[FileToWeb] ' . $message ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		}
 	}
 }

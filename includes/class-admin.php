@@ -169,7 +169,7 @@ class Admin {
 		$page_count  = absint( get_post_meta( $post->ID, Document_State::META_PAGE_COUNT, true ) );
 		$last_synced = get_post_meta( $post->ID, Document_State::META_LAST_SYNCED_AT, true );
 
-		echo '<p><strong>' . esc_html__( 'Status:', 'filetoweb-integration' ) . '</strong> ' . esc_html( $status ? $status : __( 'not synced', 'filetoweb-integration' ) ) . '</p>';
+		self::render_status_summary( $status );
 
 		if ( $page_count ) {
 			echo '<p><strong>' . esc_html__( 'Pages:', 'filetoweb-integration' ) . '</strong> ' . esc_html( $page_count ) . '</p>';
@@ -217,6 +217,52 @@ class Admin {
 
 			echo '</p>';
 		}
+	}
+
+	/**
+	 * Render a prominent status summary.
+	 *
+	 * @param string $status Raw status.
+	 */
+	private static function render_status_summary( $status ) {
+		$status = $status ? Security::sanitize_status( $status ) : '';
+		$state  = self::status_state( $status );
+
+		$styles = array(
+			'not_synced' => array( '#646970', '#f6f7f7', __( 'Not synced', 'filetoweb-integration' ), __( 'This PDF has not been submitted to FileToWeb yet.', 'filetoweb-integration' ) ),
+			'processing' => array( '#2271b1', '#f0f6fc', __( 'Processing', 'filetoweb-integration' ), __( 'FileToWeb is processing this PDF. Poll status to check for updates.', 'filetoweb-integration' ) ),
+			'ready'      => array( '#008a20', '#edfaef', __( 'Ready', 'filetoweb-integration' ), __( 'Generated HTML is ready for public replacement.', 'filetoweb-integration' ) ),
+			'failed'     => array( '#b32d2e', '#fcf0f1', __( 'Failed', 'filetoweb-integration' ), __( 'Processing needs attention. Retry sync after reviewing the error.', 'filetoweb-integration' ) ),
+		);
+
+		$config = isset( $styles[ $state ] ) ? $styles[ $state ] : $styles['not_synced'];
+
+		echo '<div class="filetoweb-status-alert" style="border-left:4px solid ' . esc_attr( $config[0] ) . ';background:' . esc_attr( $config[1] ) . ';padding:10px 12px;margin:0 0 12px;">';
+		echo '<span style="display:inline-block;border:1px solid ' . esc_attr( $config[0] ) . ';border-radius:3px;color:' . esc_attr( $config[0] ) . ';font-weight:600;padding:2px 8px;margin-bottom:6px;">' . esc_html( $config[2] ) . '</span>';
+		echo '<p style="margin:4px 0 0;">' . esc_html( $config[3] ) . '</p>';
+		echo '</div>';
+	}
+
+	/**
+	 * Normalize a FileToWeb status into an admin display state.
+	 *
+	 * @param string $status Status.
+	 * @return string
+	 */
+	private static function status_state( $status ) {
+		if ( 'ready' === $status ) {
+			return 'ready';
+		}
+
+		if ( in_array( $status, array( 'failed', 'error' ), true ) ) {
+			return 'failed';
+		}
+
+		if ( in_array( $status, array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' ), true ) ) {
+			return 'processing';
+		}
+
+		return 'not_synced';
 	}
 
 	/**

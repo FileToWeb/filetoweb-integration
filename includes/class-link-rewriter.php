@@ -288,7 +288,7 @@ class Link_Rewriter {
 		$mime     = get_post_mime_type( $attachment_id );
 		$filename = basename( (string) parse_url( $url, PHP_URL_PATH ) );
 
-		return Source_Resolver::is_pdf_source( $url, $filename, $mime ) ? $html_url : '';
+		return Source_Resolver::is_pdf_source( $url, $filename, $mime ) ? self::ready_replacement_url( $html_url, $attachment_id, 'attachment', $url ) : '';
 	}
 
 	/**
@@ -311,10 +311,43 @@ class Link_Rewriter {
 		}
 
 		$filename = get_post_meta( $post_id, 'document_filename', true );
-		$meta     = json_decode( (string) get_post_meta( $post_id, 'document_meta', true ), true );
+		$meta     = Source_Resolver::parse_document_meta( get_post_meta( $post_id, 'document_meta', true ) );
 		$mime     = is_array( $meta ) && isset( $meta['mime'] ) ? $meta['mime'] : '';
 
-		return Source_Resolver::is_pdf_source( $url, $filename, $mime ) ? $html_url : '';
+		return Source_Resolver::is_pdf_source( $url, $filename, $mime ) ? self::ready_replacement_url( $html_url, $post_id, 'document', $url ) : '';
+	}
+
+	/**
+	 * Allow add-on plugins to replace the ready FileToWeb URL with another public URL.
+	 *
+	 * @param string $html_url FileToWeb HTML URL.
+	 * @param int    $post_id Source post ID.
+	 * @param string $context Replacement context.
+	 * @param string $source_url Original source URL.
+	 * @return string
+	 */
+	private static function ready_replacement_url( $html_url, $post_id, $context, $source_url = '' ) {
+		$html_url = Security::sanitize_filetoweb_url( $html_url );
+
+		if ( ! $html_url ) {
+			return '';
+		}
+
+		/**
+		 * Filters the public replacement URL for a ready FileToWeb source.
+		 *
+		 * Add-on plugins can return another safe public URL, such as a reviewed
+		 * native WordPress page, while the integration continues to store the
+		 * original PDF and FileToWeb state internally.
+		 *
+		 * @param string $html_url FileToWeb HTML URL.
+		 * @param int    $post_id Source attachment or Proud Document post ID.
+		 * @param string $context Replacement context.
+		 * @param string $source_url Original public source URL.
+		 */
+		$replacement = apply_filters( 'filetoweb_integration_ready_replacement_url', $html_url, absint( $post_id ), $context, $source_url );
+
+		return is_string( $replacement ) && $replacement ? esc_url_raw( $replacement ) : $html_url;
 	}
 
 	/**
@@ -382,7 +415,7 @@ class Link_Rewriter {
 				$key = Security::normalize_public_url_key( $url );
 
 				if ( $key ) {
-					self::$ready_url_map[ $key ] = $html_url;
+					self::$ready_url_map[ $key ] = self::ready_replacement_url( $html_url, $post_id, 'url_map', $url );
 				}
 			}
 		}
