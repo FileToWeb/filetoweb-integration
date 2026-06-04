@@ -277,6 +277,14 @@ class Link_Rewriter {
 			return self::$resolved_public_urls[ $key ];
 		}
 
+		$attachment_id = self::attachment_id_for_public_url( $absolute_url );
+		$html_url      = $attachment_id ? self::ready_attachment_html_url( $attachment_id, $absolute_url ) : '';
+
+		if ( $html_url ) {
+			self::$resolved_public_urls[ $key ] = $html_url;
+			return self::$resolved_public_urls[ $key ];
+		}
+
 		$map = self::ready_url_map();
 
 		if ( isset( $map[ $key ] ) ) {
@@ -284,10 +292,7 @@ class Link_Rewriter {
 			return self::$resolved_public_urls[ $key ];
 		}
 
-		$attachment_id = self::attachment_id_for_public_url( $absolute_url );
-		$html_url      = $attachment_id ? self::ready_attachment_html_url( $attachment_id, $absolute_url ) : '';
-
-		self::$resolved_public_urls[ $key ] = $html_url ? $html_url : '';
+		self::$resolved_public_urls[ $key ] = '';
 
 		return self::$resolved_public_urls[ $key ];
 	}

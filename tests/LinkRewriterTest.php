@@ -148,6 +148,7 @@ class LinkRewriterTest extends TestCase {
 				return $this->queried_object_id;
 			}
 		);
+		Functions\when( 'attachment_url_to_postid' )->justReturn( 0 );
 		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://example.test/wp-content/uploads/file.pdf' );
 		Functions\when( 'get_attached_file' )->justReturn( '/tmp/file.pdf' );
 		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
@@ -198,6 +199,45 @@ class LinkRewriterTest extends TestCase {
 		$this->assertStringContainsString( 'href="https://filetoweb.com/d/demo/1"', $rewritten );
 		$this->assertStringContainsString( 'href="https://example.test/services/"', $rewritten );
 		$this->assertSame( 1, $get_posts_calls );
+	}
+
+	public function test_direct_attachment_resolution_wins_over_stale_url_map(): void {
+		Functions\when( 'attachment_url_to_postid' )->alias(
+			function ( $url ) {
+				return 'https://example.test/wp-content/uploads/shared.pdf' === $url ? 456 : 0;
+			}
+		);
+		Functions\when( 'get_posts' )->justReturn( array( 123 ) );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) {
+				if ( 123 === $post_id ) {
+					$stale_values = array(
+						Document_State::META_STATUS       => 'ready',
+						Document_State::META_HTML_URL     => 'https://filetoweb.com/d/stale/1',
+						Document_State::META_ORIGINAL_URL => 'https://example.test/wp-content/uploads/shared.pdf',
+					);
+
+					return isset( $stale_values[ $key ] ) ? $stale_values[ $key ] : '';
+				}
+
+				if ( 456 === $post_id ) {
+					$current_values = array(
+						Document_State::META_STATUS   => 'ready',
+						Document_State::META_HTML_URL => 'https://filetoweb.com/d/current/1',
+					);
+
+					return isset( $current_values[ $key ] ) ? $current_values[ $key ] : '';
+				}
+
+				return '';
+			}
+		);
+
+		$content = '<p><a href="https://example.test/wp-content/uploads/shared.pdf">PDF</a></p>';
+		$rewritten = Link_Rewriter::filter_content_pdf_links( $content );
+
+		$this->assertStringContainsString( 'href="https://filetoweb.com/d/current/1"', $rewritten );
+		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale/1', $rewritten );
 	}
 
 	public function test_ready_replacement_url_filter_can_override_pdf_links(): void {
