@@ -441,6 +441,51 @@ class LinkRewriterTest extends TestCase {
 		$this->assertSame( $html, Link_Rewriter::filter_meeting_viewer_output( $html ) );
 	}
 
+	public function test_single_meeting_content_preserves_download_and_rewrites_preview(): void {
+		$this->post_types[789]     = 'meeting';
+		$this->queried_object_id   = 789;
+		$this->is_meeting_singular = true;
+		$source_url                = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$html_url                  = 'https://filetoweb.com/d/meeting-demo/1';
+		$continuous_url            = 'https://filetoweb.com/d/meeting-demo';
+
+		Functions\when( 'wp_get_attachment_url' )->alias(
+			function ( $attachment_id ) use ( $source_url ) {
+				return 101 === $attachment_id ? $source_url : '';
+			}
+		);
+		Functions\when( 'get_posts' )->justReturn( array( 101 ) );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $source_url, $html_url, $continuous_url ) {
+				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
+					return 101;
+				}
+
+				if ( 101 !== $post_id ) {
+					return '';
+				}
+
+				$values = array(
+					Document_State::META_STATUS         => 'ready',
+					Document_State::META_HTML_URL       => $html_url,
+					Document_State::META_CONTINUOUS_URL => $continuous_url,
+					Document_State::META_ORIGINAL_URL   => $source_url,
+				);
+
+				return isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$html = '<p><a href="' . $source_url . '">Download Agenda</a></p>'
+			. '<iframe src="//docs.google.com/gview?url=' . rawurlencode( $source_url ) . '&amp;embedded=true" title="Agenda"></iframe>';
+
+		$rewritten = Link_Rewriter::filter_content_pdf_links( $html );
+
+		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
+		$this->assertStringContainsString( 'src="' . $continuous_url . '"', $rewritten );
+		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
+	}
+
 	public function test_single_meeting_attachment_url_preserves_original_download(): void {
 		$this->post_types[789]     = 'meeting';
 		$this->queried_object_id   = 789;

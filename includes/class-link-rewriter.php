@@ -299,6 +299,10 @@ class Link_Rewriter {
 	 * @return string
 	 */
 	private static function replace_content_link_href( $matches ) {
+		if ( self::is_current_meeting_material_url( $matches[3] ) ) {
+			return $matches[0];
+		}
+
 		$html_url = self::filetoweb_url_for_wordpress_url( $matches[3] );
 
 		if ( ! $html_url ) {
@@ -897,6 +901,46 @@ class Link_Rewriter {
 		}
 
 		return in_array( absint( $attachment_id ), array_map( 'absint', Meeting_Materials::attachment_ids_for_meeting( $meeting_id ) ), true );
+	}
+
+	/**
+	 * Is this URL a PDF material attached to the queried ProudCity Meeting?
+	 *
+	 * @param string $url URL.
+	 * @return bool
+	 */
+	private static function is_current_meeting_material_url( $url ) {
+		if ( ! Meeting_Materials::enabled() || ! function_exists( 'is_singular' ) || ! is_singular( 'meeting' ) ) {
+			return false;
+		}
+
+		$absolute_url = self::absolute_public_url( $url );
+
+		if ( ! $absolute_url ) {
+			return false;
+		}
+
+		$attachment_id = self::attachment_id_for_public_url( $absolute_url );
+
+		if ( $attachment_id && self::is_current_meeting_material_attachment( $attachment_id ) ) {
+			return true;
+		}
+
+		$meeting_id = self::$meeting_viewer_post_id ? self::$meeting_viewer_post_id : ( function_exists( 'get_queried_object_id' ) ? absint( get_queried_object_id() ) : 0 );
+
+		if ( ! $meeting_id ) {
+			return false;
+		}
+
+		foreach ( Meeting_Materials::attachment_ids_for_meeting( $meeting_id ) as $meeting_attachment_id ) {
+			$meeting_url = Source_Resolver::original_attachment_url( $meeting_attachment_id );
+
+			if ( $meeting_url && self::public_urls_match( $absolute_url, $meeting_url ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9
+
+- Preserves literal ProudCity Meeting material download links when they are rendered inside post content.
+
 ## 0.1.8
 
 - Adds optional ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes attachments.
