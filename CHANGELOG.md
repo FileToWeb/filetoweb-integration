@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.10
+
+- Prefers the current ProudCity Meeting material when rewriting preview iframes for reused or duplicate PDF URLs.
+
 ## 0.1.9
 
 - Preserves literal ProudCity Meeting material download links when they are rendered inside post content.

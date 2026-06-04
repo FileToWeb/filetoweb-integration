@@ -454,11 +454,22 @@ class LinkRewriterTest extends TestCase {
 				return 101 === $attachment_id ? $source_url : '';
 			}
 		);
-		Functions\when( 'get_posts' )->justReturn( array( 101 ) );
+		Functions\when( 'get_posts' )->justReturn( array( 999, 101 ) );
 		Functions\when( 'get_post_meta' )->alias(
 			function ( $post_id, $key ) use ( $source_url, $html_url, $continuous_url ) {
 				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
 					return 101;
+				}
+
+				if ( 999 === $post_id ) {
+					$stale_values = array(
+						Document_State::META_STATUS         => 'ready',
+						Document_State::META_HTML_URL       => 'https://filetoweb.com/d/stale-demo/1',
+						Document_State::META_CONTINUOUS_URL => 'https://filetoweb.com/d/stale-demo',
+						Document_State::META_ORIGINAL_URL   => $source_url,
+					);
+
+					return isset( $stale_values[ $key ] ) ? $stale_values[ $key ] : '';
 				}
 
 				if ( 101 !== $post_id ) {
@@ -483,6 +494,7 @@ class LinkRewriterTest extends TestCase {
 
 		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
 		$this->assertStringContainsString( 'src="' . $continuous_url . '"', $rewritten );
+		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale-demo', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
 	}
 

@@ -322,6 +322,12 @@ class Link_Rewriter {
 		$quote       = $matches[1];
 		$raw_url     = html_entity_decode( $matches[2], ENT_QUOTES, 'UTF-8' );
 		$url         = rawurldecode( $raw_url );
+		$preview_url = self::ready_current_meeting_material_viewer_url( $url );
+
+		if ( $preview_url ) {
+			return 'src=' . $quote . esc_url( $preview_url ) . $quote;
+		}
+
 		$html_url    = Security::sanitize_filetoweb_url( $url );
 
 		if ( ! $html_url ) {
@@ -941,6 +947,40 @@ class Link_Rewriter {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Resolve a current Meeting material source URL directly to its ready viewer URL.
+	 *
+	 * @param string $url Source URL.
+	 * @return string
+	 */
+	private static function ready_current_meeting_material_viewer_url( $url ) {
+		if ( ! Meeting_Materials::enabled() || ! function_exists( 'is_singular' ) || ! is_singular( 'meeting' ) ) {
+			return '';
+		}
+
+		$absolute_url = self::absolute_public_url( $url );
+
+		if ( ! $absolute_url ) {
+			return '';
+		}
+
+		$meeting_id = self::$meeting_viewer_post_id ? self::$meeting_viewer_post_id : ( function_exists( 'get_queried_object_id' ) ? absint( get_queried_object_id() ) : 0 );
+
+		if ( ! $meeting_id ) {
+			return '';
+		}
+
+		foreach ( Meeting_Materials::attachment_ids_for_meeting( $meeting_id ) as $meeting_attachment_id ) {
+			$meeting_url = Source_Resolver::original_attachment_url( $meeting_attachment_id );
+
+			if ( $meeting_url && self::public_urls_match( $absolute_url, $meeting_url ) ) {
+				return Meeting_Materials::ready_viewer_url_for_attachment( $meeting_attachment_id );
+			}
+		}
+
+		return '';
 	}
 
 	/**
