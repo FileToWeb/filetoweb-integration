@@ -3,7 +3,7 @@
  * Plugin Name:       FileToWeb Integration
  * Plugin URI:        https://filetoweb.com
  * Description:       Converts PDF attachments and Proud Document files with FileToWeb, then replaces public PDF links with generated HTML links when ready.
- * Version:           0.1.7
+ * Version:           0.1.8
  * Requires at least: 5.7
  * Requires PHP:      7.4
  * Author:            FileToWeb
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'FILETOWEB_INTEGRATION_VERSION', '0.1.7' );
+define( 'FILETOWEB_INTEGRATION_VERSION', '0.1.8' );
 define( 'FILETOWEB_INTEGRATION_FILE', __FILE__ );
 define( 'FILETOWEB_INTEGRATION_PATH', plugin_dir_path( __FILE__ ) );
 define( 'FILETOWEB_INTEGRATION_URL', plugin_dir_url( __FILE__ ) );
@@ -30,6 +30,7 @@ require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-source-resolver.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-sync.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-cron.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-admin.php';
+require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-meeting-materials.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-link-rewriter.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-widget.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-plugin.php';

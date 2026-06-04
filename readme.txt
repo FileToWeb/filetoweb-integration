@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.7
+Stable tag: 0.1.8
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,7 @@ Features:
 * WP-Cron polling for pending conversions.
 * Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata.
 * ProudCity Document preview replacement while preserving the original PDF download link.
+* ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync and preview replacement.
 * Standard WordPress widget for linking to a PDF attachment or Proud Document.
 * Original PDF links are preserved in admin screens.
 
@@ -67,6 +68,12 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.8 =
+
+* Adds guarded ProudCity Meeting support for agenda, agenda packet, and minutes attachments.
+* Adds a Meeting edit-screen FileToWeb panel with per-material sync/poll actions and sync-all for the current meeting.
+* Replaces ready Meeting Google Docs preview iframes with FileToWeb HTML while preserving original PDF downloads.
 
 = 0.1.7 =
 

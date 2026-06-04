@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8
+
+- Adds optional ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes attachments.
+- Adds a Meeting edit-screen FileToWeb panel with per-material sync/poll actions and sync-all for the current meeting.
+- Replaces ready Meeting Google Docs preview iframes with FileToWeb HTML while preserving original PDF downloads.
+
 ## 0.1.7
 
 - Hardens source URL safety checks for IPv4/IPv6 private addresses and WordPress HTTP unsafe URL rejection.

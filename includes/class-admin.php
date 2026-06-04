@@ -418,7 +418,7 @@ class Admin {
 	 *
 	 * @param string $message Message.
 	 */
-	private static function set_notice( $message ) {
+	public static function set_notice( $message ) {
 		set_transient( self::notice_key(), sanitize_text_field( $message ), 60 );
 	}
 

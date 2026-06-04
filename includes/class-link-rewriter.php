@@ -41,6 +41,13 @@ class Link_Rewriter {
 	private static $document_viewer_post_id = 0;
 
 	/**
+	 * Current ProudCity Meeting being rewritten by the output buffer.
+	 *
+	 * @var int
+	 */
+	private static $meeting_viewer_post_id = 0;
+
+	/**
 	 * Register hooks.
 	 */
 	public static function init() {
@@ -50,6 +57,7 @@ class Link_Rewriter {
 		add_filter( 'widget_text', array( __CLASS__, 'filter_content_pdf_links' ), 20 );
 		add_filter( 'widget_text_content', array( __CLASS__, 'filter_content_pdf_links' ), 20 );
 		add_action( 'template_redirect', array( __CLASS__, 'maybe_start_document_viewer_buffer' ), 0 );
+		add_action( 'template_redirect', array( __CLASS__, 'maybe_start_meeting_viewer_buffer' ), 0 );
 	}
 
 	/**
@@ -61,6 +69,10 @@ class Link_Rewriter {
 	 */
 	public static function filter_attachment_url( $url, $attachment_id ) {
 		if ( Source_Resolver::is_reading_original_source() || ! self::is_public_replacement_context() ) {
+			return $url;
+		}
+
+		if ( self::is_current_meeting_material_attachment( $attachment_id ) ) {
 			return $url;
 		}
 
@@ -177,6 +189,56 @@ class Link_Rewriter {
 			'~<iframe\b[^>]*>~is',
 			function ( $matches ) use ( $viewer_url, $source_url ) {
 				return self::replace_document_viewer_iframe( $matches[0], $viewer_url, $source_url );
+			},
+			$html
+		);
+	}
+
+	/**
+	 * Start a scoped output buffer for the ProudCity single Meeting viewer.
+	 */
+	public static function maybe_start_meeting_viewer_buffer() {
+		if ( ! self::should_rewrite_meeting_viewer() ) {
+			return;
+		}
+
+		$post_id = absint( get_queried_object_id() );
+
+		if ( ! $post_id || empty( self::ready_meeting_viewer_map( $post_id ) ) ) {
+			return;
+		}
+
+		self::$meeting_viewer_post_id = $post_id;
+		ob_start( array( __CLASS__, 'filter_meeting_viewer_output' ) );
+	}
+
+	/**
+	 * Replace ProudCity Meeting Google Docs preview iframes with FileToWeb HTML.
+	 *
+	 * @param string $html Rendered page HTML.
+	 * @return string
+	 */
+	public static function filter_meeting_viewer_output( $html ) {
+		if ( ! is_string( $html ) || false === stripos( $html, 'docs.google.com/gview' ) ) {
+			return $html;
+		}
+
+		$post_id = self::$meeting_viewer_post_id;
+
+		if ( ! $post_id && function_exists( 'get_queried_object_id' ) ) {
+			$post_id = absint( get_queried_object_id() );
+		}
+
+		$map = self::ready_meeting_viewer_map( $post_id );
+
+		if ( empty( $map ) ) {
+			return $html;
+		}
+
+		return preg_replace_callback(
+			'~<iframe\b[^>]*>~is',
+			function ( $matches ) use ( $map ) {
+				return self::replace_meeting_viewer_iframe( $matches[0], $map );
 			},
 			$html
 		);
@@ -370,6 +432,38 @@ class Link_Rewriter {
 	}
 
 	/**
+	 * Build original-url => ready-viewer-url map for a single ProudCity Meeting.
+	 *
+	 * @param int $post_id Meeting post ID.
+	 * @return array
+	 */
+	private static function ready_meeting_viewer_map( $post_id ) {
+		$post_id = absint( $post_id );
+		$map     = array();
+
+		if ( ! $post_id || ! Meeting_Materials::enabled() ) {
+			return $map;
+		}
+
+		foreach ( Meeting_Materials::attachment_ids_for_meeting( $post_id ) as $attachment_id ) {
+			$source_url = Source_Resolver::original_attachment_url( $attachment_id );
+			$viewer_url = Meeting_Materials::ready_viewer_url_for_attachment( $attachment_id );
+
+			if ( ! $source_url || ! $viewer_url ) {
+				continue;
+			}
+
+			$key = Security::normalize_public_url_key( $source_url );
+
+			if ( $key ) {
+				$map[ $key ] = $viewer_url;
+			}
+		}
+
+		return $map;
+	}
+
+	/**
 	 * Build original-url => ready-html-url map once per request.
 	 *
 	 * @return array
@@ -499,6 +593,42 @@ class Link_Rewriter {
 		if ( ! $preview_source || ! self::public_urls_match( $preview_source, $source_url ) ) {
 			return $iframe;
 		}
+
+		return preg_replace_callback(
+			'~\bsrc=(["\'])(.*?)\1~is',
+			function ( $matches ) use ( $viewer_url ) {
+				return 'src=' . $matches[1] . esc_url( $viewer_url ) . $matches[1];
+			},
+			$iframe,
+			1
+		);
+	}
+
+	/**
+	 * Replace a ProudCity Meeting preview iframe src when its source PDF is ready.
+	 *
+	 * @param string $iframe Iframe HTML.
+	 * @param array  $map Original URL to FileToWeb viewer URL map.
+	 * @return string
+	 */
+	private static function replace_meeting_viewer_iframe( $iframe, $map ) {
+		if ( ! preg_match( '~\bsrc=(["\'])(.*?)\1~is', $iframe, $src_match ) ) {
+			return $iframe;
+		}
+
+		$preview_source = self::google_docs_preview_source_url( $src_match[2] );
+
+		if ( ! $preview_source ) {
+			return $iframe;
+		}
+
+		$key = Security::normalize_public_url_key( $preview_source );
+
+		if ( ! $key || empty( $map[ $key ] ) ) {
+			return $iframe;
+		}
+
+		$viewer_url = $map[ $key ];
 
 		return preg_replace_callback(
 			'~\bsrc=(["\'])(.*?)\1~is',
@@ -746,6 +876,30 @@ class Link_Rewriter {
 	}
 
 	/**
+	 * Is the URL being requested for a material on the queried ProudCity Meeting?
+	 *
+	 * @param int $attachment_id Attachment ID.
+	 * @return bool
+	 */
+	private static function is_current_meeting_material_attachment( $attachment_id ) {
+		if ( ! $attachment_id || ! Meeting_Materials::enabled() ) {
+			return false;
+		}
+
+		if ( ! function_exists( 'is_singular' ) || ! is_singular( 'meeting' ) || ! function_exists( 'get_queried_object_id' ) ) {
+			return false;
+		}
+
+		$meeting_id = self::$meeting_viewer_post_id ? self::$meeting_viewer_post_id : absint( get_queried_object_id() );
+
+		if ( ! $meeting_id ) {
+			return false;
+		}
+
+		return in_array( absint( $attachment_id ), array_map( 'absint', Meeting_Materials::attachment_ids_for_meeting( $meeting_id ) ), true );
+	}
+
+	/**
 	 * Should the ProudCity document viewer buffer run?
 	 *
 	 * @return bool
@@ -764,6 +918,27 @@ class Link_Rewriter {
 		}
 
 		return (bool) apply_filters( 'filetoweb_integration_rewrite_document_viewer', true );
+	}
+
+	/**
+	 * Should the ProudCity Meeting viewer buffer run?
+	 *
+	 * @return bool
+	 */
+	private static function should_rewrite_meeting_viewer() {
+		if ( ! self::is_public_replacement_context() ) {
+			return false;
+		}
+
+		if ( function_exists( 'is_preview' ) && is_preview() ) {
+			return false;
+		}
+
+		if ( ! Meeting_Materials::enabled() || ! function_exists( 'is_singular' ) || ! is_singular( 'meeting' ) || ! function_exists( 'get_queried_object_id' ) ) {
+			return false;
+		}
+
+		return (bool) apply_filters( 'filetoweb_integration_rewrite_meeting_viewer', true );
 	}
 
 	/**

@@ -26,6 +26,7 @@ require_once __DIR__ . '/../includes/class-source-resolver.php';
 require_once __DIR__ . '/../includes/class-sync.php';
 require_once __DIR__ . '/../includes/class-cron.php';
 require_once __DIR__ . '/../includes/class-admin.php';
+require_once __DIR__ . '/../includes/class-meeting-materials.php';
 require_once __DIR__ . '/../includes/class-link-rewriter.php';
 require_once __DIR__ . '/../includes/class-widget.php';
 require_once __DIR__ . '/../includes/class-plugin.php';

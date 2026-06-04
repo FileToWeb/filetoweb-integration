@@ -30,6 +30,13 @@ class LinkRewriterTest extends TestCase {
 	private $is_document_singular = false;
 
 	/**
+	 * Whether the current request is a single ProudCity Meeting.
+	 *
+	 * @var bool
+	 */
+	private $is_meeting_singular = false;
+
+	/**
 	 * Replacement URL returned by the add-on filter.
 	 *
 	 * @var string
@@ -43,9 +50,11 @@ class LinkRewriterTest extends TestCase {
 		$this->post_types           = array();
 		$this->queried_object_id    = 0;
 		$this->is_document_singular = false;
+		$this->is_meeting_singular  = false;
 		$this->replacement_url      = '';
 
 		Functions\when( 'esc_url_raw' )->returnArg();
+		Functions\when( '__' )->returnArg();
 		Functions\when( 'wp_unslash' )->returnArg();
 		Functions\when( 'esc_url' )->returnArg();
 		Functions\when( 'is_admin' )->justReturn( false );
@@ -123,7 +132,15 @@ class LinkRewriterTest extends TestCase {
 		);
 		Functions\when( 'is_singular' )->alias(
 			function ( $post_type = '' ) {
-				return 'document' === $post_type && $this->is_document_singular;
+				if ( 'document' === $post_type ) {
+					return $this->is_document_singular;
+				}
+
+				if ( 'meeting' === $post_type ) {
+					return $this->is_meeting_singular;
+				}
+
+				return false;
 			}
 		);
 		Functions\when( 'get_queried_object_id' )->alias(
@@ -132,6 +149,8 @@ class LinkRewriterTest extends TestCase {
 			}
 		);
 		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://example.test/wp-content/uploads/file.pdf' );
+		Functions\when( 'get_attached_file' )->justReturn( '/tmp/file.pdf' );
+		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
 		Functions\when( 'get_permalink' )->justReturn( 'https://example.test/file/' );
 	}
 
@@ -339,10 +358,121 @@ class LinkRewriterTest extends TestCase {
 		$this->assertNull( Link_Rewriter::filter_document_meta( null, 456, 'document', true ) );
 	}
 
+	public function test_rewrites_ready_meeting_viewer_and_preserves_download(): void {
+		$this->post_types[789]      = 'meeting';
+		$this->queried_object_id    = 789;
+		$this->is_meeting_singular  = true;
+		$source_url                 = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$continuous_url             = 'https://filetoweb.com/d/meeting-demo';
+
+		Functions\when( 'wp_get_attachment_url' )->alias(
+			function ( $attachment_id ) use ( $source_url ) {
+				return 101 === $attachment_id ? $source_url : '';
+			}
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $continuous_url ) {
+				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
+					return 101;
+				}
+
+				if ( 101 !== $post_id ) {
+					return '';
+				}
+
+				$values = array(
+					Document_State::META_STATUS         => 'ready',
+					Document_State::META_HTML_URL       => 'https://filetoweb.com/d/meeting-demo/1',
+					Document_State::META_CONTINUOUS_URL => $continuous_url,
+				);
+
+				return isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$html = '<a href="' . $source_url . '" class="btn btn-primary btn-sm" download="agenda.pdf">Download</a>'
+			. '<iframe src="//docs.google.com/gview?url=' . rawurlencode( $source_url ) . '&amp;embedded=true" title="Agenda" id="doc-preview"></iframe>';
+
+		$rewritten = Link_Rewriter::filter_meeting_viewer_output( $html );
+
+		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
+		$this->assertStringContainsString( 'download="agenda.pdf"', $rewritten );
+		$this->assertStringContainsString( 'src="' . $continuous_url . '"', $rewritten );
+		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
+	}
+
+	public function test_pending_meeting_viewer_stays_original(): void {
+		$this->post_types[789]     = 'meeting';
+		$this->queried_object_id   = 789;
+		$this->is_meeting_singular = true;
+		$source_url                = 'https://example.test/wp-content/uploads/agenda.pdf';
+
+		Functions\when( 'wp_get_attachment_url' )->alias(
+			function ( $attachment_id ) use ( $source_url ) {
+				return 101 === $attachment_id ? $source_url : '';
+			}
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) {
+				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
+					return 101;
+				}
+
+				if ( 101 === $post_id && Document_State::META_STATUS === $key ) {
+					return 'processing';
+				}
+
+				return '';
+			}
+		);
+
+		$html = '<iframe src="//docs.google.com/gview?url=' . rawurlencode( $source_url ) . '&amp;embedded=true" title="Agenda" id="doc-preview"></iframe>';
+
+		$this->assertSame( $html, Link_Rewriter::filter_meeting_viewer_output( $html ) );
+	}
+
+	public function test_office_meeting_preview_stays_original(): void {
+		$this->post_types[789]     = 'meeting';
+		$this->queried_object_id   = 789;
+		$this->is_meeting_singular = true;
+
+		$html = '<iframe src="https://view.officeapps.live.com/op/embed.aspx?src=https%3A%2F%2Fexample.test%2Fwp-content%2Fuploads%2Fminutes.docx" title="Minutes"></iframe>';
+
+		$this->assertSame( $html, Link_Rewriter::filter_meeting_viewer_output( $html ) );
+	}
+
+	public function test_single_meeting_attachment_url_preserves_original_download(): void {
+		$this->post_types[789]     = 'meeting';
+		$this->queried_object_id   = 789;
+		$this->is_meeting_singular = true;
+		$source_url                = 'https://example.test/wp-content/uploads/agenda.pdf';
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) {
+				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
+					return 101;
+				}
+
+				if ( 101 === $post_id ) {
+					$values = array(
+						Document_State::META_STATUS   => 'ready',
+						Document_State::META_HTML_URL => 'https://filetoweb.com/d/meeting-demo/1',
+					);
+
+					return isset( $values[ $key ] ) ? $values[ $key ] : '';
+				}
+
+				return '';
+			}
+		);
+
+		$this->assertSame( $source_url, Link_Rewriter::filter_attachment_url( $source_url, 101 ) );
+	}
+
 	private function reset_rewriter_cache(): void {
 		$reflection = new ReflectionClass( Link_Rewriter::class );
 
-		foreach ( array( 'ready_url_map', 'preview_url_map', 'resolved_public_urls', 'document_viewer_post_id' ) as $property_name ) {
+		foreach ( array( 'ready_url_map', 'preview_url_map', 'resolved_public_urls', 'document_viewer_post_id', 'meeting_viewer_post_id' ) as $property_name ) {
 			$property = $reflection->getProperty( $property_name );
 
 			if ( PHP_VERSION_ID < 80100 ) {
@@ -351,7 +481,7 @@ class LinkRewriterTest extends TestCase {
 
 			if ( 'resolved_public_urls' === $property_name ) {
 				$property->setValue( null, array() );
-			} elseif ( 'document_viewer_post_id' === $property_name ) {
+			} elseif ( in_array( $property_name, array( 'document_viewer_post_id', 'meeting_viewer_post_id' ), true ) ) {
 				$property->setValue( null, 0 );
 			} else {
 				$property->setValue( null, null );

@@ -7,10 +7,13 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - Newly created or edited PDF attachments are submitted to FileToWeb.
 - Upload-triggered syncs nudge WP-Cron, and polling retries recently missed or transiently timed-out uploads.
 - Proud Document saves reuse the linked attachment when one is present; otherwise the plugin resolves the document URL back to a WordPress attachment with `attachment_url_to_postid()`.
+- ProudCity Meeting Agenda, Agenda Packet, and Minutes attachments sync independently when the Meeting is saved.
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
 - Public front-end PDF links are replaced with FileToWeb HTML links only after the document is ready.
+- ProudCity Meeting preview iframes can show the ready FileToWeb viewer while keeping Download buttons pointed at the original PDF.
 - Add-on plugins can override the ready public replacement URL through `filetoweb_integration_ready_replacement_url`, for example to use a reviewed native WordPress page.
 - Sites can disable the bundled FileToWeb widget with `filetoweb_integration_enable_widget`.
+- ProudCity sites can disable meeting material support with `filetoweb_integration_enable_meeting_materials` or disable only meeting preview rewrites with `filetoweb_integration_rewrite_meeting_viewer`.
 - Admin screens keep the original PDF link and show FileToWeb status, generated HTML, editor link, manual sync, and poll actions.
 - Manual backfill is available from **Settings > FileToWeb** and is bounded by the configured batch size.
 
@@ -37,6 +40,7 @@ The plugin rewrites:
 - literal PDF and attachment-page links inside `the_content`
 - text widget content
 - Google Docs preview iframe URLs inside filtered content when they wrap a ready FileToWeb page
+- ProudCity single Meeting Google Docs preview iframes for ready Agenda, Agenda Packet, and Minutes PDFs
 
 The original WordPress file remains intact.
 
