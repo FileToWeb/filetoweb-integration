@@ -438,6 +438,7 @@ class LinkRewriterTest extends TestCase {
 		$this->queried_object_id    = 789;
 		$this->is_meeting_singular  = true;
 		$source_url                 = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$html_url                   = 'https://filetoweb.com/d/meeting-demo/1';
 		$continuous_url             = 'https://filetoweb.com/d/meeting-demo';
 
 		Functions\when( 'wp_get_attachment_url' )->alias(
@@ -446,7 +447,7 @@ class LinkRewriterTest extends TestCase {
 			}
 		);
 		Functions\when( 'get_post_meta' )->alias(
-			function ( $post_id, $key ) use ( $continuous_url ) {
+			function ( $post_id, $key ) use ( $html_url, $continuous_url ) {
 				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
 					return 101;
 				}
@@ -457,7 +458,7 @@ class LinkRewriterTest extends TestCase {
 
 				$values = array(
 					Document_State::META_STATUS         => 'ready',
-					Document_State::META_HTML_URL       => 'https://filetoweb.com/d/meeting-demo/1',
+					Document_State::META_HTML_URL       => $html_url,
 					Document_State::META_CONTINUOUS_URL => $continuous_url,
 				);
 
@@ -472,7 +473,8 @@ class LinkRewriterTest extends TestCase {
 
 		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
 		$this->assertStringContainsString( 'download="agenda.pdf"', $rewritten );
-		$this->assertStringContainsString( 'src="' . $continuous_url . '"', $rewritten );
+		$this->assertStringContainsString( 'src="' . $html_url . '"', $rewritten );
+		$this->assertStringNotContainsString( 'src="' . $continuous_url . '"', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
 	}
 
@@ -568,7 +570,8 @@ class LinkRewriterTest extends TestCase {
 		$rewritten = Link_Rewriter::filter_content_pdf_links( $html );
 
 		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
-		$this->assertStringContainsString( 'src="' . $continuous_url . '"', $rewritten );
+		$this->assertStringContainsString( 'src="' . $html_url . '"', $rewritten );
+		$this->assertStringNotContainsString( 'src="' . $continuous_url . '"', $rewritten );
 		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale-demo', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
 	}

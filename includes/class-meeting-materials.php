@@ -282,15 +282,14 @@ class Meeting_Materials {
 			return '';
 		}
 
-		$html_url = Document_State::ready_html_url( $attachment_id );
+		$html_url       = Document_State::ready_html_url( $attachment_id );
+		$continuous_url = Document_State::ready_continuous_url( $attachment_id );
 
-		if ( ! $html_url ) {
+		if ( ! $html_url && ! $continuous_url ) {
 			return '';
 		}
 
-		$continuous_url = Document_State::ready_continuous_url( $attachment_id );
-
-		return $continuous_url ? $continuous_url : $html_url;
+		return $html_url ? $html_url : $continuous_url;
 	}
 
 	/**
