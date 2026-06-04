@@ -64,6 +64,7 @@ class ApiClientTest extends TestCase {
 					function ( $args ) {
 						return is_array( $args )
 							&& ! empty( $args['reject_unsafe_urls'] )
+							&& 20 === $args['timeout']
 							&& 'GET' === $args['method'];
 					}
 				)

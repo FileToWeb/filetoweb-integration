@@ -56,7 +56,7 @@ class Api_Client {
 		$url  = untrailingslashit( $base_url ) . '/v1' . $path;
 		$args = array(
 			'method'             => $method,
-			'timeout'            => 60,
+			'timeout'            => self::request_timeout( $method, $path ),
 			'redirection'        => 0,
 			'reject_unsafe_urls' => true,
 			'headers'            => array(
@@ -107,6 +107,19 @@ class Api_Client {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Bounded API request timeout for admin/save flows.
+	 *
+	 * @param string $method HTTP method.
+	 * @param string $path API path below /v1.
+	 * @return int
+	 */
+	private static function request_timeout( $method, $path ) {
+		$timeout = apply_filters( 'filetoweb_integration_api_timeout', 20, $method, $path );
+
+		return max( 5, min( 45, absint( $timeout ) ) );
 	}
 
 	/**
