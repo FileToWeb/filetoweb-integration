@@ -240,6 +240,41 @@ class LinkRewriterTest extends TestCase {
 		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale/1', $rewritten );
 	}
 
+	public function test_ready_url_map_keeps_newest_duplicate_source_url(): void {
+		Functions\when( 'get_posts' )->justReturn( array( 456, 123 ) );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) {
+				if ( 456 === $post_id ) {
+					$current_values = array(
+						Document_State::META_STATUS       => 'ready',
+						Document_State::META_HTML_URL     => 'https://filetoweb.com/d/current/1',
+						Document_State::META_ORIGINAL_URL => 'https://example.test/wp-content/uploads/shared.pdf',
+					);
+
+					return isset( $current_values[ $key ] ) ? $current_values[ $key ] : '';
+				}
+
+				if ( 123 === $post_id ) {
+					$stale_values = array(
+						Document_State::META_STATUS       => 'ready',
+						Document_State::META_HTML_URL     => 'https://filetoweb.com/d/stale/1',
+						Document_State::META_ORIGINAL_URL => 'https://example.test/wp-content/uploads/shared.pdf',
+					);
+
+					return isset( $stale_values[ $key ] ) ? $stale_values[ $key ] : '';
+				}
+
+				return '';
+			}
+		);
+
+		$content = '<p><a href="https://example.test/wp-content/uploads/shared.pdf">PDF</a></p>';
+		$rewritten = Link_Rewriter::filter_content_pdf_links( $content );
+
+		$this->assertStringContainsString( 'href="https://filetoweb.com/d/current/1"', $rewritten );
+		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale/1', $rewritten );
+	}
+
 	public function test_ready_replacement_url_filter_can_override_pdf_links(): void {
 		$this->replacement_url = 'https://example.test/native-page/';
 

@@ -501,6 +501,8 @@ class Link_Rewriter {
 				'fields'         => 'ids',
 				'meta_key'       => Document_State::META_STATUS,
 				'meta_value'     => 'ready',
+				'orderby'        => 'ID',
+				'order'          => 'DESC',
 			)
 		);
 
@@ -523,7 +525,7 @@ class Link_Rewriter {
 			foreach ( $urls as $url ) {
 				$key = Security::normalize_public_url_key( $url );
 
-				if ( $key ) {
+				if ( $key && ! isset( self::$ready_url_map[ $key ] ) ) {
 					self::$ready_url_map[ $key ] = self::ready_replacement_url( $html_url, $post_id, 'url_map', $url );
 				}
 			}
@@ -707,18 +709,18 @@ class Link_Rewriter {
 	 * @return int
 	 */
 	private static function attachment_id_for_public_url( $url ) {
+		$attachment_id = self::attachment_id_for_upload_url( $url );
+
+		if ( $attachment_id ) {
+			return $attachment_id;
+		}
+
 		if ( function_exists( 'attachment_url_to_postid' ) ) {
 			$attachment_id = attachment_url_to_postid( $url );
 
 			if ( $attachment_id ) {
 				return absint( $attachment_id );
 			}
-		}
-
-		$attachment_id = self::attachment_id_for_upload_url( $url );
-
-		if ( $attachment_id ) {
-			return $attachment_id;
 		}
 
 		if ( function_exists( 'url_to_postid' ) ) {
@@ -776,6 +778,8 @@ class Link_Rewriter {
 				'meta_key'         => '_wp_attached_file',
 				'meta_value'       => $relative,
 				'numberposts'      => 1,
+				'orderby'          => 'ID',
+				'order'            => 'DESC',
 				'post_status'      => 'inherit',
 				'post_type'        => 'attachment',
 				'suppress_filters' => true,

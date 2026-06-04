@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.12
+Stable tag: 0.1.13
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -68,6 +68,10 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.13 =
+
+* Makes duplicate upload URL handling deterministic by preferring the newest matching WordPress attachment and preserving the newest ready URL map entry.
 
 = 0.1.12 =
 
