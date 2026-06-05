@@ -8,9 +8,14 @@ use FileToWeb\Integration\Settings;
 use PHPUnit\Framework\TestCase;
 
 class WidgetTest extends TestCase {
+	private $uploads_dir = '';
+
 	protected function setUp(): void {
 		parent::setUp();
 		Monkey\setUp();
+
+		$this->uploads_dir = sys_get_temp_dir() . '/ftw-widget-' . uniqid();
+		mkdir( $this->uploads_dir . '/filetoweb-integration', 0777, true );
 
 		Functions\when( '__' )->returnArg();
 		Functions\when( 'esc_url_raw' )->returnArg();
@@ -36,11 +41,33 @@ class WidgetTest extends TestCase {
 				return abs( intval( $value ) );
 			}
 		);
-		Functions\when( 'untrailingslashit' )->alias(
-			function ( $value ) {
-				return rtrim( (string) $value, '/' );
-			}
-		);
+			Functions\when( 'untrailingslashit' )->alias(
+				function ( $value ) {
+					return rtrim( (string) $value, '/' );
+				}
+			);
+			Functions\when( 'trailingslashit' )->alias(
+				function ( $value ) {
+					return rtrim( (string) $value, '/' ) . '/';
+				}
+			);
+			Functions\when( 'wp_upload_dir' )->alias(
+				function () {
+					return array(
+						'basedir' => $this->uploads_dir,
+					);
+				}
+			);
+			Functions\when( 'home_url' )->alias(
+				function ( $path = '' ) {
+					return 'https://example.test' . $path;
+				}
+			);
+			Functions\when( 'add_query_arg' )->alias(
+				function ( $args, $url ) {
+					return rtrim( (string) $url, '/' ) . '/?' . http_build_query( $args );
+				}
+			);
 		Functions\when( 'apply_filters' )->alias(
 			function ( $tag, $value ) {
 				return $value;
@@ -64,13 +91,23 @@ class WidgetTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
+		if ( $this->uploads_dir && is_dir( $this->uploads_dir ) ) {
+			foreach ( glob( $this->uploads_dir . '/filetoweb-integration/*' ) as $file ) {
+				unlink( $file );
+			}
+			rmdir( $this->uploads_dir . '/filetoweb-integration' );
+			rmdir( $this->uploads_dir );
+		}
+
 		Monkey\tearDown();
 		parent::tearDown();
 	}
 
-	public function test_widget_renders_ready_filetoweb_url(): void {
+	public function test_widget_renders_ready_local_html_url(): void {
+		$local_path = $this->local_html_file( 123 );
+
 		Functions\when( 'get_post_meta' )->alias(
-			function ( $post_id, $key ) {
+			function ( $post_id, $key ) use ( $local_path ) {
 				if ( 123 !== $post_id ) {
 					return '';
 				}
@@ -83,9 +120,18 @@ class WidgetTest extends TestCase {
 					return 'https://filetoweb.com/d/demo/1';
 				}
 
+				if ( Document_State::META_LOCAL_HTML_PATH === $key ) {
+					return $local_path;
+				}
+
+				if ( Document_State::META_LOCAL_HTML_TOKEN === $key ) {
+					return 'token-123';
+				}
+
 				return '';
 			}
 		);
+		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://example.test/wp-content/uploads/file.pdf' );
 
 		$widget = new Document_Widget();
 
@@ -105,8 +151,52 @@ class WidgetTest extends TestCase {
 		);
 		$html = ob_get_clean();
 
-		$this->assertStringContainsString( 'href="https://filetoweb.com/d/demo/1"', $html );
+		$this->assertStringContainsString( 'href="https://example.test/?filetoweb_local_html=123&ftw_token=token-123"', $html );
 		$this->assertStringContainsString( 'Fees &lt;PDF&gt;', $html );
+	}
+
+	public function test_widget_can_embed_ready_local_html(): void {
+		$local_path = $this->local_html_file( 123 );
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $local_path ) {
+				if ( 123 !== $post_id ) {
+					return '';
+				}
+
+				$values = array(
+					Document_State::META_STATUS           => 'ready',
+					Document_State::META_HTML_URL         => 'https://filetoweb.com/d/demo/1',
+					Document_State::META_LOCAL_HTML_PATH  => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN => 'token-123',
+				);
+
+				return isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://example.test/wp-content/uploads/file.pdf' );
+		Functions\when( 'esc_attr' )->returnArg();
+
+		$widget = new Document_Widget();
+
+		ob_start();
+		$widget->widget(
+			array(
+				'before_widget' => '',
+				'after_widget'  => '',
+				'before_title'  => '',
+				'after_title'   => '',
+			),
+			array(
+				'item_ref'      => 'attachment:123',
+				'title'         => 'Agenda',
+				'display_mode'  => 'embed',
+			)
+		);
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( '<iframe', $html );
+		$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=123&ftw_token=token-123"', $html );
 	}
 
 	public function test_widget_falls_back_to_original_pdf_when_not_ready(): void {
@@ -140,5 +230,12 @@ class WidgetTest extends TestCase {
 
 		$this->assertStringContainsString( 'href="https://example.test/wp-content/uploads/file.pdf"', $html );
 		$this->assertStringContainsString( 'Original PDF', $html );
+	}
+
+	private function local_html_file( $post_id ): string {
+		$path = $this->uploads_dir . '/filetoweb-integration/' . (int) $post_id . '-local.html';
+		file_put_contents( $path, '<!doctype html><html><body>Local</body></html>' );
+
+		return $path;
 	}
 }

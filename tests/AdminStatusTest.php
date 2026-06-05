@@ -20,11 +20,27 @@ class AdminStatusTest extends TestCase {
 		Functions\when( 'wp_unslash' )->returnArg();
 		Functions\when( 'sanitize_key' )->returnArg();
 		Functions\when( 'sanitize_text_field' )->returnArg();
-		Functions\when( 'absint' )->alias(
-			function ( $value ) {
-				return abs( intval( $value ) );
-			}
-		);
+			Functions\when( 'absint' )->alias(
+				function ( $value ) {
+					return abs( intval( $value ) );
+				}
+			);
+			Functions\when( 'current_user_can' )->justReturn( false );
+			Functions\when( 'apply_filters' )->alias(
+				function ( $tag, $value ) {
+					return $value;
+				}
+			);
+			Functions\when( 'trailingslashit' )->alias(
+				function ( $value ) {
+					return rtrim( (string) $value, '/' ) . '/';
+				}
+			);
+			Functions\when( 'wp_upload_dir' )->justReturn(
+				array(
+					'basedir' => sys_get_temp_dir(),
+				)
+			);
 		Functions\when( 'get_option' )->alias(
 			function ( $name, $default = false ) {
 				if ( Settings::OPTION_SETTINGS === $name ) {

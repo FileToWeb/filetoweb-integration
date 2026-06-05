@@ -31,10 +31,20 @@ class Settings {
 	/**
 	 * Register hooks.
 	 */
-	public static function init() {
-		add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
-		add_action( 'init', array( __CLASS__, 'migrate_legacy_options' ), 5 );
-	}
+		public static function init() {
+			add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
+			add_action( 'init', array( __CLASS__, 'migrate_legacy_options' ), 5 );
+			add_filter( 'option_page_capability_filetoweb_integration', array( __CLASS__, 'settings_page_capability' ) );
+		}
+
+		/**
+		 * Capability required by options.php for this settings group.
+		 *
+		 * @return string
+		 */
+		public static function settings_page_capability() {
+			return Capabilities::manage_settings_capability();
+		}
 
 	/**
 	 * Register the plugin-owned settings row.

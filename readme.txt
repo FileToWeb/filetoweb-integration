@@ -3,29 +3,31 @@ Contributors: filetoweb
 Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
-Requires PHP: 7.4
-Stable tag: 0.1.13
+Requires PHP: 7.0
+Stable tag: 0.1.16
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Convert PDF media files to FileToWeb HTML pages and replace public PDF links once conversion is ready.
+Convert PDF media files with FileToWeb and serve WordPress-local HTML or approved WordPress pages to public visitors once conversion is ready.
 
 == Description ==
 
-FileToWeb Integration connects a WordPress site to the FileToWeb API. When a PDF attachment or Proud Document source is uploaded or saved, the plugin can sync it to FileToWeb, poll for conversion status, and replace public PDF links with generated HTML links after the document is ready.
+FileToWeb Integration connects a WordPress site to the FileToWeb API. When a PDF attachment or Proud Document source is uploaded or saved, the plugin can sync it to FileToWeb, poll for conversion status, cache a WordPress-local HTML copy, and replace public PDF links with local HTML or an approved WordPress page after the document is ready.
 
-Original WordPress media files remain intact. The plugin stores FileToWeb state in post meta and only rewrites public front-end output when conversion is complete and public replacement is enabled.
+Original WordPress media files remain intact. The plugin stores FileToWeb state in post meta and only rewrites public front-end output when conversion is complete, a WordPress-local copy exists, and public replacement is enabled. If local HTML is unavailable, public visitors keep seeing the original PDF.
 
 Features:
 
 * Plugin-owned settings page for API URL, API key, public replacement, and bounded batch size, stored in one option row.
 * Automatic sync for new PDF attachments and Proud Document saves.
 * Manual bounded backfill for existing PDF attachments and Proud Document posts.
+* Bulk queue controls for all Proud Documents or all ProudCity Meeting PDFs.
 * WP-Cron polling for pending conversions.
-* Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata.
+* Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML/pages instead of public FileToWeb URLs.
 * ProudCity Document preview replacement while preserving the original PDF download link.
-* ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync and preview replacement.
-* Standard WordPress widget for linking to a PDF attachment or Proud Document.
+* ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync and WordPress-local preview replacement.
+* Standard WordPress widget for linking to or embedding a PDF attachment or Proud Document's local HTML copy.
+* Draft WordPress page creation for ready sources, with explicit admin approval before the page becomes the public replacement.
 * Original PDF links are preserved in admin screens.
 
 == Installation ==
@@ -35,13 +37,13 @@ Features:
 3. Open Settings > FileToWeb.
 4. Enter a scoped FileToWeb API key.
 5. Confirm the API URL is `https://filetoweb.com`.
-6. Leave public replacement enabled if ready PDF links should point to generated HTML.
+6. Leave public replacement enabled if ready PDF links should point to WordPress-local HTML/pages.
 
 == Frequently Asked Questions ==
 
 = Does this replace or delete the original PDF? =
 
-No. Original WordPress media files remain in place. The plugin stores FileToWeb metadata separately and rewrites public links only when a generated HTML page is ready.
+No. Original WordPress media files remain in place. The plugin stores FileToWeb metadata separately and rewrites public links only when a WordPress-local HTML copy or approved WordPress page is ready.
 
 = Can existing PDFs be migrated? =
 
@@ -53,7 +55,7 @@ Yes. Disable the plugin or turn off the Enabled setting. When disabled, sync, po
 
 = Where is the API key stored? =
 
-The API key is stored in the single WordPress option row owned by this plugin. Only users with `manage_options` can access the settings page.
+The API key is stored in the single WordPress option row owned by this plugin. By default, users need `activate_plugins` to access API settings. Sync actions default to `edit_others_posts`. Both capabilities are filterable.
 
 == External services ==
 
@@ -68,6 +70,25 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.16 =
+
+* Moves links that already point to the plugin's WordPress-local HTML cache to the approved WordPress-native page when one is published and approved.
+
+= 0.1.15 =
+
+* Caches ready FileToWeb HTML into WordPress-local files during sync/poll/admin actions and uses those local files for citizen-facing preview/link replacement.
+* Creates editable draft WordPress pages from local HTML and requires explicit publish/approval before a page replaces public PDF links.
+* Keeps FileToWeb generated/editor links in admin while avoiding FileToWeb-hosted runtime URLs on public pages.
+* Adds Proud Document status columns and row-level sync/poll actions.
+* Adds bounded bulk queue controls for all Proud Documents and all ProudCity Meeting PDFs.
+* Adds filterable capability gates: API settings default to `activate_plugins`, PDF sync defaults to `edit_others_posts`.
+* Updates the widget to embed a local HTML copy in page context.
+* Hides the FileToWeb viewer shell/header in WordPress-local public output.
+
+= 0.1.14 =
+
+* Prefers FileToWeb page URLs for meeting previews.
 
 = 0.1.13 =
 

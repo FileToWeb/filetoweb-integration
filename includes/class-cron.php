@@ -57,9 +57,10 @@ class Cron {
 	/**
 	 * Clear polling hook.
 	 */
-	public static function clear() {
-		wp_clear_scheduled_hook( self::HOOK_POLL_PENDING );
-	}
+		public static function clear() {
+			wp_clear_scheduled_hook( self::HOOK_POLL_PENDING );
+			wp_clear_scheduled_hook( Bulk_Queue::HOOK_PROCESS );
+		}
 
 	/**
 	 * Poll pending documents.

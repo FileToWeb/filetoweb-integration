@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.1.16
+
+- Moves links that already point to the plugin's WordPress-local HTML cache to the approved WordPress-native page when one is published and approved.
+
+## 0.1.15
+
+- Caches ready FileToWeb HTML into WordPress-local files during sync/poll/admin actions.
+- Changes citizen-facing replacement to prefer approved WordPress pages, then WordPress-local HTML, then the original PDF fallback.
+- Keeps FileToWeb generated/editor URLs in admin while avoiding FileToWeb-hosted runtime URLs on public pages.
+- Creates editable draft WordPress pages from local HTML and requires explicit approval before a page becomes the public replacement.
+- Adds Proud Document list status column and row sync/poll actions.
+- Adds bounded bulk queue controls for all Proud Documents and all ProudCity Meeting PDFs.
+- Adds filterable capability gates: API settings default to `activate_plugins`, PDF sync defaults to `edit_others_posts`.
+- Updates the widget to link to or embed WordPress-local HTML.
+- Hides FileToWeb viewer shell/header in locally cached public output.
+
+## 0.1.14
+
+- Prefers FileToWeb page URLs for meeting previews.
+
+## 0.1.13
+
+- Makes duplicate upload URL handling deterministic by preferring the newest matching WordPress attachment and preserving the newest ready URL map entry.
+
+## 0.1.12
+
+- Prefers direct WordPress attachment resolution before the cached URL map so duplicate upload URLs do not rewrite to stale FileToWeb documents.
+
+## 0.1.11
+
+- Bounds FileToWeb API request timeouts for admin/save sync flows so transient imports stay retryable.
+
 ## 0.1.10
 
 - Prefers the current ProudCity Meeting material when rewriting preview iframes for reused or duplicate PDF URLs.

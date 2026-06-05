@@ -13,14 +13,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class Link_Rewriter {
 	/**
-	 * Original URL to FileToWeb ready URL map.
+	 * Original URL to WordPress-local ready URL map.
 	 *
 	 * @var array|null
 	 */
 	private static $ready_url_map = null;
 
 	/**
-	 * FileToWeb page URL to continuous preview URL map.
+	 * FileToWeb page URL to WordPress-local preview URL map.
 	 *
 	 * @var array|null
 	 */
@@ -76,7 +76,7 @@ class Link_Rewriter {
 			return $url;
 		}
 
-		$html_url = self::ready_attachment_html_url( $attachment_id, $url );
+		$html_url = self::ready_attachment_public_url( $attachment_id, $url );
 
 		return $html_url ? $html_url : $url;
 	}
@@ -103,7 +103,7 @@ class Link_Rewriter {
 			return $value;
 		}
 
-		$html_url = self::ready_document_html_url( $object_id );
+		$html_url = self::ready_document_public_url( $object_id );
 
 		if ( $html_url ) {
 			return $single ? $html_url : array( $html_url );
@@ -245,14 +245,14 @@ class Link_Rewriter {
 	}
 
 	/**
-	 * Resolve a WordPress URL to ready FileToWeb URL.
+	 * Resolve a WordPress URL to a ready WordPress-local URL.
 	 *
 	 * Public for the widget and tests.
 	 *
 	 * @param string $url URL.
 	 * @return string
 	 */
-	public static function filetoweb_url_for_wordpress_url( $url ) {
+	public static function public_url_for_wordpress_url( $url ) {
 		$url = html_entity_decode( trim( (string) $url ), ENT_QUOTES, 'UTF-8' );
 
 		if ( ! $url || preg_match( '/^(mailto|tel|javascript):/i', $url ) ) {
@@ -266,19 +266,29 @@ class Link_Rewriter {
 		}
 
 		$host = strtolower( (string) parse_url( $absolute_url, PHP_URL_HOST ) );
+		$key  = Security::normalize_public_url_key( $absolute_url );
+
+		$local_html_post_id = self::local_html_post_id_for_public_url( $absolute_url );
+
+		if ( $local_html_post_id ) {
+			$local_html_public_url = Local_HTML::public_url_for_post( $local_html_post_id );
+
+			if ( $local_html_public_url ) {
+				self::$resolved_public_urls[ $key ] = $local_html_public_url;
+				return self::$resolved_public_urls[ $key ];
+			}
+		}
 
 		if ( in_array( $host, Settings::allowed_filetoweb_hosts(), true ) ) {
 			return '';
 		}
-
-		$key = Security::normalize_public_url_key( $absolute_url );
 
 		if ( isset( self::$resolved_public_urls[ $key ] ) ) {
 			return self::$resolved_public_urls[ $key ];
 		}
 
 		$attachment_id = self::attachment_id_for_public_url( $absolute_url );
-		$html_url      = $attachment_id ? self::ready_attachment_html_url( $attachment_id, $absolute_url ) : '';
+		$html_url      = $attachment_id ? self::ready_attachment_public_url( $attachment_id, $absolute_url ) : '';
 
 		if ( $html_url ) {
 			self::$resolved_public_urls[ $key ] = $html_url;
@@ -308,7 +318,7 @@ class Link_Rewriter {
 			return $matches[0];
 		}
 
-		$html_url = self::filetoweb_url_for_wordpress_url( $matches[3] );
+		$html_url = self::public_url_for_wordpress_url( $matches[3] );
 
 		if ( ! $html_url ) {
 			return $matches[0];
@@ -318,7 +328,7 @@ class Link_Rewriter {
 	}
 
 	/**
-	 * Replace Google Docs preview iframe source for already-ready FileToWeb URLs.
+	 * Replace Google Docs preview iframe source for already-ready WordPress-local URLs.
 	 *
 	 * @param array $matches Regex matches.
 	 * @return string
@@ -336,10 +346,10 @@ class Link_Rewriter {
 		$html_url    = Security::sanitize_filetoweb_url( $url );
 
 		if ( ! $html_url ) {
-			$html_url = self::filetoweb_url_for_wordpress_url( $url );
+			$html_url = self::public_url_for_wordpress_url( $url );
 		}
 
-		$preview_url = $html_url ? self::filetoweb_preview_url_for_html_url( $html_url ) : '';
+		$preview_url = $html_url ? self::preview_url_for_public_url( $html_url ) : '';
 
 		if ( ! $preview_url ) {
 			return $matches[0];
@@ -349,13 +359,13 @@ class Link_Rewriter {
 	}
 
 	/**
-	 * Return ready attachment HTML URL only if the current source is still a PDF.
+	 * Return ready attachment public URL only if the current source is still a PDF.
 	 *
 	 * @param int    $attachment_id Attachment ID.
 	 * @param string $url Current URL.
 	 * @return string
 	 */
-	private static function ready_attachment_html_url( $attachment_id, $url ) {
+	private static function ready_attachment_public_url( $attachment_id, $url ) {
 		$html_url = Document_State::ready_html_url( $attachment_id );
 
 		if ( ! $html_url ) {
@@ -369,12 +379,12 @@ class Link_Rewriter {
 	}
 
 	/**
-	 * Return ready document HTML URL only if the current source is still a PDF.
+	 * Return ready document public URL only if the current source is still a PDF.
 	 *
 	 * @param int $post_id Post ID.
 	 * @return string
 	 */
-	private static function ready_document_html_url( $post_id ) {
+	private static function ready_document_public_url( $post_id ) {
 		$html_url = Document_State::ready_html_url( $post_id );
 
 		if ( ! $html_url ) {
@@ -395,7 +405,7 @@ class Link_Rewriter {
 	}
 
 	/**
-	 * Allow add-on plugins to replace the ready FileToWeb URL with another public URL.
+	 * Resolve the public citizen-facing URL for a ready FileToWeb source.
 	 *
 	 * @param string $html_url FileToWeb HTML URL.
 	 * @param int    $post_id Source post ID.
@@ -422,9 +432,10 @@ class Link_Rewriter {
 		 * @param string $context Replacement context.
 		 * @param string $source_url Original public source URL.
 		 */
-		$replacement = apply_filters( 'filetoweb_integration_ready_replacement_url', $html_url, absint( $post_id ), $context, $source_url );
+		$local_url   = Local_HTML::public_url_for_post( $post_id );
+		$replacement = apply_filters( 'filetoweb_integration_ready_replacement_url', $local_url, absint( $post_id ), $context, $source_url );
 
-		return is_string( $replacement ) && $replacement ? esc_url_raw( $replacement ) : $html_url;
+		return is_string( $replacement ) && $replacement ? esc_url_raw( $replacement ) : '';
 	}
 
 	/**
@@ -435,15 +446,13 @@ class Link_Rewriter {
 	 */
 	private static function ready_document_viewer_url( $post_id ) {
 		$post_id  = absint( $post_id );
-		$html_url = $post_id ? self::ready_document_html_url( $post_id ) : '';
+		$html_url = $post_id ? self::ready_document_public_url( $post_id ) : '';
 
 		if ( ! $html_url ) {
 			return '';
 		}
 
-		$continuous_url = Document_State::ready_continuous_url( $post_id );
-
-		return $continuous_url ? $continuous_url : $html_url;
+		return $html_url;
 	}
 
 	/**
@@ -479,7 +488,7 @@ class Link_Rewriter {
 	}
 
 	/**
-	 * Build original-url => ready-html-url map once per request.
+	 * Build original-url => ready-public-url map once per request.
 	 *
 	 * @return array
 	 */
@@ -507,7 +516,7 @@ class Link_Rewriter {
 		);
 
 		foreach ( $posts as $post_id ) {
-			$html_url = Document_State::ready_html_url( $post_id );
+				$html_url = Document_State::ready_html_url( $post_id );
 
 			if ( ! $html_url ) {
 				continue;
@@ -526,16 +535,16 @@ class Link_Rewriter {
 				$key = Security::normalize_public_url_key( $url );
 
 				if ( $key && ! isset( self::$ready_url_map[ $key ] ) ) {
-					self::$ready_url_map[ $key ] = self::ready_replacement_url( $html_url, $post_id, 'url_map', $url );
+						self::$ready_url_map[ $key ] = self::ready_replacement_url( $html_url, $post_id, 'url_map', $url );
+					}
 				}
 			}
-		}
 
 		return self::$ready_url_map;
 	}
 
 	/**
-	 * Build FileToWeb HTML URL => continuous URL map once per request.
+	 * Build public URL => preview URL map once per request.
 	 *
 	 * @return array
 	 */
@@ -558,25 +567,26 @@ class Link_Rewriter {
 		);
 
 		foreach ( $posts as $post_id ) {
-			$html_url       = Document_State::ready_html_url( $post_id );
-			$continuous_url = Document_State::ready_continuous_url( $post_id );
+				$html_url    = Document_State::ready_html_url( $post_id );
+				$preview_url = Local_HTML::local_url( $post_id );
 
-			if ( $html_url && $continuous_url ) {
-				self::$preview_url_map[ Security::normalize_public_url_key( $html_url ) ] = $continuous_url;
+				if ( $html_url && $preview_url ) {
+					self::$preview_url_map[ Security::normalize_public_url_key( $html_url ) ] = $preview_url;
+					self::$preview_url_map[ Security::normalize_public_url_key( $preview_url ) ] = $preview_url;
+				}
 			}
-		}
 
 		return self::$preview_url_map;
 	}
 
 	/**
-	 * Resolve a FileToWeb page URL to continuous preview URL.
+	 * Resolve a public URL to the local preview URL.
 	 *
 	 * @param string $url FileToWeb URL.
 	 * @return string
 	 */
-	private static function filetoweb_preview_url_for_html_url( $url ) {
-		$url = Security::sanitize_filetoweb_url( $url );
+	private static function preview_url_for_public_url( $url ) {
+		$url = esc_url_raw( $url );
 
 		if ( ! $url ) {
 			return '';
@@ -592,7 +602,7 @@ class Link_Rewriter {
 	 * Replace the src attribute on the ProudCity document preview iframe.
 	 *
 	 * @param string $iframe Iframe HTML.
-	 * @param string $viewer_url FileToWeb viewer URL.
+	 * @param string $viewer_url Local viewer URL.
 	 * @param string $source_url Original PDF URL.
 	 * @return string
 	 */
@@ -625,7 +635,7 @@ class Link_Rewriter {
 	 * Replace a ProudCity Meeting preview iframe src when its source PDF is ready.
 	 *
 	 * @param string $iframe Iframe HTML.
-	 * @param array  $map Original URL to FileToWeb viewer URL map.
+	 * @param array  $map Original URL to local viewer URL map.
 	 * @return string
 	 */
 	private static function replace_meeting_viewer_iframe( $iframe, $map ) {
@@ -732,6 +742,33 @@ class Link_Rewriter {
 		}
 
 		return self::attachment_id_for_attachment_page_url( $url );
+	}
+
+	/**
+	 * Resolve a plugin-owned local HTML URL back to the source post ID.
+	 *
+	 * This lets an already-rewritten local HTML link move forward to an
+	 * approved WordPress-native page without requiring editors to relink content.
+	 *
+	 * @param string $url URL.
+	 * @return int
+	 */
+	private static function local_html_post_id_for_public_url( $url ) {
+		$query = parse_url( $url, PHP_URL_QUERY );
+
+		if ( ! $query ) {
+			return 0;
+		}
+
+		parse_str( $query, $params );
+
+		if ( empty( $params[ Local_HTML::QUERY_VAR_POST_ID ] ) ) {
+			return 0;
+		}
+
+		$post_id = absint( $params[ Local_HTML::QUERY_VAR_POST_ID ] );
+
+		return $post_id && Local_HTML::has_local_html( $post_id ) ? $post_id : 0;
 	}
 
 	/**

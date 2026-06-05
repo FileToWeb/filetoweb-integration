@@ -25,6 +25,10 @@ class Admin {
 		add_action( 'admin_post_filetoweb_integration_poll_now', array( __CLASS__, 'handle_poll_now' ) );
 		add_action( 'admin_post_filetoweb_integration_backfill', array( __CLASS__, 'handle_backfill' ) );
 		add_action( 'admin_post_filetoweb_integration_poll_pending', array( __CLASS__, 'handle_poll_pending' ) );
+		add_filter( 'manage_document_posts_columns', array( __CLASS__, 'add_document_status_column' ) );
+		add_action( 'manage_document_posts_custom_column', array( __CLASS__, 'render_document_status_column' ), 10, 2 );
+		add_filter( 'post_row_actions', array( __CLASS__, 'add_document_row_actions' ), 10, 2 );
+		add_filter( 'page_row_actions', array( __CLASS__, 'add_document_row_actions' ), 10, 2 );
 	}
 
 	/**
@@ -34,7 +38,7 @@ class Admin {
 		add_options_page(
 			__( 'FileToWeb', 'filetoweb-integration' ),
 			__( 'FileToWeb', 'filetoweb-integration' ),
-			'manage_options',
+			Capabilities::manage_settings_capability(),
 			self::PAGE_SLUG,
 			array( __CLASS__, 'render_settings_page' )
 		);
@@ -121,7 +125,7 @@ class Admin {
 							<input type="hidden" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_REPLACE_LINKS ) ); ?>" value="0" />
 							<label>
 								<input type="checkbox" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_REPLACE_LINKS ) ); ?>" value="1" <?php checked( Settings::replace_links_enabled() ); ?> />
-								<?php esc_html_e( 'Replace front-end PDF links with generated FileToWeb HTML links when ready', 'filetoweb-integration' ); ?>
+								<?php esc_html_e( 'Replace front-end PDF links with WordPress-local HTML or approved WordPress pages when ready', 'filetoweb-integration' ); ?>
 							</label>
 						</td>
 					</tr>
@@ -148,6 +152,28 @@ class Admin {
 				<?php wp_nonce_field( 'filetoweb_integration_poll_pending' ); ?>
 				<input type="hidden" name="action" value="filetoweb_integration_poll_pending" />
 				<?php submit_button( __( 'Poll pending', 'filetoweb-integration' ), 'secondary', 'submit', false ); ?>
+			</form>
+
+			<hr />
+
+			<h2><?php esc_html_e( 'Bulk sync queue', 'filetoweb-integration' ); ?></h2>
+			<?php self::render_bulk_queue_status(); ?>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-block;margin-right:12px;">
+				<?php wp_nonce_field( 'filetoweb_integration_queue_documents' ); ?>
+				<input type="hidden" name="action" value="<?php echo esc_attr( Bulk_Queue::ACTION_DOCS ); ?>" />
+				<?php submit_button( __( 'Queue all Documents', 'filetoweb-integration' ), 'secondary', 'submit', false ); ?>
+			</form>
+
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-block;margin-right:12px;">
+				<?php wp_nonce_field( 'filetoweb_integration_queue_meeting_pdfs' ); ?>
+				<input type="hidden" name="action" value="<?php echo esc_attr( Bulk_Queue::ACTION_MEET ); ?>" />
+				<?php submit_button( __( 'Queue all Meeting PDFs', 'filetoweb-integration' ), 'secondary', 'submit', false ); ?>
+			</form>
+
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-block;">
+				<?php wp_nonce_field( Bulk_Queue::ACTION_RUN ); ?>
+				<input type="hidden" name="action" value="<?php echo esc_attr( Bulk_Queue::ACTION_RUN ); ?>" />
+				<?php submit_button( __( 'Run next queue batch', 'filetoweb-integration' ), 'secondary', 'submit', false ); ?>
 			</form>
 		</div>
 		<?php
@@ -217,6 +243,8 @@ class Admin {
 
 			echo '</p>';
 		}
+
+		Native_Page::render_admin_panel( $post );
 	}
 
 	/**
@@ -249,7 +277,7 @@ class Admin {
 	 * @param string $status Status.
 	 * @return string
 	 */
-	private static function status_state( $status ) {
+	public static function status_state( $status ) {
 		if ( 'ready' === $status ) {
 			return 'ready';
 		}
@@ -263,6 +291,28 @@ class Admin {
 		}
 
 		return 'not_synced';
+	}
+
+	/**
+	 * Build a compact status badge.
+	 *
+	 * @param string $status Raw status.
+	 * @return string
+	 */
+	public static function status_badge( $status ) {
+		$status = $status ? Security::sanitize_status( $status ) : '';
+		$state  = self::status_state( $status );
+
+		$styles = array(
+			'not_synced' => array( '#646970', __( 'Not synced', 'filetoweb-integration' ) ),
+			'processing' => array( '#2271b1', __( 'Processing', 'filetoweb-integration' ) ),
+			'ready'      => array( '#008a20', __( 'Ready', 'filetoweb-integration' ) ),
+			'failed'     => array( '#b32d2e', __( 'Failed', 'filetoweb-integration' ) ),
+		);
+
+		$config = isset( $styles[ $state ] ) ? $styles[ $state ] : $styles['not_synced'];
+
+		return '<span style="display:inline-block;border:1px solid ' . esc_attr( $config[0] ) . ';border-radius:3px;color:' . esc_attr( $config[0] ) . ';font-weight:600;padding:1px 6px;">' . esc_html( $config[1] ) . '</span>';
 	}
 
 	/**
@@ -383,7 +433,7 @@ class Admin {
 	public static function can_sync_post( $post_id ) {
 		$post_id = absint( $post_id );
 
-		return $post_id && current_user_can( 'edit_post', $post_id ) && current_user_can( 'upload_files' );
+		return $post_id && Capabilities::current_user_can_sync( $post_id );
 	}
 
 	/**
@@ -392,7 +442,94 @@ class Admin {
 	 * @return bool
 	 */
 	public static function can_manage_settings() {
-		return current_user_can( 'manage_options' );
+		return Capabilities::current_user_can_manage_settings();
+	}
+
+	/**
+	 * Add FileToWeb status to the Proud Document list table.
+	 *
+	 * @param array $columns Columns.
+	 * @return array
+	 */
+	public static function add_document_status_column( $columns ) {
+		$columns['filetoweb_status'] = __( 'FileToWeb', 'filetoweb-integration' );
+
+		return $columns;
+	}
+
+	/**
+	 * Render the FileToWeb status column.
+	 *
+	 * @param string $column Column name.
+	 * @param int    $post_id Post ID.
+	 */
+	public static function render_document_status_column( $column, $post_id ) {
+		if ( 'filetoweb_status' !== $column ) {
+			return;
+		}
+
+		$status     = get_post_meta( $post_id, Document_State::META_STATUS, true );
+		$page_count = absint( get_post_meta( $post_id, Document_State::META_PAGE_COUNT, true ) );
+		$local_url  = Local_HTML::local_url( $post_id );
+
+		echo self::status_badge( $status ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+
+		if ( $page_count ) {
+			echo '<br />' . esc_html( sprintf( _n( '%d page', '%d pages', $page_count, 'filetoweb-integration' ), $page_count ) );
+		}
+
+		if ( $local_url ) {
+			echo '<br /><a href="' . esc_url( $local_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Local HTML', 'filetoweb-integration' ) . '</a>';
+		}
+	}
+
+	/**
+	 * Add quick sync actions to Proud Document list rows.
+	 *
+	 * @param array    $actions Actions.
+	 * @param \WP_Post $post Post.
+	 * @return array
+	 */
+	public static function add_document_row_actions( $actions, $post ) {
+		if ( ! is_object( $post ) || 'document' !== get_post_type( $post ) || ! Settings::configured() || ! self::can_sync_post( $post->ID ) ) {
+			return $actions;
+		}
+
+		$actions['filetoweb_sync'] = '<a href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync with FileToWeb', 'filetoweb-integration' ) . '</a>';
+
+		if ( get_post_meta( $post->ID, Document_State::META_DOCUMENT_ID, true ) ) {
+			$actions['filetoweb_poll'] = '<a href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Poll FileToWeb', 'filetoweb-integration' ) . '</a>';
+		}
+
+		return $actions;
+	}
+
+	/**
+	 * Render bulk queue status.
+	 */
+	private static function render_bulk_queue_status() {
+		$state     = Bulk_Queue::queue_state();
+		$remaining = count( $state['items'] );
+
+		if ( ! $state['total'] ) {
+			echo '<p><em>' . esc_html__( 'No bulk sync queue is active.', 'filetoweb-integration' ) . '</em></p>';
+			return;
+		}
+
+		echo '<p>';
+		echo esc_html(
+			sprintf(
+				__( 'Type: %1$s. Total: %2$d. Processed: %3$d. Remaining: %4$d. Queued: %5$d. Skipped: %6$d. Failed: %7$d.', 'filetoweb-integration' ),
+				$state['type'],
+				absint( $state['total'] ),
+				absint( $state['processed'] ),
+				absint( $remaining ),
+				absint( $state['queued'] ),
+				absint( $state['skipped'] ),
+				absint( $state['failed'] )
+			)
+		);
+		echo '</p>';
 	}
 
 	/**
@@ -402,7 +539,7 @@ class Admin {
 	 * @param array  $counts Counts.
 	 * @return string
 	 */
-	private static function format_counts( $label, $counts ) {
+	public static function format_counts( $label, $counts ) {
 		return sprintf(
 			'%s complete. queued=%d skipped=%d failed=%d updated=%d',
 			$label,

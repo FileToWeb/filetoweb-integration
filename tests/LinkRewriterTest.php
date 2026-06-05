@@ -43,15 +43,24 @@ class LinkRewriterTest extends TestCase {
 	 */
 	private $replacement_url = '';
 
+	/**
+	 * Temporary uploads directory.
+	 *
+	 * @var string
+	 */
+	private $uploads_dir = '';
+
 	protected function setUp(): void {
 		parent::setUp();
 		Monkey\setUp();
 		$this->reset_rewriter_cache();
 		$this->post_types           = array();
 		$this->queried_object_id    = 0;
-		$this->is_document_singular = false;
-		$this->is_meeting_singular  = false;
-		$this->replacement_url      = '';
+			$this->is_document_singular = false;
+			$this->is_meeting_singular  = false;
+			$this->replacement_url      = '';
+			$this->uploads_dir          = sys_get_temp_dir() . '/ftw-link-rewriter-' . uniqid();
+			mkdir( $this->uploads_dir . '/filetoweb-integration', 0777, true );
 
 		Functions\when( 'esc_url_raw' )->returnArg();
 		Functions\when( '__' )->returnArg();
@@ -75,11 +84,28 @@ class LinkRewriterTest extends TestCase {
 				return abs( intval( $value ) );
 			}
 		);
-		Functions\when( 'untrailingslashit' )->alias(
-			function ( $value ) {
-				return rtrim( (string) $value, '/' );
-			}
-		);
+			Functions\when( 'untrailingslashit' )->alias(
+				function ( $value ) {
+					return rtrim( (string) $value, '/' );
+				}
+			);
+			Functions\when( 'trailingslashit' )->alias(
+				function ( $value ) {
+					return rtrim( (string) $value, '/' ) . '/';
+				}
+			);
+			Functions\when( 'wp_upload_dir' )->alias(
+				function () {
+					return array(
+						'basedir' => $this->uploads_dir,
+					);
+				}
+			);
+			Functions\when( 'add_query_arg' )->alias(
+				function ( $args, $url ) {
+					return rtrim( (string) $url, '/' ) . '/?' . http_build_query( $args );
+				}
+			);
 		Functions\when( 'apply_filters' )->alias(
 			function ( $tag, $value ) {
 				if ( 'filetoweb_integration_ready_replacement_url' === $tag && $this->replacement_url ) {
@@ -148,20 +174,34 @@ class LinkRewriterTest extends TestCase {
 				return $this->queried_object_id;
 			}
 		);
-		Functions\when( 'attachment_url_to_postid' )->justReturn( 0 );
+			Functions\when( 'attachment_url_to_postid' )->alias(
+				function () {
+					return 0;
+				}
+			);
 		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://example.test/wp-content/uploads/file.pdf' );
 		Functions\when( 'get_attached_file' )->justReturn( '/tmp/file.pdf' );
 		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
-		Functions\when( 'get_permalink' )->justReturn( 'https://example.test/file/' );
-	}
+			Functions\when( 'get_permalink' )->justReturn( 'https://example.test/file/' );
+			Functions\when( 'post_type_exists' )->justReturn( true );
+		}
 
-	protected function tearDown(): void {
-		Monkey\tearDown();
-		parent::tearDown();
-	}
+		protected function tearDown(): void {
+			if ( $this->uploads_dir && is_dir( $this->uploads_dir ) ) {
+				foreach ( glob( $this->uploads_dir . '/filetoweb-integration/*' ) as $file ) {
+					unlink( $file );
+				}
+				rmdir( $this->uploads_dir . '/filetoweb-integration' );
+				rmdir( $this->uploads_dir );
+			}
+
+			Monkey\tearDown();
+			parent::tearDown();
+		}
 
 	public function test_rewrites_ready_pdf_links_and_builds_map_once(): void {
-		$get_posts_calls = 0;
+			$get_posts_calls = 0;
+			$local_path      = $this->local_html_file( 123 );
 
 		Functions\when( 'get_posts' )->alias(
 			function () use ( &$get_posts_calls ) {
@@ -169,8 +209,8 @@ class LinkRewriterTest extends TestCase {
 				return array( 123 );
 			}
 		);
-		Functions\when( 'get_post_meta' )->alias(
-			function ( $post_id, $key ) {
+			Functions\when( 'get_post_meta' )->alias(
+				function ( $post_id, $key ) use ( $local_path ) {
 				if ( 123 !== $post_id ) {
 					return '';
 				}
@@ -183,9 +223,17 @@ class LinkRewriterTest extends TestCase {
 					return 'https://filetoweb.com/d/demo/1';
 				}
 
-				if ( Document_State::META_ORIGINAL_URL === $key ) {
-					return 'https://example.test/wp-content/uploads/file.pdf';
-				}
+					if ( Document_State::META_ORIGINAL_URL === $key ) {
+						return 'https://example.test/wp-content/uploads/file.pdf';
+					}
+
+					if ( Document_State::META_LOCAL_HTML_PATH === $key ) {
+						return $local_path;
+					}
+
+					if ( Document_State::META_LOCAL_HTML_TOKEN === $key ) {
+						return 'token-123';
+					}
 
 				return '';
 			}
@@ -196,20 +244,29 @@ class LinkRewriterTest extends TestCase {
 		$rewritten = Link_Rewriter::filter_content_pdf_links( $content );
 		Link_Rewriter::filter_content_pdf_links( $content );
 
-		$this->assertStringContainsString( 'href="https://filetoweb.com/d/demo/1"', $rewritten );
+			$this->assertStringContainsString( 'href="https://example.test/?filetoweb_local_html=123&ftw_token=token-123"', $rewritten );
 		$this->assertStringContainsString( 'href="https://example.test/services/"', $rewritten );
-		$this->assertSame( 1, $get_posts_calls );
+			$this->assertSame( 2, $get_posts_calls );
 	}
 
-	public function test_direct_attachment_resolution_wins_over_stale_url_map(): void {
+		public function test_direct_attachment_resolution_wins_over_stale_url_map(): void {
+			$local_path = $this->local_html_file( 456 );
 		Functions\when( 'attachment_url_to_postid' )->alias(
 			function ( $url ) {
 				return 'https://example.test/wp-content/uploads/shared.pdf' === $url ? 456 : 0;
 			}
 		);
-		Functions\when( 'get_posts' )->justReturn( array( 123 ) );
-		Functions\when( 'get_post_meta' )->alias(
-			function ( $post_id, $key ) {
+			Functions\when( 'get_posts' )->alias(
+				function ( $args = array() ) {
+					if ( is_array( $args ) && isset( $args['meta_key'] ) && '_wp_attached_file' === $args['meta_key'] ) {
+						return array( 456 );
+					}
+
+					return array( 123 );
+				}
+			);
+			Functions\when( 'get_post_meta' )->alias(
+				function ( $post_id, $key ) use ( $local_path ) {
 				if ( 123 === $post_id ) {
 					$stale_values = array(
 						Document_State::META_STATUS       => 'ready',
@@ -220,11 +277,13 @@ class LinkRewriterTest extends TestCase {
 					return isset( $stale_values[ $key ] ) ? $stale_values[ $key ] : '';
 				}
 
-				if ( 456 === $post_id ) {
-					$current_values = array(
-						Document_State::META_STATUS   => 'ready',
-						Document_State::META_HTML_URL => 'https://filetoweb.com/d/current/1',
-					);
+					if ( 456 === $post_id ) {
+						$current_values = array(
+							Document_State::META_STATUS   => 'ready',
+							Document_State::META_HTML_URL => 'https://filetoweb.com/d/current/1',
+							Document_State::META_LOCAL_HTML_PATH  => $local_path,
+							Document_State::META_LOCAL_HTML_TOKEN => 'token-456',
+						);
 
 					return isset( $current_values[ $key ] ) ? $current_values[ $key ] : '';
 				}
@@ -236,20 +295,23 @@ class LinkRewriterTest extends TestCase {
 		$content = '<p><a href="https://example.test/wp-content/uploads/shared.pdf">PDF</a></p>';
 		$rewritten = Link_Rewriter::filter_content_pdf_links( $content );
 
-		$this->assertStringContainsString( 'href="https://filetoweb.com/d/current/1"', $rewritten );
+			$this->assertStringContainsString( 'href="https://example.test/?filetoweb_local_html=456&ftw_token=token-456"', $rewritten );
 		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale/1', $rewritten );
 	}
 
-	public function test_ready_url_map_keeps_newest_duplicate_source_url(): void {
+		public function test_ready_url_map_keeps_newest_duplicate_source_url(): void {
+			$local_path = $this->local_html_file( 456 );
 		Functions\when( 'get_posts' )->justReturn( array( 456, 123 ) );
-		Functions\when( 'get_post_meta' )->alias(
-			function ( $post_id, $key ) {
-				if ( 456 === $post_id ) {
-					$current_values = array(
-						Document_State::META_STATUS       => 'ready',
-						Document_State::META_HTML_URL     => 'https://filetoweb.com/d/current/1',
-						Document_State::META_ORIGINAL_URL => 'https://example.test/wp-content/uploads/shared.pdf',
-					);
+			Functions\when( 'get_post_meta' )->alias(
+				function ( $post_id, $key ) use ( $local_path ) {
+					if ( 456 === $post_id ) {
+						$current_values = array(
+							Document_State::META_STATUS       => 'ready',
+							Document_State::META_HTML_URL     => 'https://filetoweb.com/d/current/1',
+							Document_State::META_ORIGINAL_URL => 'https://example.test/wp-content/uploads/shared.pdf',
+							Document_State::META_LOCAL_HTML_PATH  => $local_path,
+							Document_State::META_LOCAL_HTML_TOKEN => 'token-456',
+						);
 
 					return isset( $current_values[ $key ] ) ? $current_values[ $key ] : '';
 				}
@@ -271,7 +333,7 @@ class LinkRewriterTest extends TestCase {
 		$content = '<p><a href="https://example.test/wp-content/uploads/shared.pdf">PDF</a></p>';
 		$rewritten = Link_Rewriter::filter_content_pdf_links( $content );
 
-		$this->assertStringContainsString( 'href="https://filetoweb.com/d/current/1"', $rewritten );
+			$this->assertStringContainsString( 'href="https://example.test/?filetoweb_local_html=456&ftw_token=token-456"', $rewritten );
 		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale/1', $rewritten );
 	}
 
@@ -309,6 +371,48 @@ class LinkRewriterTest extends TestCase {
 		);
 	}
 
+	public function test_local_html_links_move_to_approved_wordpress_page(): void {
+		$local_path = $this->local_html_file( 123 );
+
+		Functions\when( 'get_posts' )->justReturn( array( 123 ) );
+		Functions\when( 'get_post_status' )->alias(
+			function ( $post_id ) {
+				return 777 === (int) $post_id ? 'publish' : '';
+			}
+		);
+		Functions\when( 'get_permalink' )->alias(
+			function ( $post_id ) {
+				return 777 === (int) $post_id ? 'https://example.test/native-page/' : 'https://example.test/file/';
+			}
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $local_path ) {
+				if ( 123 !== $post_id ) {
+					return '';
+				}
+
+				$values = array(
+					Document_State::META_STATUS              => 'ready',
+					Document_State::META_HTML_URL            => 'https://filetoweb.com/d/demo/1',
+					Document_State::META_ORIGINAL_URL        => 'https://example.test/wp-content/uploads/file.pdf',
+					Document_State::META_LOCAL_HTML_PATH     => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN    => 'token-123',
+					Document_State::META_LOCAL_PAGE_ID       => 777,
+					Document_State::META_LOCAL_PAGE_APPROVED => '1',
+				);
+
+				return isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$content = '<p><a href="https://example.test/?filetoweb_local_html=123&ftw_token=token-123">PDF</a></p>';
+
+		$rewritten = Link_Rewriter::filter_content_pdf_links( $content );
+
+		$this->assertStringContainsString( 'href="https://example.test/native-page/"', $rewritten );
+		$this->assertStringNotContainsString( 'filetoweb_local_html=', $rewritten );
+	}
+
 	public function test_non_ready_pdf_link_stays_original(): void {
 		Functions\when( 'get_posts' )->justReturn( array( 123 ) );
 		Functions\when( 'get_post_meta' )->alias(
@@ -330,15 +434,16 @@ class LinkRewriterTest extends TestCase {
 		$this->assertSame( $content, Link_Rewriter::filter_content_pdf_links( $content ) );
 	}
 
-	public function test_rewrites_ready_proud_document_viewer_and_preserves_download(): void {
+		public function test_rewrites_ready_proud_document_viewer_and_preserves_download(): void {
 		$this->post_types[456]        = 'document';
 		$this->queried_object_id      = 456;
 		$this->is_document_singular   = true;
-		$source_url                   = 'https://example.test/wp-content/uploads/agenda.pdf';
-		$continuous_url               = 'https://filetoweb.com/d/demo';
+			$source_url                   = 'https://example.test/wp-content/uploads/agenda.pdf';
+			$continuous_url               = 'https://filetoweb.com/d/demo';
+			$local_path                   = $this->local_html_file( 456 );
 
-		Functions\when( 'get_post_meta' )->alias(
-			function ( $post_id, $key ) use ( $source_url, $continuous_url ) {
+			Functions\when( 'get_post_meta' )->alias(
+				function ( $post_id, $key ) use ( $source_url, $continuous_url, $local_path ) {
 				if ( 456 !== $post_id ) {
 					return '';
 				}
@@ -348,9 +453,11 @@ class LinkRewriterTest extends TestCase {
 					'document_filename'                => 'agenda.pdf',
 					'document_meta'                    => '{"mime":"application/pdf","size":"200 KB"}',
 					Document_State::META_STATUS        => 'ready',
-					Document_State::META_HTML_URL      => 'https://filetoweb.com/d/demo/1',
-					Document_State::META_CONTINUOUS_URL => $continuous_url,
-				);
+						Document_State::META_HTML_URL      => 'https://filetoweb.com/d/demo/1',
+						Document_State::META_CONTINUOUS_URL => $continuous_url,
+						Document_State::META_LOCAL_HTML_PATH => $local_path,
+						Document_State::META_LOCAL_HTML_TOKEN => 'token-456',
+					);
 
 				return isset( $values[ $key ] ) ? $values[ $key ] : '';
 			}
@@ -363,7 +470,7 @@ class LinkRewriterTest extends TestCase {
 
 		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
 		$this->assertStringContainsString( 'download="agenda.pdf"', $rewritten );
-		$this->assertStringContainsString( 'src="' . $continuous_url . '"', $rewritten );
+			$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=456&ftw_token=token-456"', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
 	}
 
@@ -433,21 +540,22 @@ class LinkRewriterTest extends TestCase {
 		$this->assertNull( Link_Rewriter::filter_document_meta( null, 456, 'document', true ) );
 	}
 
-	public function test_rewrites_ready_meeting_viewer_and_preserves_download(): void {
+		public function test_rewrites_ready_meeting_viewer_and_preserves_download(): void {
 		$this->post_types[789]      = 'meeting';
 		$this->queried_object_id    = 789;
 		$this->is_meeting_singular  = true;
 		$source_url                 = 'https://example.test/wp-content/uploads/agenda.pdf';
-		$html_url                   = 'https://filetoweb.com/d/meeting-demo/1';
-		$continuous_url             = 'https://filetoweb.com/d/meeting-demo';
+			$html_url                   = 'https://filetoweb.com/d/meeting-demo/1';
+			$continuous_url             = 'https://filetoweb.com/d/meeting-demo';
+			$local_path                 = $this->local_html_file( 101 );
 
 		Functions\when( 'wp_get_attachment_url' )->alias(
 			function ( $attachment_id ) use ( $source_url ) {
 				return 101 === $attachment_id ? $source_url : '';
 			}
 		);
-		Functions\when( 'get_post_meta' )->alias(
-			function ( $post_id, $key ) use ( $html_url, $continuous_url ) {
+			Functions\when( 'get_post_meta' )->alias(
+				function ( $post_id, $key ) use ( $html_url, $continuous_url, $local_path ) {
 				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
 					return 101;
 				}
@@ -457,10 +565,12 @@ class LinkRewriterTest extends TestCase {
 				}
 
 				$values = array(
-					Document_State::META_STATUS         => 'ready',
-					Document_State::META_HTML_URL       => $html_url,
-					Document_State::META_CONTINUOUS_URL => $continuous_url,
-				);
+						Document_State::META_STATUS         => 'ready',
+						Document_State::META_HTML_URL       => $html_url,
+						Document_State::META_CONTINUOUS_URL => $continuous_url,
+						Document_State::META_LOCAL_HTML_PATH => $local_path,
+						Document_State::META_LOCAL_HTML_TOKEN => 'token-101',
+					);
 
 				return isset( $values[ $key ] ) ? $values[ $key ] : '';
 			}
@@ -473,7 +583,7 @@ class LinkRewriterTest extends TestCase {
 
 		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
 		$this->assertStringContainsString( 'download="agenda.pdf"', $rewritten );
-		$this->assertStringContainsString( 'src="' . $html_url . '"', $rewritten );
+			$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=101&ftw_token=token-101"', $rewritten );
 		$this->assertStringNotContainsString( 'src="' . $continuous_url . '"', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
 	}
@@ -518,13 +628,14 @@ class LinkRewriterTest extends TestCase {
 		$this->assertSame( $html, Link_Rewriter::filter_meeting_viewer_output( $html ) );
 	}
 
-	public function test_single_meeting_content_preserves_download_and_rewrites_preview(): void {
+		public function test_single_meeting_content_preserves_download_and_rewrites_preview(): void {
 		$this->post_types[789]     = 'meeting';
 		$this->queried_object_id   = 789;
 		$this->is_meeting_singular = true;
 		$source_url                = 'https://example.test/wp-content/uploads/agenda.pdf';
-		$html_url                  = 'https://filetoweb.com/d/meeting-demo/1';
-		$continuous_url            = 'https://filetoweb.com/d/meeting-demo';
+			$html_url                  = 'https://filetoweb.com/d/meeting-demo/1';
+			$continuous_url            = 'https://filetoweb.com/d/meeting-demo';
+			$local_path                = $this->local_html_file( 101 );
 
 		Functions\when( 'wp_get_attachment_url' )->alias(
 			function ( $attachment_id ) use ( $source_url ) {
@@ -532,8 +643,8 @@ class LinkRewriterTest extends TestCase {
 			}
 		);
 		Functions\when( 'get_posts' )->justReturn( array( 999, 101 ) );
-		Functions\when( 'get_post_meta' )->alias(
-			function ( $post_id, $key ) use ( $source_url, $html_url, $continuous_url ) {
+			Functions\when( 'get_post_meta' )->alias(
+				function ( $post_id, $key ) use ( $source_url, $html_url, $continuous_url, $local_path ) {
 				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
 					return 101;
 				}
@@ -555,10 +666,12 @@ class LinkRewriterTest extends TestCase {
 
 				$values = array(
 					Document_State::META_STATUS         => 'ready',
-					Document_State::META_HTML_URL       => $html_url,
-					Document_State::META_CONTINUOUS_URL => $continuous_url,
-					Document_State::META_ORIGINAL_URL   => $source_url,
-				);
+						Document_State::META_HTML_URL       => $html_url,
+						Document_State::META_CONTINUOUS_URL => $continuous_url,
+						Document_State::META_ORIGINAL_URL   => $source_url,
+						Document_State::META_LOCAL_HTML_PATH => $local_path,
+						Document_State::META_LOCAL_HTML_TOKEN => 'token-101',
+					);
 
 				return isset( $values[ $key ] ) ? $values[ $key ] : '';
 			}
@@ -570,7 +683,7 @@ class LinkRewriterTest extends TestCase {
 		$rewritten = Link_Rewriter::filter_content_pdf_links( $html );
 
 		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
-		$this->assertStringContainsString( 'src="' . $html_url . '"', $rewritten );
+			$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=101&ftw_token=token-101"', $rewritten );
 		$this->assertStringNotContainsString( 'src="' . $continuous_url . '"', $rewritten );
 		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale-demo', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
@@ -604,7 +717,7 @@ class LinkRewriterTest extends TestCase {
 		$this->assertSame( $source_url, Link_Rewriter::filter_attachment_url( $source_url, 101 ) );
 	}
 
-	private function reset_rewriter_cache(): void {
+		private function reset_rewriter_cache(): void {
 		$reflection = new ReflectionClass( Link_Rewriter::class );
 
 		foreach ( array( 'ready_url_map', 'preview_url_map', 'resolved_public_urls', 'document_viewer_post_id', 'meeting_viewer_post_id' ) as $property_name ) {
@@ -620,7 +733,14 @@ class LinkRewriterTest extends TestCase {
 				$property->setValue( null, 0 );
 			} else {
 				$property->setValue( null, null );
+				}
 			}
 		}
+
+		private function local_html_file( $post_id ): string {
+			$path = $this->uploads_dir . '/filetoweb-integration/' . (int) $post_id . '-local.html';
+			file_put_contents( $path, '<!doctype html><html><body>Local</body></html>' );
+
+			return $path;
+		}
 	}
-}

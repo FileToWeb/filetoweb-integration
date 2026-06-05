@@ -9,13 +9,16 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - Proud Document saves reuse the linked attachment when one is present; otherwise the plugin resolves the document URL back to a WordPress attachment with `attachment_url_to_postid()`.
 - ProudCity Meeting Agenda, Agenda Packet, and Minutes attachments sync independently when the Meeting is saved.
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
-- Public front-end PDF links are replaced with FileToWeb HTML links only after the document is ready.
-- ProudCity Meeting preview iframes can show the ready FileToWeb HTML page while keeping Download buttons and literal material links pointed at the original PDF.
-- Add-on plugins can override the ready public replacement URL through `filetoweb_integration_ready_replacement_url`, for example to use a reviewed native WordPress page.
+- Ready FileToWeb output is cached into WordPress-local HTML during sync/poll/admin actions, not during citizen page loads.
+- Public front-end PDF links are replaced with the approved WordPress page when one exists, otherwise with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.
+- ProudCity Meeting preview iframes can show the WordPress-local HTML copy while keeping Download buttons and literal material links pointed at the original PDF.
+- Add-on plugins can override the ready public replacement URL through `filetoweb_integration_ready_replacement_url`.
 - Sites can disable the bundled FileToWeb widget with `filetoweb_integration_enable_widget`.
 - ProudCity sites can disable meeting material support with `filetoweb_integration_enable_meeting_materials` or disable only meeting preview rewrites with `filetoweb_integration_rewrite_meeting_viewer`.
 - Admin screens keep the original PDF link and show FileToWeb status, generated HTML, editor link, manual sync, and poll actions.
+- Ready sources get a WordPress-local draft page that admins can edit, publish, and explicitly approve for public replacement.
 - Manual backfill is available from **Settings > FileToWeb** and is bounded by the configured batch size.
+- A bulk sync queue can process all Proud Documents or all ProudCity Meeting PDFs in bounded batches.
 
 ## Settings
 
@@ -24,14 +27,14 @@ The plugin owns its settings through the WordPress Settings API and stores them 
 - Enabled
 - FileToWeb API URL
 - Scoped FileToWeb API key
-- Public link replacement
+- Public link replacement to WordPress-local HTML/pages
 - Backfill/poll batch size
 
 The default API URL is `https://filetoweb.com`. Authorization headers are only sent to allowed HTTPS FileToWeb API hosts.
 
 ## Link Replacement
 
-Replacement is limited to front-end rendering. Admin, REST, AJAX, feeds, and XML-RPC keep original WordPress URLs.
+Replacement is limited to front-end rendering. Admin, REST, AJAX, feeds, and XML-RPC keep original WordPress URLs and FileToWeb admin/editor links.
 
 The plugin rewrites:
 
@@ -39,10 +42,10 @@ The plugin rewrites:
 - Proud Document `document` post meta on the front end
 - literal PDF and attachment-page links inside `the_content`
 - text widget content
-- Google Docs preview iframe URLs inside filtered content when they wrap a ready FileToWeb page
+- Google Docs preview iframe URLs inside filtered content when they wrap a ready WordPress-local HTML copy
 - ProudCity single Meeting Google Docs preview iframes for ready Agenda, Agenda Packet, and Minutes PDFs
 
-The original WordPress file remains intact.
+The original WordPress file remains intact. Public rendering does not make a live request to FileToWeb; if the WordPress-local copy is unavailable, the original PDF URL is left in place.
 
 ## Security Notes
 
@@ -50,8 +53,9 @@ The original WordPress file remains intact.
 - The API key is never sent to non-allowlisted hosts.
 - Source URLs are checked for public HTTP/HTTPS hosts before HEAD requests or API submission.
 - FileToWeb response fields are explicitly allowlisted and sanitized before storage.
-- Result/editor URLs must use trusted FileToWeb hosts.
+- Result/editor URLs must use trusted FileToWeb hosts and are shown to admins, not used as the default public runtime URL.
 - Admin actions use nonces and capability checks.
+- API settings default to the `activate_plugins` capability; PDF sync actions default to `edit_others_posts`; both can be filtered.
 - No global output buffering is used for public rewriting.
 
 ## External Service

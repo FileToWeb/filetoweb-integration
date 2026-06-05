@@ -24,10 +24,13 @@ class Plugin {
 
 		Settings::init();
 		Sync::init();
-		Cron::init();
-		Admin::init();
-		Meeting_Materials::init();
-		Link_Rewriter::init();
+			Cron::init();
+			Admin::init();
+			Meeting_Materials::init();
+			Local_HTML::init();
+			Native_Page::init();
+			Bulk_Queue::init();
+			Link_Rewriter::init();
 
 		if ( apply_filters( 'filetoweb_integration_enable_widget', true ) ) {
 			Document_Widget::init();

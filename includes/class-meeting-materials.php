@@ -269,7 +269,7 @@ class Meeting_Materials {
 	}
 
 	/**
-	 * Return a ready FileToWeb viewer URL for a meeting attachment.
+	 * Return a ready WordPress-local viewer URL for a meeting attachment.
 	 *
 	 * @param int $attachment_id Attachment ID.
 	 * @return string
@@ -282,14 +282,14 @@ class Meeting_Materials {
 			return '';
 		}
 
-		$html_url       = Document_State::ready_html_url( $attachment_id );
-		$continuous_url = Document_State::ready_continuous_url( $attachment_id );
+		$html_url   = Document_State::ready_html_url( $attachment_id );
+		$local_url  = Local_HTML::local_url( $attachment_id );
 
-		if ( ! $html_url && ! $continuous_url ) {
+		if ( ! $html_url || ! $local_url ) {
 			return '';
 		}
 
-		return $html_url ? $html_url : $continuous_url;
+		return $local_url;
 	}
 
 	/**
@@ -443,7 +443,7 @@ class Meeting_Materials {
 	private static function can_manage_meeting( $meeting_id ) {
 		$meeting_id = absint( $meeting_id );
 
-		return $meeting_id && current_user_can( 'edit_post', $meeting_id ) && current_user_can( 'upload_files' );
+		return $meeting_id && Capabilities::current_user_can_sync( $meeting_id );
 	}
 
 	/**

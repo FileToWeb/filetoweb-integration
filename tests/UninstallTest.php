@@ -31,12 +31,22 @@ class UninstallTest extends TestCase {
 				return true;
 			}
 		);
-		Functions\when( 'wp_clear_scheduled_hook' )->alias(
-			function ( $hook ) use ( &$cleared_hooks ) {
-				$cleared_hooks[] = $hook;
-				return true;
-			}
-		);
+			Functions\when( 'wp_clear_scheduled_hook' )->alias(
+				function ( $hook ) use ( &$cleared_hooks ) {
+					$cleared_hooks[] = $hook;
+					return true;
+				}
+			);
+			Functions\when( 'wp_upload_dir' )->justReturn(
+				array(
+					'basedir' => sys_get_temp_dir(),
+				)
+			);
+			Functions\when( 'trailingslashit' )->alias(
+				function ( $value ) {
+					return rtrim( (string) $value, '/' ) . '/';
+				}
+			);
 
 		$GLOBALS['wpdb'] = new class() {
 			public $postmeta = 'wp_postmeta';
@@ -54,8 +64,11 @@ class UninstallTest extends TestCase {
 		require __DIR__ . '/../uninstall.php';
 
 		$this->assertContains( Settings::OPTION_SETTINGS, $deleted_options );
-		$this->assertContains( Settings::LEGACY_OPTION_API_KEY, $deleted_options );
-		$this->assertContains( Document_State::META_HTML_URL, $GLOBALS['wpdb']->deleted_meta_keys );
-		$this->assertContains( 'filetoweb_integration_poll_pending', $cleared_hooks );
-	}
+			$this->assertContains( Settings::LEGACY_OPTION_API_KEY, $deleted_options );
+			$this->assertContains( 'filetoweb_integration_bulk_queue', $deleted_options );
+			$this->assertContains( Document_State::META_HTML_URL, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Document_State::META_LOCAL_HTML_PATH, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( 'filetoweb_integration_poll_pending', $cleared_hooks );
+			$this->assertContains( 'filetoweb_integration_process_bulk_queue', $cleared_hooks );
+		}
 }

@@ -21,9 +21,18 @@ class Document_State {
 	const META_CONTINUOUS_URL               = '_filetoweb_continuous_url';
 	const META_EDITOR_URL                   = '_filetoweb_editor_url';
 	const META_PAGE_COUNT                   = '_filetoweb_page_count';
-	const META_LAST_ERROR                   = '_filetoweb_last_error';
-	const META_LAST_SYNCED_AT               = '_filetoweb_last_synced_at';
-	const META_ORIGINAL_URL                 = '_filetoweb_original_url';
+		const META_LAST_ERROR                   = '_filetoweb_last_error';
+		const META_LAST_SYNCED_AT               = '_filetoweb_last_synced_at';
+		const META_ORIGINAL_URL                 = '_filetoweb_original_url';
+		const META_LOCAL_HTML_PATH              = '_filetoweb_local_html_path';
+		const META_LOCAL_HTML_TOKEN             = '_filetoweb_local_html_token';
+		const META_LOCAL_HTML_SOURCE_URL        = '_filetoweb_local_html_source_url';
+		const META_LOCAL_HTML_SOURCE_FP         = '_filetoweb_local_html_source_fingerprint';
+		const META_LOCAL_HTML_UPDATED_AT        = '_filetoweb_local_html_updated_at';
+		const META_LOCAL_PAGE_ID                = '_filetoweb_local_page_id';
+		const META_LOCAL_PAGE_APPROVED          = '_filetoweb_local_page_approved';
+		const META_LOCAL_PAGE_SOURCE_FP         = '_filetoweb_local_page_source_fingerprint';
+		const META_LOCAL_PAGE_UPDATED_AT        = '_filetoweb_local_page_updated_at';
 
 	/**
 	 * Return all metadata keys owned by the plugin.
@@ -41,11 +50,20 @@ class Document_State {
 			self::META_CONTINUOUS_URL,
 			self::META_EDITOR_URL,
 			self::META_PAGE_COUNT,
-			self::META_LAST_ERROR,
-			self::META_LAST_SYNCED_AT,
-			self::META_ORIGINAL_URL,
-		);
-	}
+				self::META_LAST_ERROR,
+				self::META_LAST_SYNCED_AT,
+				self::META_ORIGINAL_URL,
+				self::META_LOCAL_HTML_PATH,
+				self::META_LOCAL_HTML_TOKEN,
+				self::META_LOCAL_HTML_SOURCE_URL,
+				self::META_LOCAL_HTML_SOURCE_FP,
+				self::META_LOCAL_HTML_UPDATED_AT,
+				self::META_LOCAL_PAGE_ID,
+				self::META_LOCAL_PAGE_APPROVED,
+				self::META_LOCAL_PAGE_SOURCE_FP,
+				self::META_LOCAL_PAGE_UPDATED_AT,
+			);
+		}
 
 	/**
 	 * Persist state returned by the FileToWeb API after upsert.

@@ -16,6 +16,7 @@ $option_names = array(
 	'filetoweb_integration_api_key',
 	'filetoweb_integration_replace_links',
 	'filetoweb_integration_batch_size',
+	'filetoweb_integration_bulk_queue',
 );
 
 foreach ( $option_names as $option_name ) {
@@ -37,6 +38,16 @@ $meta_keys = array(
 	'_filetoweb_last_error',
 	'_filetoweb_last_synced_at',
 	'_filetoweb_original_url',
+	'_filetoweb_local_html_path',
+	'_filetoweb_local_html_token',
+	'_filetoweb_local_html_source_url',
+	'_filetoweb_local_html_source_fingerprint',
+	'_filetoweb_local_html_updated_at',
+	'_filetoweb_local_page_id',
+	'_filetoweb_local_page_approved',
+	'_filetoweb_local_page_source_fingerprint',
+	'_filetoweb_local_page_updated_at',
+	'_filetoweb_source_post_id',
 );
 
 foreach ( $meta_keys as $meta_key ) {
@@ -49,3 +60,19 @@ foreach ( $meta_keys as $meta_key ) {
 }
 
 wp_clear_scheduled_hook( 'filetoweb_integration_poll_pending' );
+wp_clear_scheduled_hook( 'filetoweb_integration_process_bulk_queue' );
+
+if ( function_exists( 'wp_upload_dir' ) ) {
+	$uploads = wp_upload_dir();
+	$dir     = isset( $uploads['basedir'] ) ? trailingslashit( $uploads['basedir'] ) . 'filetoweb-integration' : '';
+
+	if ( $dir && is_dir( $dir ) ) {
+		foreach ( glob( trailingslashit( $dir ) . '*.html' ) as $file ) {
+			if ( is_file( $file ) ) {
+				unlink( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+			}
+		}
+
+		rmdir( $dir ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_rmdir
+	}
+}

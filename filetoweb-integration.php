@@ -2,10 +2,10 @@
 /**
  * Plugin Name:       FileToWeb Integration
  * Plugin URI:        https://filetoweb.com
- * Description:       Converts PDF attachments and Proud Document files with FileToWeb, then replaces public PDF links with generated HTML links when ready.
- * Version:           0.1.14
+ * Description:       Converts PDF attachments and Proud Document files with FileToWeb, then serves WordPress-local HTML or native pages to public visitors when ready.
+ * Version:           0.1.16
  * Requires at least: 5.7
- * Requires PHP:      7.4
+ * Requires PHP:      7.0
  * Author:            FileToWeb
  * Author URI:        https://filetoweb.com
  * License:           GPL-2.0-or-later
@@ -17,13 +17,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'FILETOWEB_INTEGRATION_VERSION', '0.1.14' );
+define( 'FILETOWEB_INTEGRATION_VERSION', '0.1.16' );
 define( 'FILETOWEB_INTEGRATION_FILE', __FILE__ );
 define( 'FILETOWEB_INTEGRATION_PATH', plugin_dir_path( __FILE__ ) );
 define( 'FILETOWEB_INTEGRATION_URL', plugin_dir_url( __FILE__ ) );
 
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-security.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-settings.php';
+require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-capabilities.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-document-state.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-api-client.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-source-resolver.php';
@@ -31,6 +32,9 @@ require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-sync.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-cron.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-admin.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-meeting-materials.php';
+require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-local-html.php';
+require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-native-page.php';
+require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-bulk-queue.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-link-rewriter.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-widget.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-plugin.php';
