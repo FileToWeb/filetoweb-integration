@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.16
+Stable tag: 0.1.17
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -70,6 +70,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.17 =
+
+* Requests FileToWeb continuous HTML in no-chrome mode for WordPress-local caching.
+* Mirrors referenced FileToWeb image assets into WordPress uploads and rewrites local HTML to those WordPress-hosted assets.
 
 = 0.1.16 =
 

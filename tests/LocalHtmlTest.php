@@ -10,12 +10,14 @@ use PHPUnit\Framework\TestCase;
 class LocalHtmlTest extends TestCase {
 	private $uploads_dir = '';
 	private $meta        = array();
+	private $requests    = array();
 
 	protected function setUp(): void {
 		parent::setUp();
 		Monkey\setUp();
 
 		$this->uploads_dir = sys_get_temp_dir() . '/ftw-local-html-' . uniqid();
+		$this->requests    = array();
 		$this->meta        = array(
 			123 => array(
 				Document_State::META_STATUS             => 'ready',
@@ -30,6 +32,11 @@ class LocalHtmlTest extends TestCase {
 		Functions\when( 'wp_unslash' )->returnArg();
 		Functions\when( 'sanitize_text_field' )->returnArg();
 		Functions\when( 'sanitize_key' )->returnArg();
+		Functions\when( 'sanitize_file_name' )->alias(
+			function ( $value ) {
+				return preg_replace( '/[^A-Za-z0-9_.-]/', '-', (string) $value );
+			}
+		);
 		Functions\when( 'absint' )->alias(
 			function ( $value ) {
 				return abs( intval( $value ) );
@@ -45,6 +52,7 @@ class LocalHtmlTest extends TestCase {
 			function () {
 				return array(
 					'basedir' => $this->uploads_dir,
+					'baseurl' => 'https://example.test/wp-content/uploads',
 				);
 			}
 		);
@@ -56,7 +64,9 @@ class LocalHtmlTest extends TestCase {
 		Functions\when( 'wp_generate_password' )->justReturn( 'token-123' );
 		Functions\when( 'add_query_arg' )->alias(
 			function ( $args, $url ) {
-				return rtrim( (string) $url, '/' ) . '/?' . http_build_query( $args );
+				$separator = false === strpos( (string) $url, '?' ) ? '?' : '&';
+
+				return (string) $url . $separator . http_build_query( $args );
 			}
 		);
 		Functions\when( 'home_url' )->alias(
@@ -101,11 +111,23 @@ class LocalHtmlTest extends TestCase {
 		);
 		Functions\when( 'wp_remote_get' )->alias(
 			function ( $url, $args ) {
-				$this->assertSame( 'https://filetoweb.com/d/demo/continuous', $url );
+				$this->requests[] = $url;
 				$this->assertNotEmpty( $args['reject_unsafe_urls'] );
 
+				if ( 'https://filetoweb.com/d/demo/continuous?chrome=0' === $url ) {
+					return array(
+						'body' => '<!doctype html><html><head><script>bad()</script></head><body><div class="ftw-tabbar">filename.pdf</div><main><img src="/d/demo/assets/page-1/logo.png" alt="Logo">Converted content</main></body></html>',
+					);
+				}
+
+				if ( 'https://filetoweb.com/d/demo/assets/page-1/logo.png' === $url ) {
+					return array(
+						'body' => 'PNGDATA',
+					);
+				}
+
 				return array(
-					'body' => '<!doctype html><html><head><script>bad()</script></head><body><div class="ftw-tabbar">filename.pdf</div><main>Converted content</main></body></html>',
+					'body' => '',
 				);
 			}
 		);
@@ -120,19 +142,31 @@ class LocalHtmlTest extends TestCase {
 
 	protected function tearDown(): void {
 		if ( $this->uploads_dir && is_dir( $this->uploads_dir ) ) {
-			foreach ( glob( $this->uploads_dir . '/filetoweb-integration/*' ) as $file ) {
-				unlink( $file );
-			}
-			rmdir( $this->uploads_dir . '/filetoweb-integration' );
-			rmdir( $this->uploads_dir );
+			$this->remove_dir( $this->uploads_dir );
 		}
 
 		Monkey\tearDown();
 		parent::tearDown();
 	}
 
+	private function remove_dir( $dir ): void {
+		foreach ( glob( rtrim( $dir, '/' ) . '/*' ) as $path ) {
+			if ( is_dir( $path ) ) {
+				$this->remove_dir( $path );
+			} else {
+				unlink( $path );
+			}
+		}
+
+		rmdir( $dir );
+	}
+
 	public function test_refresh_stores_local_html_without_scripts_and_public_url_is_local(): void {
-		$this->assertSame( 'updated', Local_HTML::refresh_for_post( 123 ) );
+		$this->assertSame(
+			'updated',
+			Local_HTML::refresh_for_post( 123 ),
+			isset( $this->meta[123][ Document_State::META_LAST_ERROR ] ) ? $this->meta[123][ Document_State::META_LAST_ERROR ] : ''
+		);
 
 		$path = $this->meta[123][ Document_State::META_LOCAL_HTML_PATH ];
 		$this->assertFileExists( $path );
@@ -141,6 +175,17 @@ class LocalHtmlTest extends TestCase {
 		$this->assertStringNotContainsString( '<script', $html );
 		$this->assertStringContainsString( 'data-filetoweb-local-viewer', $html );
 		$this->assertStringContainsString( 'Converted content', $html );
+		$this->assertStringNotContainsString( 'src="/d/demo/assets/page-1/logo.png"', $html );
+		$this->assertStringContainsString( 'src="https://example.test/wp-content/uploads/filetoweb-integration/assets/123-fingerprint123/page-1/logo.png"', $html );
+		$this->assertFileExists( $this->uploads_dir . '/filetoweb-integration/assets/123-fingerprint123/page-1/logo.png' );
+		$this->assertSame(
+			array(
+				'https://filetoweb.com/d/demo/continuous?chrome=0',
+				'https://filetoweb.com/d/demo/assets/page-1/logo.png',
+			),
+			$this->requests
+		);
+		$this->assertSame( 'https://filetoweb.com/d/demo/continuous?chrome=0', $this->meta[123][ Document_State::META_LOCAL_HTML_SOURCE_URL ] );
 
 		$this->assertSame(
 			'https://example.test/?filetoweb_local_html=123&ftw_token=token-123',

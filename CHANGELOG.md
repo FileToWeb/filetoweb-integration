@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.17
+
+- Requests FileToWeb continuous HTML in no-chrome mode for WordPress-local caching.
+- Mirrors referenced FileToWeb image assets into WordPress uploads and rewrites local HTML to those WordPress-hosted assets.
+
 ## 0.1.16
 
 - Moves links that already point to the plugin's WordPress-local HTML cache to the approved WordPress-native page when one is published and approved.

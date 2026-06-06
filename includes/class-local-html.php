@@ -69,6 +69,8 @@ class Local_HTML {
 			);
 		}
 
+		$viewer_url = self::local_viewer_url( $viewer_url );
+
 		if ( ! $viewer_url || ! $fingerprint ) {
 			return 'skipped';
 		}
@@ -91,6 +93,8 @@ class Local_HTML {
 			update_post_meta( $post_id, Document_State::META_LAST_ERROR, __( 'FileToWeb local HTML cache was empty.', 'filetoweb-integration' ) );
 			return 'failed';
 		}
+
+		$html = self::mirror_filetoweb_assets( $post_id, $fingerprint, $viewer_url, $html );
 
 		$path = self::write_local_file( $post_id, $fingerprint, $html );
 
@@ -294,6 +298,35 @@ class Local_HTML {
 	}
 
 	/**
+	 * Return the FileToWeb URL variant intended for local WordPress embedding.
+	 *
+	 * @param string $url FileToWeb viewer URL.
+	 * @return string
+	 */
+	private static function local_viewer_url( $url ) {
+		$url = Security::sanitize_filetoweb_url( $url );
+
+		if ( ! $url ) {
+			return '';
+		}
+
+		$path = (string) parse_url( $url, PHP_URL_PATH );
+
+		if ( false === stripos( $path, '/continuous' ) ) {
+			return $url;
+		}
+
+		return Security::sanitize_filetoweb_url(
+			add_query_arg(
+				array(
+					'chrome' => '0',
+				),
+				$url
+			)
+		);
+	}
+
+	/**
 	 * Is the current local cache up to date?
 	 *
 	 * @param int    $post_id Post ID.
@@ -356,6 +389,218 @@ class Local_HTML {
 			'error' => '',
 			'html'  => (string) wp_remote_retrieve_body( $response ),
 		);
+	}
+
+	/**
+	 * Mirror FileToWeb assets referenced by local HTML into WordPress uploads.
+	 *
+	 * @param int    $post_id Source post ID.
+	 * @param string $fingerprint Source fingerprint.
+	 * @param string $viewer_url FileToWeb viewer URL used for the local HTML.
+	 * @param string $html Local HTML.
+	 * @return string
+	 */
+	private static function mirror_filetoweb_assets( $post_id, $fingerprint, $viewer_url, $html ) {
+		$post_id    = absint( $post_id );
+		$viewer_url = Security::sanitize_filetoweb_url( $viewer_url );
+
+		if ( ! $post_id || ! $viewer_url || ! is_string( $html ) || '' === $html ) {
+			return $html;
+		}
+
+		$uploads = wp_upload_dir();
+		$basedir = isset( $uploads['basedir'] ) ? $uploads['basedir'] : '';
+		$baseurl = isset( $uploads['baseurl'] ) ? $uploads['baseurl'] : '';
+
+		if ( ! $basedir || ! $baseurl ) {
+			return $html;
+		}
+
+		$asset_root = self::asset_root( $post_id, $fingerprint );
+		$asset_dir  = trailingslashit( $basedir ) . 'filetoweb-integration/assets/' . $asset_root;
+		$asset_url  = trailingslashit( $baseurl ) . 'filetoweb-integration/assets/' . $asset_root;
+		$mirrored   = array();
+
+		return preg_replace_callback(
+			'~\b(?P<attr>src|href|poster)=(?P<quote>["\'])(?P<value>[^"\']+)(?P=quote)~i',
+			function ( $match ) use ( $viewer_url, $asset_dir, $asset_url, &$mirrored ) {
+				$value      = html_entity_decode( $match['value'], ENT_QUOTES, 'UTF-8' );
+				$remote_url = self::resolve_filetoweb_asset_url( $value, $viewer_url );
+
+				if ( ! $remote_url ) {
+					return $match[0];
+				}
+
+				if ( isset( $mirrored[ $remote_url ] ) ) {
+					$local_url = $mirrored[ $remote_url ];
+				} else {
+					$asset_path = self::asset_relative_path( $remote_url );
+
+					if ( ! $asset_path ) {
+						return $match[0];
+					}
+
+					$local_path = trailingslashit( $asset_dir ) . $asset_path;
+					$local_url  = trailingslashit( $asset_url ) . str_replace( '%2F', '/', rawurlencode( $asset_path ) );
+					$local_url  = str_replace( '%2F', '/', $local_url );
+
+					if ( ! self::download_asset( $remote_url, $local_path ) ) {
+						return $match[0];
+					}
+
+					$mirrored[ $remote_url ] = $local_url;
+				}
+
+				return $match['attr'] . '=' . $match['quote'] . esc_url_raw( $local_url ) . $match['quote'];
+			},
+			$html
+		);
+	}
+
+	/**
+	 * Return deterministic local asset root.
+	 *
+	 * @param int    $post_id Source post ID.
+	 * @param string $fingerprint Source fingerprint.
+	 * @return string
+	 */
+	private static function asset_root( $post_id, $fingerprint ) {
+		$hash = substr( preg_replace( '/[^a-zA-Z0-9]/', '', (string) $fingerprint ), 0, 32 );
+
+		return absint( $post_id ) . '-' . ( $hash ? $hash : 'asset' );
+	}
+
+	/**
+	 * Resolve a FileToWeb asset URL from an HTML attribute value.
+	 *
+	 * @param string $value Raw attribute value.
+	 * @param string $viewer_url FileToWeb viewer URL.
+	 * @return string
+	 */
+	private static function resolve_filetoweb_asset_url( $value, $viewer_url ) {
+		$value = trim( html_entity_decode( (string) $value, ENT_QUOTES, 'UTF-8' ) );
+
+		if ( '' === $value || preg_match( '~^(data|blob|mailto|tel|javascript):~i', $value ) || '#' === substr( $value, 0, 1 ) ) {
+			return '';
+		}
+
+		$viewer_parts = parse_url( $viewer_url );
+
+		if ( empty( $viewer_parts['scheme'] ) || empty( $viewer_parts['host'] ) ) {
+			return '';
+		}
+
+		$asset_url = '';
+		$parts     = parse_url( $value );
+
+		if ( ! empty( $parts['scheme'] ) ) {
+			$asset_url = $value;
+		} elseif ( 0 === strpos( $value, '//' ) ) {
+			$asset_url = $viewer_parts['scheme'] . ':' . $value;
+		} elseif ( 0 === strpos( $value, '/' ) ) {
+			$asset_url = $viewer_parts['scheme'] . '://' . $viewer_parts['host'] . $value;
+		} else {
+			$base_path = isset( $viewer_parts['path'] ) ? preg_replace( '~/[^/]*$~', '/', $viewer_parts['path'] ) : '/';
+			$asset_url = $viewer_parts['scheme'] . '://' . $viewer_parts['host'] . $base_path . $value;
+		}
+
+		$asset_url = Security::sanitize_filetoweb_url( $asset_url );
+
+		if ( ! $asset_url ) {
+			return '';
+		}
+
+		return self::asset_relative_path( $asset_url ) ? $asset_url : '';
+	}
+
+	/**
+	 * Return a safe local relative path for a FileToWeb asset URL.
+	 *
+	 * @param string $url FileToWeb asset URL.
+	 * @return string
+	 */
+	private static function asset_relative_path( $url ) {
+		$path = (string) parse_url( $url, PHP_URL_PATH );
+
+		if ( ! preg_match( '~^/d/[^/]+/assets/(?P<asset>.+)$~', $path, $match ) ) {
+			return '';
+		}
+
+		$asset = rawurldecode( $match['asset'] );
+		$parts = array_filter( explode( '/', str_replace( '\\', '/', $asset ) ), 'strlen' );
+
+		if ( empty( $parts ) || count( $parts ) > 8 ) {
+			return '';
+		}
+
+		$safe_parts = array();
+
+		foreach ( $parts as $part ) {
+			if ( '.' === $part || '..' === $part ) {
+				return '';
+			}
+
+			$safe = sanitize_file_name( $part );
+
+			if ( '' === $safe ) {
+				return '';
+			}
+
+			$safe_parts[] = $safe;
+		}
+
+		$filename = end( $safe_parts );
+		$ext      = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
+
+		if ( ! in_array( $ext, array( 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif' ), true ) ) {
+			return '';
+		}
+
+		return implode( '/', $safe_parts );
+	}
+
+	/**
+	 * Download a FileToWeb asset into the local uploads directory.
+	 *
+	 * @param string $url Remote FileToWeb asset URL.
+	 * @param string $path Local file path.
+	 * @return bool
+	 */
+	private static function download_asset( $url, $path ) {
+		if ( file_exists( $path ) && is_readable( $path ) ) {
+			return true;
+		}
+
+		if ( ! wp_mkdir_p( dirname( $path ) ) ) {
+			return false;
+		}
+
+		$response = wp_remote_get(
+			$url,
+			array(
+				'timeout'            => 20,
+				'redirection'        => 0,
+				'reject_unsafe_urls' => true,
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return false;
+		}
+
+		$code = absint( wp_remote_retrieve_response_code( $response ) );
+
+		if ( $code < 200 || $code >= 300 ) {
+			return false;
+		}
+
+		$body = (string) wp_remote_retrieve_body( $response );
+
+		if ( '' === $body || strlen( $body ) > 5 * 1024 * 1024 ) {
+			return false;
+		}
+
+		return false !== file_put_contents( $path, $body ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_file_put_contents
 	}
 
 	/**
