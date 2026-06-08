@@ -3,7 +3,7 @@
  * Plugin Name:       FileToWeb Integration
  * Plugin URI:        https://filetoweb.com
  * Description:       Converts PDF attachments and Proud Document files with FileToWeb, then serves WordPress-local HTML or native pages to public visitors when ready.
- * Version:           0.1.17
+ * Version:           0.1.18
  * Requires at least: 5.7
  * Requires PHP:      7.0
  * Author:            FileToWeb
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'FILETOWEB_INTEGRATION_VERSION', '0.1.17' );
+define( 'FILETOWEB_INTEGRATION_VERSION', '0.1.18' );
 define( 'FILETOWEB_INTEGRATION_FILE', __FILE__ );
 define( 'FILETOWEB_INTEGRATION_PATH', plugin_dir_path( __FILE__ ) );
 define( 'FILETOWEB_INTEGRATION_URL', plugin_dir_url( __FILE__ ) );

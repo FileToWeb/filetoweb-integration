@@ -391,7 +391,7 @@ class Admin {
 		check_admin_referer( 'filetoweb_integration_' . $action . '_' . $post_id );
 
 		if ( 'sync_now' === $action ) {
-			$result  = 'attachment' === get_post_type( $post_id ) ? Sync::sync_attachment_now( $post_id ) : Sync::sync_document_now( $post_id );
+			$result  = 'attachment' === get_post_type( $post_id ) ? Sync::sync_attachment_now( $post_id, 'manual_sync' ) : Sync::sync_document_now( $post_id, 'manual_sync' );
 			$message = sprintf( __( 'FileToWeb sync %s.', 'filetoweb-integration' ), isset( $result['status'] ) ? $result['status'] : 'complete' );
 		} else {
 			$result  = Sync::poll_post( $post_id );

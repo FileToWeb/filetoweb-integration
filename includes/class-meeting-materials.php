@@ -222,7 +222,7 @@ class Meeting_Materials {
 			return array( 'status' => 'skipped' );
 		}
 
-		return Sync::sync_attachment_now( $attachment_id );
+		return Sync::sync_attachment_now( $attachment_id, 'meeting_material_' . sanitize_key( $slot ) );
 	}
 
 	/**

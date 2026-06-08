@@ -33,6 +33,7 @@ class Document_State {
 		const META_LOCAL_PAGE_APPROVED          = '_filetoweb_local_page_approved';
 		const META_LOCAL_PAGE_SOURCE_FP         = '_filetoweb_local_page_source_fingerprint';
 		const META_LOCAL_PAGE_UPDATED_AT        = '_filetoweb_local_page_updated_at';
+		const META_LAST_TRIGGER                 = '_filetoweb_last_trigger';
 
 	/**
 	 * Return all metadata keys owned by the plugin.
@@ -62,6 +63,7 @@ class Document_State {
 				self::META_LOCAL_PAGE_APPROVED,
 				self::META_LOCAL_PAGE_SOURCE_FP,
 				self::META_LOCAL_PAGE_UPDATED_AT,
+				self::META_LAST_TRIGGER,
 			);
 		}
 
@@ -162,6 +164,19 @@ class Document_State {
 	public static function mark_failed( $post_id, $error ) {
 		update_post_meta( $post_id, self::META_STATUS, 'failed' );
 		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_error( $error ) );
+		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
+	}
+
+	/**
+	 * Mark a PDF attachment as intentionally scheduled for FileToWeb sync.
+	 *
+	 * @param int    $post_id Post ID.
+	 * @param string $trigger Sync trigger.
+	 */
+	public static function mark_scheduled( $post_id, $trigger ) {
+		update_post_meta( $post_id, self::META_STATUS, 'pending' );
+		update_post_meta( $post_id, self::META_LAST_ERROR, '' );
+		update_post_meta( $post_id, self::META_LAST_TRIGGER, sanitize_key( $trigger ) );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
 	}
 

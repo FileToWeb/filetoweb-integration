@@ -21,7 +21,7 @@ class Sync {
 		add_action( 'add_attachment', array( __CLASS__, 'schedule_attachment_sync' ) );
 		add_action( 'edit_attachment', array( __CLASS__, 'schedule_attachment_sync' ) );
 		add_action( 'save_post', array( __CLASS__, 'schedule_document_sync' ), 30, 2 );
-		add_action( self::HOOK_SYNC_ITEM, array( __CLASS__, 'sync_item' ), 10, 2 );
+		add_action( self::HOOK_SYNC_ITEM, array( __CLASS__, 'sync_item' ), 10, 3 );
 	}
 
 	/**
@@ -30,7 +30,7 @@ class Sync {
 	 * @param int $attachment_id Attachment ID.
 	 */
 	public static function schedule_attachment_sync( $attachment_id ) {
-		self::schedule_sync( $attachment_id, 'attachment' );
+		self::schedule_sync( $attachment_id, 'attachment', 'attachment_save' );
 	}
 
 	/**
@@ -48,7 +48,7 @@ class Sync {
 			return;
 		}
 
-		self::schedule_sync( $post_id, 'document' );
+		self::schedule_sync( $post_id, 'document', 'document_save' );
 	}
 
 	/**
@@ -56,45 +56,48 @@ class Sync {
 	 *
 	 * @param int    $post_id Post ID.
 	 * @param string $kind Source kind.
+	 * @param string $trigger Sync trigger.
 	 */
-	public static function sync_item( $post_id, $kind ) {
+	public static function sync_item( $post_id, $kind, $trigger = 'scheduled' ) {
 		if ( ! Settings::configured() ) {
 			return;
 		}
 
 		if ( 'attachment' === $kind ) {
-			self::sync_attachment_now( $post_id );
+			self::sync_attachment_now( $post_id, $trigger );
 			return;
 		}
 
 		if ( 'document' === $kind ) {
-			self::sync_document_now( $post_id );
+			self::sync_document_now( $post_id, $trigger );
 		}
 	}
 
 	/**
 	 * Sync an attachment immediately.
 	 *
-	 * @param int $attachment_id Attachment ID.
+	 * @param int    $attachment_id Attachment ID.
+	 * @param string $trigger Sync trigger.
 	 * @return array
 	 */
-	public static function sync_attachment_now( $attachment_id ) {
+	public static function sync_attachment_now( $attachment_id, $trigger = 'manual_sync' ) {
 		$source = Source_Resolver::for_attachment( $attachment_id );
 
 		if ( ! $source ) {
 			return array( 'status' => 'skipped' );
 		}
 
-		return self::sync_source_to_filetoweb( $attachment_id, $source );
+		return self::sync_source_to_filetoweb( $attachment_id, $source, $trigger );
 	}
 
 	/**
 	 * Sync a Proud Document immediately.
 	 *
-	 * @param int $post_id Post ID.
+	 * @param int    $post_id Post ID.
+	 * @param string $trigger Sync trigger.
 	 * @return array
 	 */
-	public static function sync_document_now( $post_id ) {
+	public static function sync_document_now( $post_id, $trigger = 'manual_sync' ) {
 		$source = Source_Resolver::for_document( $post_id );
 
 		if ( ! $source ) {
@@ -102,7 +105,7 @@ class Sync {
 		}
 
 		$sync_post_id = ! empty( $source['sync_post_id'] ) ? absint( $source['sync_post_id'] ) : absint( $post_id );
-		$result       = self::sync_source_to_filetoweb( $sync_post_id, $source );
+		$result       = self::sync_source_to_filetoweb( $sync_post_id, $source, $trigger );
 
 		if ( $sync_post_id !== absint( $post_id ) ) {
 			Document_State::copy_state( $sync_post_id, $post_id );
@@ -229,10 +232,6 @@ class Sync {
 				'meta_query'     => array(
 					'relation' => 'OR',
 					array(
-						'key'     => Document_State::META_STATUS,
-						'compare' => 'NOT EXISTS',
-					),
-					array(
 						'key'   => Document_State::META_STATUS,
 						'value' => 'pending',
 					),
@@ -253,7 +252,7 @@ class Sync {
 		);
 
 		foreach ( $posts as $post_id ) {
-			$result = self::sync_attachment_now( $post_id );
+			$result = self::sync_attachment_now( $post_id, 'cron_retry' );
 
 			if ( isset( $result['status'] ) && ! in_array( $result['status'], array( 'failed', 'skipped' ), true ) ) {
 				++$counts['queued'];
@@ -324,8 +323,8 @@ class Sync {
 
 		foreach ( $items as $item ) {
 			$result = 'attachment' === $item['kind']
-				? self::sync_attachment_now( $item['id'] )
-				: self::sync_document_now( $item['id'] );
+				? self::sync_attachment_now( $item['id'], 'manual_backfill' )
+				: self::sync_document_now( $item['id'], 'manual_backfill' );
 
 			if ( isset( $result['status'] ) && ! in_array( $result['status'], array( 'failed', 'skipped' ), true ) ) {
 				++$counts['queued'];
@@ -344,13 +343,21 @@ class Sync {
 	 *
 	 * @param int    $post_id Post ID.
 	 * @param string $kind Source kind.
+	 * @param string $trigger Sync trigger.
 	 */
-	private static function schedule_sync( $post_id, $kind ) {
+	private static function schedule_sync( $post_id, $kind, $trigger ) {
 		if ( ! Settings::configured() ) {
 			return;
 		}
 
-		$args = array( absint( $post_id ), $kind );
+		$post_id = absint( $post_id );
+		$trigger = self::sanitize_trigger( $trigger );
+
+		if ( 'attachment' === $kind && self::attachment_looks_like_pdf( $post_id ) ) {
+			Document_State::mark_scheduled( $post_id, $trigger );
+		}
+
+		$args = array( $post_id, $kind, $trigger );
 
 		if ( ! wp_next_scheduled( self::HOOK_SYNC_ITEM, $args ) ) {
 			wp_schedule_single_event( time() + 5, self::HOOK_SYNC_ITEM, $args );
@@ -383,13 +390,16 @@ class Sync {
 	 * Send source to FileToWeb.
 	 *
 	 * @param int   $post_id Post ID that owns the state.
-	 * @param array $source Source.
+	 * @param array  $source Source.
+	 * @param string $trigger Sync trigger.
 	 * @return array
 	 */
-	private static function sync_source_to_filetoweb( $post_id, $source ) {
+	private static function sync_source_to_filetoweb( $post_id, $source, $trigger ) {
 		if ( ! Settings::configured() ) {
 			return array( 'status' => 'skipped' );
 		}
+
+		$trigger = self::sanitize_trigger( $trigger );
 
 		$payload = array(
 			'external_id' => $source['external_id'],
@@ -406,6 +416,8 @@ class Sync {
 			'metadata'    => array(
 				'wordpress_post_id' => absint( $post_id ),
 				'wordpress_site'    => home_url(),
+				'filetoweb_trigger' => $trigger,
+				'plugin_version'    => defined( 'FILETOWEB_INTEGRATION_VERSION' ) ? FILETOWEB_INTEGRATION_VERSION : '',
 			),
 		);
 
@@ -452,5 +464,38 @@ class Sync {
 			'failed'  => 0,
 			'updated' => 0,
 		);
+	}
+
+	/**
+	 * Does an attachment look like a PDF without doing network fingerprinting?
+	 *
+	 * @param int $attachment_id Attachment ID.
+	 * @return bool
+	 */
+	private static function attachment_looks_like_pdf( $attachment_id ) {
+		$attachment_id = absint( $attachment_id );
+
+		if ( ! $attachment_id ) {
+			return false;
+		}
+
+		$mime     = get_post_mime_type( $attachment_id );
+		$url      = Source_Resolver::original_attachment_url( $attachment_id );
+		$file     = get_attached_file( $attachment_id );
+		$filename = $file ? basename( $file ) : basename( (string) parse_url( $url, PHP_URL_PATH ) );
+
+		return $url && Source_Resolver::is_pdf_source( $url, $filename, $mime ) && Security::is_safe_source_url( $url );
+	}
+
+	/**
+	 * Sanitize a sync trigger name for API metadata.
+	 *
+	 * @param string $trigger Trigger.
+	 * @return string
+	 */
+	private static function sanitize_trigger( $trigger ) {
+		$trigger = sanitize_key( $trigger );
+
+		return $trigger ? substr( $trigger, 0, 64 ) : 'manual_sync';
 	}
 }

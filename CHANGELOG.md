@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.18
+
+- Prevents cron polling from discovering never-synced historical PDF attachments.
+- Marks newly uploaded PDF attachments as intentionally scheduled so missed upload syncs can still retry safely.
+- Adds FileToWeb trigger metadata to document upserts for upload/save, manual sync, backfill, bulk queue, cron retry, and meeting-material sync paths.
+
 ## 0.1.17
 
 - Requests FileToWeb continuous HTML in no-chrome mode for WordPress-local caching.

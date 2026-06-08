@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.17
+Stable tag: 0.1.18
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -22,7 +22,7 @@ Features:
 * Automatic sync for new PDF attachments and Proud Document saves.
 * Manual bounded backfill for existing PDF attachments and Proud Document posts.
 * Bulk queue controls for all Proud Documents or all ProudCity Meeting PDFs.
-* WP-Cron polling for pending conversions.
+* WP-Cron polling for pending conversions and intentionally scheduled upload retries.
 * Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML/pages instead of public FileToWeb URLs.
 * ProudCity Document preview replacement while preserving the original PDF download link.
 * ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync and WordPress-local preview replacement.
@@ -70,6 +70,12 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.18 =
+
+* Prevents cron polling from discovering never-synced historical PDF attachments.
+* Keeps existing-site migration behind explicit Backfill or Bulk Queue actions.
+* Adds FileToWeb trigger metadata for upload/save, manual sync, backfill, bulk queue, cron retry, and meeting-material sync paths.
 
 = 0.1.17 =
 

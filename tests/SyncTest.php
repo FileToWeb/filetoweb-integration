@@ -1,0 +1,148 @@
+<?php
+
+use Brain\Monkey;
+use Brain\Monkey\Functions;
+use FileToWeb\Integration\Document_State;
+use FileToWeb\Integration\Settings;
+use FileToWeb\Integration\Sync;
+use PHPUnit\Framework\TestCase;
+
+class SyncTest extends TestCase {
+	protected function setUp(): void {
+		parent::setUp();
+		Monkey\setUp();
+
+		Functions\when( '__' )->returnArg();
+		Functions\when( 'esc_url_raw' )->returnArg();
+		Functions\when( 'wp_unslash' )->returnArg();
+		Functions\when( 'sanitize_text_field' )->returnArg();
+		Functions\when( 'sanitize_key' )->alias(
+			function ( $value ) {
+				return strtolower( preg_replace( '/[^a-z0-9_\-]/', '', (string) $value ) );
+			}
+		);
+		Functions\when( 'absint' )->alias(
+			function ( $value ) {
+				return abs( intval( $value ) );
+			}
+		);
+		Functions\when( 'current_time' )->justReturn( '2026-06-08 12:00:00' );
+		Functions\when( 'home_url' )->justReturn( 'https://city.example' );
+		Functions\when( 'FileToWeb\Integration\gethostbynamel' )->justReturn( array( '93.184.216.34' ) );
+		Functions\when( 'FileToWeb\Integration\dns_get_record' )->justReturn( array() );
+		Functions\when( 'get_option' )->alias(
+			function ( $name, $default = false ) {
+				if ( Settings::OPTION_SETTINGS === $name ) {
+					return array(
+						Settings::KEY_ENABLED       => '1',
+						Settings::KEY_API_BASE_URL  => 'https://filetoweb.com',
+						Settings::KEY_API_KEY       => 'ftw_api_test',
+						Settings::KEY_REPLACE_LINKS => '1',
+						Settings::KEY_BATCH_SIZE    => 25,
+					);
+				}
+
+				return $default;
+			}
+		);
+		Functions\when( 'apply_filters' )->alias(
+			function ( $tag, $value ) {
+				return $value;
+			}
+		);
+	}
+
+	protected function tearDown(): void {
+		Monkey\tearDown();
+		parent::tearDown();
+	}
+
+	public function test_cron_retry_does_not_discover_never_synced_attachments(): void {
+		$captured_args = array();
+
+		Functions\expect( 'get_posts' )
+			->once()
+			->andReturnUsing(
+				function ( $args ) use ( &$captured_args ) {
+					$captured_args = $args;
+					return array();
+				}
+			);
+
+		$counts = Sync::retry_pending_syncs( 25 );
+
+		$this->assertSame( array( 'queued' => 0, 'skipped' => 0, 'failed' => 0, 'updated' => 0 ), $counts );
+		$this->assertArrayHasKey( 'meta_query', $captured_args );
+		$this->assertFalse( $this->meta_query_contains_compare( $captured_args['meta_query'], 'NOT EXISTS' ) );
+		$this->assertTrue( $this->meta_query_contains_value( $captured_args['meta_query'], 'pending' ) );
+	}
+
+	public function test_new_pdf_attachment_is_marked_and_scheduled_for_intentional_retry(): void {
+		$stored          = array();
+		$scheduled_args  = array();
+		$attachment_id   = 123;
+		$attachment_file = __DIR__ . '/fixtures/sample.pdf';
+
+		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
+		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://cdn.example.org/uploads/sample.pdf' );
+		Functions\when( 'get_attached_file' )->justReturn( $attachment_file );
+		Functions\when( 'wp_next_scheduled' )->justReturn( false );
+		Functions\when( 'site_url' )->justReturn( 'https://city.example/wp-cron.php' );
+		Functions\when( 'wp_remote_post' )->justReturn( true );
+		Functions\expect( 'update_post_meta' )
+			->atLeast()
+			->once()
+			->andReturnUsing(
+				function ( $post_id, $key, $value ) use ( &$stored ) {
+					$stored[ $key ] = $value;
+					return true;
+				}
+			);
+		Functions\expect( 'wp_schedule_single_event' )
+			->once()
+			->andReturnUsing(
+				function ( $timestamp, $hook, $args ) use ( &$scheduled_args ) {
+					$scheduled_args = $args;
+					return true;
+				}
+			);
+
+		Sync::schedule_attachment_sync( $attachment_id );
+
+		$this->assertSame( 'pending', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'attachment_save', $stored[ Document_State::META_LAST_TRIGGER ] );
+		$this->assertSame( array( $attachment_id, 'attachment', 'attachment_save' ), $scheduled_args );
+	}
+
+	private function meta_query_contains_compare( $query, $compare ) {
+		foreach ( (array) $query as $item ) {
+			if ( is_array( $item ) ) {
+				if ( isset( $item['compare'] ) && $compare === $item['compare'] ) {
+					return true;
+				}
+
+				if ( $this->meta_query_contains_compare( $item, $compare ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private function meta_query_contains_value( $query, $value ) {
+		foreach ( (array) $query as $item ) {
+			if ( is_array( $item ) ) {
+				if ( isset( $item['value'] ) && $value === $item['value'] ) {
+					return true;
+				}
+
+				if ( $this->meta_query_contains_value( $item, $value ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+}

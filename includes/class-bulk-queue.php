@@ -106,7 +106,7 @@ class Bulk_Queue {
 		$batch = array_splice( $state['items'], 0, $limit );
 
 		foreach ( $batch as $item ) {
-			$result = self::sync_item( $item );
+			$result = self::sync_item( $item, $state['type'] );
 
 			if ( isset( $result['status'] ) && ! in_array( $result['status'], array( 'failed', 'skipped' ), true ) ) {
 				++$counts['queued'];
@@ -281,18 +281,22 @@ class Bulk_Queue {
 	/**
 	 * Sync one queue item.
 	 *
-	 * @param array $item Item.
+	 * @param array  $item Item.
+	 * @param string $queue_type Queue type.
 	 * @return array
 	 */
-	private static function sync_item( $item ) {
-		$id   = isset( $item['id'] ) ? absint( $item['id'] ) : 0;
-		$kind = isset( $item['kind'] ) ? sanitize_key( $item['kind'] ) : '';
+	private static function sync_item( $item, $queue_type = '' ) {
+		$id         = isset( $item['id'] ) ? absint( $item['id'] ) : 0;
+		$kind       = isset( $item['kind'] ) ? sanitize_key( $item['kind'] ) : '';
+		$queue_type = sanitize_key( $queue_type );
 
 		if ( ! $id ) {
 			return array( 'status' => 'skipped' );
 		}
 
-		return 'document' === $kind ? Sync::sync_document_now( $id ) : Sync::sync_attachment_now( $id );
+		$trigger = $queue_type ? 'bulk_' . $queue_type : 'bulk_queue';
+
+		return 'document' === $kind ? Sync::sync_document_now( $id, $trigger ) : Sync::sync_attachment_now( $id, $trigger );
 	}
 
 	/**
