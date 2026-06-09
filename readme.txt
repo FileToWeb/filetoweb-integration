@@ -4,15 +4,15 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.20
+Stable tag: 0.1.21
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Convert PDF media files with FileToWeb and serve WordPress-local HTML or approved WordPress pages to public visitors once conversion is ready.
+Convert PDF media files with FileToWeb, serve WordPress-local HTML to public visitors, and optionally create draft WordPress Pages from uploaded PDFs.
 
 == Description ==
 
-FileToWeb Integration connects a WordPress site to the FileToWeb API. When a PDF attachment or Proud Document source is uploaded or saved, the plugin can sync it to FileToWeb, poll for conversion status, cache a WordPress-local HTML copy, and replace public PDF links with local HTML or an approved WordPress page after the document is ready.
+FileToWeb Integration connects a WordPress site to the FileToWeb API. When a PDF attachment or Proud Document source is uploaded or saved, the plugin can sync it to FileToWeb, poll for conversion status, cache a WordPress-local HTML copy, and replace public PDF links with local HTML after the document is ready.
 
 Original WordPress media files remain intact. The plugin stores FileToWeb state in post meta and only rewrites public front-end output when conversion is complete, a WordPress-local copy exists, and public replacement is enabled. If local HTML is unavailable, public visitors keep seeing the original PDF.
 
@@ -23,12 +23,12 @@ Features:
 * Manual bounded backfill for existing PDF attachments and Proud Document posts.
 * Bulk queue controls for all Proud Documents or all ProudCity Meeting PDFs.
 * WP-Cron polling for pending conversions and intentionally scheduled upload retries.
-* Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML/pages instead of public FileToWeb URLs.
+* Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML instead of public FileToWeb URLs.
 * ProudCity Document preview replacement while preserving the original PDF download link.
 * Optional ProudCity Document EPUB download link for ready PDF-backed documents.
 * ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync and WordPress-local preview replacement.
 * Standard WordPress widget for linking to or embedding a PDF attachment or Proud Document's local HTML copy.
-* Draft WordPress page creation for ready sources, with explicit admin approval before the page becomes the public replacement.
+* Pages > Convert PDF to Page workflow for intentionally creating editable draft WordPress Pages from uploaded PDFs.
 * Original PDF links are preserved in admin screens.
 
 == Installation ==
@@ -38,13 +38,13 @@ Features:
 3. Open Settings > FileToWeb.
 4. Enter a scoped FileToWeb API key.
 5. Confirm the API URL is `https://filetoweb.com`.
-6. Leave public replacement enabled if ready PDF links should point to WordPress-local HTML/pages.
+6. Leave public replacement enabled if ready PDF links should point to WordPress-local HTML.
 
 == Frequently Asked Questions ==
 
 = Does this replace or delete the original PDF? =
 
-No. Original WordPress media files remain in place. The plugin stores FileToWeb metadata separately and rewrites public links only when a WordPress-local HTML copy or approved WordPress page is ready.
+No. Original WordPress media files remain in place. The plugin stores FileToWeb metadata separately and rewrites public links only when a WordPress-local HTML copy is ready. The separate Pages > Convert PDF to Page workflow uploads a PDF for conversion without adding that PDF to the Media Library.
 
 = Can existing PDFs be migrated? =
 
@@ -71,6 +71,14 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.21 =
+
+* Stops automatic WordPress Page creation from normal PDF attachment and Proud Document sync.
+* Keeps WordPress-local HTML caching and public replacement for ready attachment, Proud Document, and Meeting material sources.
+* Adds Pages > Convert PDF to Page for intentional PDF-to-draft-Page conversion using the FileToWeb signed-upload API.
+* Polls marked PDF-to-Page drafts and updates the same draft Page with editable WordPress HTML when conversion is ready.
+* Sends the uploading admin one email with the draft edit link after the converted Page is ready.
 
 = 0.1.20 =
 

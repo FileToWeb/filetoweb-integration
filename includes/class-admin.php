@@ -125,7 +125,7 @@ class Admin {
 							<input type="hidden" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_REPLACE_LINKS ) ); ?>" value="0" />
 							<label>
 								<input type="checkbox" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_REPLACE_LINKS ) ); ?>" value="1" <?php checked( Settings::replace_links_enabled() ); ?> />
-								<?php esc_html_e( 'Replace front-end PDF links with WordPress-local HTML or approved WordPress pages when ready', 'filetoweb-integration' ); ?>
+								<?php esc_html_e( 'Replace front-end PDF links with WordPress-local HTML when ready', 'filetoweb-integration' ); ?>
 							</label>
 						</td>
 					</tr>

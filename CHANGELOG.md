@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.21
+
+- Stops automatic WordPress Page creation from normal PDF attachment and Proud Document sync.
+- Keeps WordPress-local HTML caching and public replacement for ready attachment, Proud Document, and Meeting material sources.
+- Adds Pages > Convert PDF to Page for intentional PDF-to-draft-Page conversion using the FileToWeb signed-upload API.
+- Polls marked PDF-to-Page drafts and updates the same draft Page with editable WordPress HTML when conversion is ready.
+- Sends the uploading admin one email with the draft edit link after the converted Page is ready.
+
 ## 0.1.20
 
 - Polishes ProudCity Document EPUB button markup so it can be inserted next to the existing Download button without invalid nested block elements.

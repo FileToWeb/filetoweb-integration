@@ -84,7 +84,7 @@ class Native_Page {
 	 * @param int $post_id Source post ID.
 	 */
 	public static function maybe_auto_create_draft( $post_id ) {
-		if ( ! apply_filters( 'filetoweb_integration_auto_create_native_page', true, absint( $post_id ) ) ) {
+		if ( ! apply_filters( 'filetoweb_integration_auto_create_native_page', false, absint( $post_id ) ) ) {
 			return;
 		}
 
@@ -125,13 +125,8 @@ class Native_Page {
 			return;
 		}
 
-		$post_id    = absint( $post->ID );
-		$page_id    = absint( get_post_meta( $post_id, Document_State::META_LOCAL_PAGE_ID, true ) );
-		$approved   = '1' === get_post_meta( $post_id, Document_State::META_LOCAL_PAGE_APPROVED, true );
-		$local_url  = Local_HTML::local_url( $post_id );
-		$page_url   = $page_id ? get_permalink( $page_id ) : '';
-		$edit_url   = $page_id ? get_edit_post_link( $page_id, '' ) : '';
-		$can_manage = Capabilities::current_user_can_manage_native_page( $post_id );
+		$post_id   = absint( $post->ID );
+		$local_url = Local_HTML::local_url( $post_id );
 
 		echo '<hr />';
 		echo '<p><strong>' . esc_html__( 'WordPress-local version', 'filetoweb-integration' ) . '</strong></p>';
@@ -140,30 +135,6 @@ class Native_Page {
 			echo '<p><a href="' . esc_url( $local_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'View local HTML copy', 'filetoweb-integration' ) . '</a></p>';
 		} else {
 			echo '<p><em>' . esc_html__( 'No local HTML copy yet. Poll after FileToWeb is ready.', 'filetoweb-integration' ) . '</em></p>';
-		}
-
-		if ( $page_id ) {
-			echo '<p><strong>' . esc_html__( 'Draft/page:', 'filetoweb-integration' ) . '</strong><br />';
-			if ( $edit_url ) {
-				echo '<a href="' . esc_url( $edit_url ) . '">' . esc_html__( 'Edit WordPress page', 'filetoweb-integration' ) . '</a>';
-			}
-			if ( $page_url ) {
-				echo '<br /><a href="' . esc_url( $page_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'View WordPress page', 'filetoweb-integration' ) . '</a>';
-			}
-			echo '</p>';
-			echo '<p><strong>' . esc_html__( 'Public replacement:', 'filetoweb-integration' ) . '</strong> ' . esc_html( $approved ? __( 'Approved', 'filetoweb-integration' ) : __( 'Not approved', 'filetoweb-integration' ) ) . '</p>';
-		}
-
-		if ( $can_manage && Local_HTML::has_local_html( $post_id ) ) {
-			echo '<p><a class="button" href="' . esc_url( self::admin_action_url( self::ACTION_GENERATE, $post_id ) ) . '">' . esc_html__( 'Update WordPress draft', 'filetoweb-integration' ) . '</a></p>';
-
-			if ( $page_id ) {
-				$approval_label = $approved ? __( 'Stop using WordPress page', 'filetoweb-integration' ) : __( 'Use WordPress page publicly', 'filetoweb-integration' );
-				echo '<p><a class="button" href="' . esc_url( self::admin_action_url( self::ACTION_APPROVE, $post_id, $approved ? '0' : '1' ) ) . '">' . esc_html( $approval_label ) . '</a></p>';
-				if ( ! $approved && 'publish' !== get_post_status( $page_id ) ) {
-					echo '<p class="description">' . esc_html__( 'Publish the WordPress page before approving it for public replacement.', 'filetoweb-integration' ) . '</p>';
-				}
-			}
 		}
 	}
 

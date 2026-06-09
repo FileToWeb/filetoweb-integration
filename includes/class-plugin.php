@@ -29,6 +29,7 @@ class Plugin {
 			Meeting_Materials::init();
 			Local_HTML::init();
 			Native_Page::init();
+			PDF_To_Page::init();
 			Bulk_Queue::init();
 			Link_Rewriter::init();
 

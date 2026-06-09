@@ -33,6 +33,11 @@ class Document_State {
 		const META_LOCAL_PAGE_APPROVED          = '_filetoweb_local_page_approved';
 		const META_LOCAL_PAGE_SOURCE_FP         = '_filetoweb_local_page_source_fingerprint';
 		const META_LOCAL_PAGE_UPDATED_AT        = '_filetoweb_local_page_updated_at';
+		const META_PDF_TO_PAGE                 = '_filetoweb_pdf_to_page';
+		const META_PDF_TO_PAGE_FILENAME        = '_filetoweb_pdf_to_page_filename';
+		const META_PDF_TO_PAGE_NOTIFY_EMAIL    = '_filetoweb_pdf_to_page_notify_email';
+		const META_PDF_TO_PAGE_NOTIFIED_AT     = '_filetoweb_pdf_to_page_notified_at';
+		const META_PDF_TO_PAGE_COMPLETED_AT    = '_filetoweb_pdf_to_page_completed_at';
 		const META_LAST_TRIGGER                 = '_filetoweb_last_trigger';
 
 	/**
@@ -63,6 +68,11 @@ class Document_State {
 				self::META_LOCAL_PAGE_APPROVED,
 				self::META_LOCAL_PAGE_SOURCE_FP,
 				self::META_LOCAL_PAGE_UPDATED_AT,
+				self::META_PDF_TO_PAGE,
+				self::META_PDF_TO_PAGE_FILENAME,
+				self::META_PDF_TO_PAGE_NOTIFY_EMAIL,
+				self::META_PDF_TO_PAGE_NOTIFIED_AT,
+				self::META_PDF_TO_PAGE_COMPLETED_AT,
 				self::META_LAST_TRIGGER,
 			);
 		}

@@ -164,25 +164,7 @@ class Sync {
 
 		$retry_counts = self::retry_pending_syncs( $limit );
 
-		$posts = get_posts(
-			array(
-				'post_type'      => array( 'attachment', 'document' ),
-				'post_status'    => 'any',
-				'posts_per_page' => $limit,
-				'fields'         => 'ids',
-				'meta_query'     => array(
-					array(
-						'key'     => Document_State::META_DOCUMENT_ID,
-						'compare' => 'EXISTS',
-					),
-					array(
-						'key'     => Document_State::META_STATUS,
-						'value'   => array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' ),
-						'compare' => 'IN',
-					),
-				),
-			)
-		);
+		$posts = self::pending_poll_posts( $limit );
 
 		foreach ( $posts as $post_id ) {
 			$result = self::poll_post( $post_id );
@@ -203,6 +185,60 @@ class Sync {
 		}
 
 		return $counts;
+	}
+
+	/**
+	 * Return pending FileToWeb posts, including explicit PDF-to-Page drafts.
+	 *
+	 * @param int $limit Max items.
+	 * @return array
+	 */
+	private static function pending_poll_posts( $limit ) {
+		$status_query = array(
+			array(
+				'key'     => Document_State::META_DOCUMENT_ID,
+				'compare' => 'EXISTS',
+			),
+			array(
+				'key'     => Document_State::META_STATUS,
+				'value'   => array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' ),
+				'compare' => 'IN',
+			),
+		);
+
+		$posts = get_posts(
+			array(
+				'post_type'      => array( 'attachment', 'document' ),
+				'post_status'    => 'any',
+				'posts_per_page' => $limit,
+				'fields'         => 'ids',
+				'meta_query'     => $status_query,
+			)
+		);
+
+		if ( count( $posts ) >= $limit ) {
+			return $posts;
+		}
+
+		$pages = get_posts(
+			array(
+				'post_type'      => 'page',
+				'post_status'    => array( 'draft', 'pending', 'publish', 'private' ),
+				'posts_per_page' => $limit - count( $posts ),
+				'fields'         => 'ids',
+				'meta_query'     => array_merge(
+					$status_query,
+					array(
+						array(
+							'key'   => Document_State::META_PDF_TO_PAGE,
+							'value' => '1',
+						),
+					)
+				),
+			)
+		);
+
+		return array_merge( $posts, $pages );
 	}
 
 	/**

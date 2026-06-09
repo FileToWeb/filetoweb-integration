@@ -30,6 +30,7 @@ require_once __DIR__ . '/../includes/class-admin.php';
 require_once __DIR__ . '/../includes/class-meeting-materials.php';
 require_once __DIR__ . '/../includes/class-local-html.php';
 require_once __DIR__ . '/../includes/class-native-page.php';
+require_once __DIR__ . '/../includes/class-pdf-to-page.php';
 require_once __DIR__ . '/../includes/class-bulk-queue.php';
 require_once __DIR__ . '/../includes/class-link-rewriter.php';
 require_once __DIR__ . '/../includes/class-widget.php';

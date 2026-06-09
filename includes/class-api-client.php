@@ -33,6 +33,73 @@ class Api_Client {
 	}
 
 	/**
+	 * Finalize a signed upload and queue conversion.
+	 *
+	 * @param string $document_id FileToWeb document ID.
+	 * @param array  $payload API payload.
+	 * @return array
+	 */
+	public static function complete_upload( $document_id, $payload ) {
+		return self::request( 'POST', '/documents/' . rawurlencode( $document_id ) . '/complete-upload', $payload );
+	}
+
+	/**
+	 * Upload a local file to FileToWeb's signed upload URL.
+	 *
+	 * @param array  $upload Signed upload instructions.
+	 * @param string $file_path Local PDF path.
+	 * @return array
+	 */
+	public static function upload_file( $upload, $file_path ) {
+		if ( ! is_array( $upload ) || empty( $upload['url'] ) || ! is_readable( $file_path ) ) {
+			return self::error( __( 'FileToWeb upload instructions are missing.', 'filetoweb-integration' ) );
+		}
+
+		$url    = esc_url_raw( $upload['url'] );
+		$scheme = strtolower( (string) parse_url( $url, PHP_URL_SCHEME ) );
+
+		if ( 'https' !== $scheme ) {
+			return self::error( __( 'FileToWeb signed upload URL must use HTTPS.', 'filetoweb-integration' ) );
+		}
+
+		$headers = isset( $upload['headers'] ) && is_array( $upload['headers'] ) ? $upload['headers'] : array();
+		$method  = isset( $upload['method'] ) ? strtoupper( sanitize_key( $upload['method'] ) ) : 'PUT';
+		$body    = file_get_contents( $file_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+
+		if ( false === $body ) {
+			return self::error( __( 'PDF upload file could not be read.', 'filetoweb-integration' ) );
+		}
+
+		$response = wp_remote_request(
+			$url,
+			array(
+				'method'             => in_array( $method, array( 'PUT', 'POST' ), true ) ? $method : 'PUT',
+				'timeout'            => 45,
+				'redirection'        => 0,
+				'reject_unsafe_urls' => true,
+				'headers'            => self::sanitize_upload_headers( $headers ),
+				'body'               => $body,
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return self::error( $response->get_error_message() );
+		}
+
+		$code = absint( wp_remote_retrieve_response_code( $response ) );
+
+		if ( $code < 200 || $code >= 300 ) {
+			return self::error( sprintf( __( 'FileToWeb signed upload returned HTTP %d.', 'filetoweb-integration' ), $code ) );
+		}
+
+		return array(
+			'ok'    => true,
+			'error' => '',
+			'body'  => array(),
+		);
+	}
+
+	/**
 	 * Make an authenticated FileToWeb API request.
 	 *
 	 * @param string     $method HTTP method.
@@ -120,6 +187,30 @@ class Api_Client {
 		$timeout = apply_filters( 'filetoweb_integration_api_timeout', 20, $method, $path );
 
 		return max( 5, min( 45, absint( $timeout ) ) );
+	}
+
+	/**
+	 * Sanitize signed-upload headers returned by FileToWeb.
+	 *
+	 * @param array $headers Raw headers.
+	 * @return array
+	 */
+	private static function sanitize_upload_headers( $headers ) {
+		$sanitized = array();
+
+		foreach ( $headers as $key => $value ) {
+			$key = sanitize_text_field( (string) $key );
+
+			if ( '' === $key || preg_match( '/[\r\n]/', $key ) ) {
+				continue;
+			}
+
+			if ( is_scalar( $value ) && ! preg_match( '/[\r\n]/', (string) $value ) ) {
+				$sanitized[ $key ] = sanitize_text_field( (string) $value );
+			}
+		}
+
+		return $sanitized;
 	}
 
 	/**

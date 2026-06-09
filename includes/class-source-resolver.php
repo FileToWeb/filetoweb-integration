@@ -360,7 +360,7 @@ class Source_Resolver {
 	 *
 	 * @return string
 	 */
-	private static function site_hash() {
+	public static function site_hash() {
 		return substr( hash( 'sha256', home_url() ), 0, 12 );
 	}
 }

@@ -77,6 +77,28 @@ class SyncTest extends TestCase {
 		$this->assertTrue( $this->meta_query_contains_value( $captured_args['meta_query'], 'pending' ) );
 	}
 
+	public function test_poll_pending_includes_marked_pdf_to_page_drafts(): void {
+		$calls = array();
+
+		Functions\expect( 'get_posts' )
+			->times( 3 )
+			->andReturnUsing(
+				function ( $args ) use ( &$calls ) {
+					$calls[] = $args;
+					return array();
+				}
+			);
+
+		$counts = Sync::poll_pending( 25 );
+
+		$this->assertSame( array( 'queued' => 0, 'skipped' => 0, 'failed' => 0, 'updated' => 0 ), $counts );
+		$this->assertSame( 'attachment', $calls[0]['post_type'] );
+		$this->assertSame( array( 'attachment', 'document' ), $calls[1]['post_type'] );
+		$this->assertSame( 'page', $calls[2]['post_type'] );
+		$this->assertTrue( $this->meta_query_contains_key( $calls[2]['meta_query'], Document_State::META_PDF_TO_PAGE ) );
+		$this->assertTrue( $this->meta_query_contains_value( $calls[2]['meta_query'], '1' ) );
+	}
+
 	public function test_new_pdf_attachment_is_marked_and_scheduled_for_intentional_retry(): void {
 		$stored          = array();
 		$scheduled_args  = array();
@@ -138,6 +160,22 @@ class SyncTest extends TestCase {
 				}
 
 				if ( $this->meta_query_contains_value( $item, $value ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private function meta_query_contains_key( $query, $key ) {
+		foreach ( (array) $query as $item ) {
+			if ( is_array( $item ) ) {
+				if ( isset( $item['key'] ) && $key === $item['key'] ) {
+					return true;
+				}
+
+				if ( $this->meta_query_contains_key( $item, $key ) ) {
 					return true;
 				}
 			}

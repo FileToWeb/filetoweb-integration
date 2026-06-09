@@ -87,10 +87,6 @@ class LocalHtmlTest extends TestCase {
 		);
 		Functions\when( 'apply_filters' )->alias(
 			function ( $tag, $value ) {
-				if ( 'filetoweb_integration_auto_create_native_page' === $tag ) {
-					return false;
-				}
-
 				return $value;
 			}
 		);
@@ -162,6 +158,8 @@ class LocalHtmlTest extends TestCase {
 	}
 
 	public function test_refresh_stores_local_html_without_scripts_and_public_url_is_local(): void {
+		Functions\expect( 'wp_insert_post' )->never();
+
 		$this->assertSame(
 			'updated',
 			Local_HTML::refresh_for_post( 123 ),

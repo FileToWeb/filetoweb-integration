@@ -10,13 +10,14 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - ProudCity Meeting Agenda, Agenda Packet, and Minutes attachments sync independently when the Meeting is saved.
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
 - Ready FileToWeb output is cached into WordPress-local HTML during sync/poll/admin actions, not during citizen page loads.
-- Public front-end PDF links are replaced with the approved WordPress page when one exists, otherwise with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.
+- Public front-end PDF links are replaced with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.
 - ProudCity Meeting preview iframes can show the WordPress-local HTML copy while keeping Download buttons and literal material links pointed at the original PDF.
 - Add-on plugins can override the ready public replacement URL through `filetoweb_integration_ready_replacement_url`.
 - Sites can disable the bundled FileToWeb widget with `filetoweb_integration_enable_widget`.
 - ProudCity sites can disable meeting material support with `filetoweb_integration_enable_meeting_materials` or disable only meeting preview rewrites with `filetoweb_integration_rewrite_meeting_viewer`.
 - Admin screens keep the original PDF link and show FileToWeb status, generated HTML, editor link, manual sync, and poll actions.
-- Ready sources get a WordPress-local draft page that admins can edit, publish, and explicitly approve for public replacement.
+- Pages > Convert PDF to Page creates an editable draft WordPress Page from an uploaded PDF without adding that PDF to the Media Library.
+- PDF-to-Page drafts update in place when FileToWeb conversion is ready, and the uploading admin receives a one-time email with the edit link.
 - Manual backfill is available from **Settings > FileToWeb** and is bounded by the configured batch size.
 - A bulk sync queue can process all Proud Documents or all ProudCity Meeting PDFs in bounded batches.
 - Existing media-library PDFs are not discovered by cron automatically; migration/backfill requires an explicit admin action.
@@ -28,7 +29,7 @@ The plugin owns its settings through the WordPress Settings API and stores them 
 - Enabled
 - FileToWeb API URL
 - Scoped FileToWeb API key
-- Public link replacement to WordPress-local HTML/pages
+- Public link replacement to WordPress-local HTML
 - Backfill/poll batch size
 
 The default API URL is `https://filetoweb.com`. Authorization headers are only sent to allowed HTTPS FileToWeb API hosts.
