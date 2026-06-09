@@ -590,10 +590,10 @@ class Link_Rewriter {
 	 * @return string
 	 */
 	private static function render_document_epub_download( $epub_url ) {
-		return '<div class="filetoweb-epub-inline">'
-			. '<p class="filetoweb-epub-inline__meta"><small>EPUB &middot; reflowable version</small></p>'
-			. '<p><a class="btn btn-default btn-sm filetoweb-epub-download" href="' . esc_url( $epub_url ) . '">Download EPUB</a></p>'
-			. '</div>';
+		return '<span class="filetoweb-epub-inline">'
+			. '<br /><small class="filetoweb-epub-inline__meta">EPUB &middot; reflowable version</small>'
+			. '<br /><a class="btn btn-default btn-sm filetoweb-epub-download" href="' . esc_url( $epub_url ) . '">Download EPUB</a>'
+			. '</span>';
 	}
 
 	/**

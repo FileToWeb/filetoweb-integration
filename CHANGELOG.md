@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.20
+
+- Polishes ProudCity Document EPUB button markup so it can be inserted next to the existing Download button without invalid nested block elements.
+
 ## 0.1.19
 
 - Adds an optional Download EPUB action to ready ProudCity Document pages while preserving the original PDF download.
