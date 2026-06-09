@@ -44,6 +44,13 @@ class LinkRewriterTest extends TestCase {
 	private $replacement_url = '';
 
 	/**
+	 * Optional EPUB visibility override for tests.
+	 *
+	 * @var bool|null
+	 */
+	private $show_epub_download = null;
+
+	/**
 	 * Temporary uploads directory.
 	 *
 	 * @var string
@@ -59,6 +66,7 @@ class LinkRewriterTest extends TestCase {
 			$this->is_document_singular = false;
 			$this->is_meeting_singular  = false;
 			$this->replacement_url      = '';
+			$this->show_epub_download   = null;
 			$this->uploads_dir          = sys_get_temp_dir() . '/ftw-link-rewriter-' . uniqid();
 			mkdir( $this->uploads_dir . '/filetoweb-integration', 0777, true );
 
@@ -112,6 +120,10 @@ class LinkRewriterTest extends TestCase {
 					return $this->replacement_url;
 				}
 
+				if ( 'filetoweb_integration_show_epub_download' === $tag && null !== $this->show_epub_download ) {
+					return $this->show_epub_download;
+				}
+
 				return $value;
 			}
 		);
@@ -128,6 +140,7 @@ class LinkRewriterTest extends TestCase {
 						Settings::KEY_API_BASE_URL  => 'https://filetoweb.com',
 						Settings::KEY_API_KEY       => 'ftw_api_test',
 						Settings::KEY_REPLACE_LINKS => '1',
+						Settings::KEY_EPUB_DOWNLOAD => '1',
 						Settings::KEY_BATCH_SIZE    => 25,
 					);
 				}
@@ -439,11 +452,12 @@ class LinkRewriterTest extends TestCase {
 		$this->queried_object_id      = 456;
 		$this->is_document_singular   = true;
 			$source_url                   = 'https://example.test/wp-content/uploads/agenda.pdf';
-			$continuous_url               = 'https://filetoweb.com/d/demo';
+			$public_id                    = 'AbCdEf1234567890GhIjKlMn';
+			$continuous_url               = 'https://filetoweb.com/d/' . $public_id . '/continuous';
 			$local_path                   = $this->local_html_file( 456 );
 
 			Functions\when( 'get_post_meta' )->alias(
-				function ( $post_id, $key ) use ( $source_url, $continuous_url, $local_path ) {
+				function ( $post_id, $key ) use ( $source_url, $continuous_url, $local_path, $public_id ) {
 				if ( 456 !== $post_id ) {
 					return '';
 				}
@@ -453,7 +467,7 @@ class LinkRewriterTest extends TestCase {
 					'document_filename'                => 'agenda.pdf',
 					'document_meta'                    => '{"mime":"application/pdf","size":"200 KB"}',
 					Document_State::META_STATUS        => 'ready',
-						Document_State::META_HTML_URL      => 'https://filetoweb.com/d/demo/1',
+						Document_State::META_HTML_URL      => 'https://filetoweb.com/d/' . $public_id . '/1',
 						Document_State::META_CONTINUOUS_URL => $continuous_url,
 						Document_State::META_LOCAL_HTML_PATH => $local_path,
 						Document_State::META_LOCAL_HTML_TOKEN => 'token-456',
@@ -470,8 +484,50 @@ class LinkRewriterTest extends TestCase {
 
 		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
 		$this->assertStringContainsString( 'download="agenda.pdf"', $rewritten );
+			$this->assertStringContainsString( 'href="https://filetoweb.com/d/' . $public_id . '/download/epub"', $rewritten );
+			$this->assertStringContainsString( 'Download EPUB', $rewritten );
+			$this->assertStringContainsString( 'EPUB &middot; reflowable version', $rewritten );
 			$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=456&ftw_token=token-456"', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
+	}
+
+	public function test_proud_document_epub_download_can_be_disabled_by_filter(): void {
+		$this->post_types[456]        = 'document';
+		$this->queried_object_id      = 456;
+		$this->is_document_singular   = true;
+		$this->show_epub_download     = false;
+		$source_url                   = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$public_id                    = 'AbCdEf1234567890GhIjKlMn';
+		$local_path                   = $this->local_html_file( 456 );
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $source_url, $public_id, $local_path ) {
+				if ( 456 !== $post_id ) {
+					return '';
+				}
+
+				$values = array(
+					'document'                             => $source_url,
+					'document_filename'                    => 'agenda.pdf',
+					'document_meta'                        => '{"mime":"application/pdf","size":"200 KB"}',
+					Document_State::META_STATUS            => 'ready',
+					Document_State::META_HTML_URL          => 'https://filetoweb.com/d/' . $public_id . '/1',
+					Document_State::META_CONTINUOUS_URL    => 'https://filetoweb.com/d/' . $public_id . '/continuous',
+					Document_State::META_LOCAL_HTML_PATH   => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN  => 'token-456',
+				);
+
+				return isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$html = '<a href="' . $source_url . '" class="btn btn-primary btn-sm" download="agenda.pdf">Download</a>'
+			. '<iframe src="//docs.google.com/gview?url=' . rawurlencode( $source_url ) . '&amp;embedded=true" title="Agenda" id="doc-preview"></iframe>';
+
+		$rewritten = Link_Rewriter::filter_document_viewer_output( $html );
+
+		$this->assertStringNotContainsString( 'Download EPUB', $rewritten );
+		$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=456&ftw_token=token-456"', $rewritten );
 	}
 
 	public function test_pending_proud_document_viewer_stays_original(): void {

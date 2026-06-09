@@ -130,6 +130,17 @@ class Admin {
 						</td>
 					</tr>
 					<tr>
+						<th scope="row"><?php esc_html_e( 'EPUB download', 'filetoweb-integration' ); ?></th>
+						<td>
+							<input type="hidden" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_EPUB_DOWNLOAD ) ); ?>" value="0" />
+							<label>
+								<input type="checkbox" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_EPUB_DOWNLOAD ) ); ?>" value="1" <?php checked( Settings::epub_download_enabled() ); ?> />
+								<?php esc_html_e( 'Show an EPUB download option on ready Proud Document pages', 'filetoweb-integration' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'The original PDF download remains available. The EPUB link points to FileToWeb and prepares the ebook file only when clicked.', 'filetoweb-integration' ); ?></p>
+						</td>
+					</tr>
+					<tr>
 						<th scope="row"><label for="<?php echo esc_attr( Settings::field_id( Settings::KEY_BATCH_SIZE ) ); ?>"><?php esc_html_e( 'Batch size', 'filetoweb-integration' ); ?></label></th>
 						<td>
 							<input type="number" min="1" max="100" id="<?php echo esc_attr( Settings::field_id( Settings::KEY_BATCH_SIZE ) ); ?>" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_BATCH_SIZE ) ); ?>" value="<?php echo esc_attr( Settings::batch_size() ); ?>" />

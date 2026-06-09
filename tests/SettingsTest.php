@@ -77,6 +77,7 @@ class SettingsTest extends TestCase {
 						Settings::KEY_API_BASE_URL  => 'https://filetoweb.com',
 						Settings::KEY_API_KEY       => 'ftw_api_existing',
 						Settings::KEY_REPLACE_LINKS => '1',
+						Settings::KEY_EPUB_DOWNLOAD => '1',
 						Settings::KEY_BATCH_SIZE    => 25,
 					);
 				}
@@ -91,6 +92,7 @@ class SettingsTest extends TestCase {
 				Settings::KEY_API_BASE_URL  => 'https://evil.example',
 				Settings::KEY_API_KEY       => '',
 				Settings::KEY_REPLACE_LINKS => '0',
+				Settings::KEY_EPUB_DOWNLOAD => '0',
 				Settings::KEY_BATCH_SIZE    => 500,
 			)
 		);
@@ -99,6 +101,7 @@ class SettingsTest extends TestCase {
 		$this->assertSame( 'https://filetoweb.com', $settings[ Settings::KEY_API_BASE_URL ] );
 		$this->assertSame( 'ftw_api_existing', $settings[ Settings::KEY_API_KEY ] );
 		$this->assertSame( '0', $settings[ Settings::KEY_REPLACE_LINKS ] );
+		$this->assertSame( '0', $settings[ Settings::KEY_EPUB_DOWNLOAD ] );
 		$this->assertSame( 100, $settings[ Settings::KEY_BATCH_SIZE ] );
 	}
 

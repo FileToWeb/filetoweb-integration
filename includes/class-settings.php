@@ -18,6 +18,7 @@ class Settings {
 	const KEY_API_BASE_URL  = 'api_base_url';
 	const KEY_API_KEY       = 'api_key';
 	const KEY_REPLACE_LINKS = 'replace_links';
+	const KEY_EPUB_DOWNLOAD = 'epub_download';
 	const KEY_BATCH_SIZE    = 'batch_size';
 
 	const LEGACY_OPTION_ENABLED       = 'filetoweb_integration_enabled';
@@ -112,6 +113,17 @@ class Settings {
 		$settings = self::settings();
 
 		return self::enabled() && '1' === $settings[ self::KEY_REPLACE_LINKS ];
+	}
+
+	/**
+	 * Should ready Proud Document pages show an EPUB download link?
+	 *
+	 * @return bool
+	 */
+	public static function epub_download_enabled() {
+		$settings = self::settings();
+
+		return self::enabled() && '1' === $settings[ self::KEY_EPUB_DOWNLOAD ];
 	}
 
 	/**
@@ -352,6 +364,7 @@ class Settings {
 			self::KEY_API_BASE_URL  => self::DEFAULT_API_BASE_URL,
 			self::KEY_API_KEY       => '',
 			self::KEY_REPLACE_LINKS => '1',
+			self::KEY_EPUB_DOWNLOAD => '1',
 			self::KEY_BATCH_SIZE    => 25,
 		);
 	}
@@ -376,6 +389,9 @@ class Settings {
 		);
 		$settings[ self::KEY_REPLACE_LINKS ] = self::sanitize_checkbox(
 			array_key_exists( self::KEY_REPLACE_LINKS, $value ) ? $value[ self::KEY_REPLACE_LINKS ] : $previous[ self::KEY_REPLACE_LINKS ]
+		);
+		$settings[ self::KEY_EPUB_DOWNLOAD ] = self::sanitize_checkbox(
+			array_key_exists( self::KEY_EPUB_DOWNLOAD, $value ) ? $value[ self::KEY_EPUB_DOWNLOAD ] : $previous[ self::KEY_EPUB_DOWNLOAD ]
 		);
 		$settings[ self::KEY_BATCH_SIZE ]    = self::sanitize_batch_size(
 			array_key_exists( self::KEY_BATCH_SIZE, $value ) ? $value[ self::KEY_BATCH_SIZE ] : $previous[ self::KEY_BATCH_SIZE ]

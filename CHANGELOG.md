@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.19
+
+- Adds an optional Download EPUB action to ready ProudCity Document pages while preserving the original PDF download.
+- Links EPUB downloads to a public FileToWeb EPUB landing page and only prepares the EPUB file when clicked.
+
 ## 0.1.18
 
 - Prevents cron polling from discovering never-synced historical PDF attachments.

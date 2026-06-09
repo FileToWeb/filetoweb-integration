@@ -168,7 +168,7 @@ class Link_Rewriter {
 	 * @return string
 	 */
 	public static function filter_document_viewer_output( $html ) {
-		if ( ! is_string( $html ) || false === stripos( $html, 'docs.google.com/gview' ) || false === stripos( $html, 'doc-preview' ) ) {
+		if ( ! is_string( $html ) ) {
 			return $html;
 		}
 
@@ -182,6 +182,16 @@ class Link_Rewriter {
 		$source_url = Source_Resolver::admin_original_source_url( get_post( $post_id ) );
 
 		if ( ! $viewer_url || ! $source_url ) {
+			return $html;
+		}
+
+		$epub_url = self::ready_document_epub_download_url( $post_id );
+
+		if ( $epub_url && self::should_show_document_epub_download( $post_id, $epub_url ) ) {
+			$html = self::inject_document_epub_download( $html, $source_url, $epub_url );
+		}
+
+		if ( false === stripos( $html, 'docs.google.com/gview' ) || false === stripos( $html, 'doc-preview' ) ) {
 			return $html;
 		}
 
@@ -453,6 +463,137 @@ class Link_Rewriter {
 		}
 
 		return $html_url;
+	}
+
+	/**
+	 * Return the FileToWeb EPUB landing page URL for a ready Proud Document.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return string
+	 */
+	private static function ready_document_epub_download_url( $post_id ) {
+		$post_id  = absint( $post_id );
+		$html_url = $post_id ? Document_State::ready_html_url( $post_id ) : '';
+
+		if ( ! $html_url ) {
+			return '';
+		}
+
+		$url = Source_Resolver::admin_original_source_url( get_post( $post_id ) );
+
+		if ( ! $url ) {
+			return '';
+		}
+
+		$filename = get_post_meta( $post_id, 'document_filename', true );
+		$meta     = Source_Resolver::parse_document_meta( get_post_meta( $post_id, 'document_meta', true ) );
+		$mime     = is_array( $meta ) && isset( $meta['mime'] ) ? $meta['mime'] : '';
+
+		if ( ! Source_Resolver::is_pdf_source( $url, $filename, $mime ) ) {
+			return '';
+		}
+
+		return self::epub_download_url_for_filetoweb_url( $html_url );
+	}
+
+	/**
+	 * Convert a FileToWeb document/page URL into its public EPUB landing URL.
+	 *
+	 * @param string $url FileToWeb URL.
+	 * @return string
+	 */
+	private static function epub_download_url_for_filetoweb_url( $url ) {
+		$url = Security::sanitize_filetoweb_url( $url );
+
+		if ( ! $url ) {
+			return '';
+		}
+
+		$scheme = strtolower( (string) parse_url( $url, PHP_URL_SCHEME ) );
+		$host   = strtolower( (string) parse_url( $url, PHP_URL_HOST ) );
+		$path   = (string) parse_url( $url, PHP_URL_PATH );
+
+		if ( 'https' !== $scheme || ! $host || ! $path ) {
+			return '';
+		}
+
+		if ( ! preg_match( '~^/d/([A-Za-z0-9_-]{24})(?:/|$)~', $path, $matches ) ) {
+			return '';
+		}
+
+		return esc_url_raw( 'https://' . $host . '/d/' . $matches[1] . '/download/epub' );
+	}
+
+	/**
+	 * Should the ready Proud Document output include an EPUB download?
+	 *
+	 * @param int    $post_id Post ID.
+	 * @param string $epub_url EPUB URL.
+	 * @return bool
+	 */
+	private static function should_show_document_epub_download( $post_id, $epub_url ) {
+		$show = Settings::epub_download_enabled();
+
+		/**
+		 * Filters whether ready Proud Document pages show a FileToWeb EPUB
+		 * download link alongside the original PDF download.
+		 *
+		 * @param bool   $show Whether to show the EPUB download link.
+		 * @param int    $post_id Proud Document post ID.
+		 * @param string $epub_url FileToWeb EPUB landing page URL.
+		 */
+		return (bool) apply_filters( 'filetoweb_integration_show_epub_download', $show, absint( $post_id ), $epub_url );
+	}
+
+	/**
+	 * Insert the EPUB download UI after the original PDF download link.
+	 *
+	 * @param string $html Rendered HTML.
+	 * @param string $source_url Original PDF URL.
+	 * @param string $epub_url FileToWeb EPUB URL.
+	 * @return string
+	 */
+	private static function inject_document_epub_download( $html, $source_url, $epub_url ) {
+		if ( false !== strpos( $html, 'filetoweb-epub-download' ) ) {
+			return $html;
+		}
+
+		$inserted = false;
+
+		$rewritten = preg_replace_callback(
+			'~<a\b[^>]*\bhref=(["\'])(.*?)\1[^>]*>[\s\S]*?</a>~i',
+			function ( $matches ) use ( &$inserted, $source_url, $epub_url ) {
+				if ( $inserted ) {
+					return $matches[0];
+				}
+
+				$href = html_entity_decode( (string) $matches[2], ENT_QUOTES, 'UTF-8' );
+
+				if ( ! self::public_urls_match( $href, $source_url ) ) {
+					return $matches[0];
+				}
+
+				$inserted = true;
+
+				return $matches[0] . self::render_document_epub_download( $epub_url );
+			},
+			$html
+		);
+
+		return is_string( $rewritten ) && $inserted ? $rewritten : $html;
+	}
+
+	/**
+	 * Render the EPUB download UI.
+	 *
+	 * @param string $epub_url FileToWeb EPUB URL.
+	 * @return string
+	 */
+	private static function render_document_epub_download( $epub_url ) {
+		return '<div class="filetoweb-epub-inline">'
+			. '<p class="filetoweb-epub-inline__meta"><small>EPUB &middot; reflowable version</small></p>'
+			. '<p><a class="btn btn-default btn-sm filetoweb-epub-download" href="' . esc_url( $epub_url ) . '">Download EPUB</a></p>'
+			. '</div>';
 	}
 
 	/**
