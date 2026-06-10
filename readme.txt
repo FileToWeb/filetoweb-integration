@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.21
+Stable tag: 0.1.22
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,7 +26,7 @@ Features:
 * Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML instead of public FileToWeb URLs.
 * ProudCity Document preview replacement while preserving the original PDF download link.
 * Optional ProudCity Document EPUB download link for ready PDF-backed documents.
-* ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync and WordPress-local preview replacement.
+* ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync, upload-field controls on supported ProudCity builds, and WordPress-local preview replacement.
 * Standard WordPress widget for linking to or embedding a PDF attachment or Proud Document's local HTML copy.
 * Pages > Convert PDF to Page workflow for intentionally creating editable draft WordPress Pages from uploaded PDFs.
 * Original PDF links are preserved in admin screens.
@@ -71,6 +71,12 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.22 =
+
+* Adds inline FileToWeb sync controls below ProudCity Meeting PDF upload fields when `wp-proud-core` exposes `proud_form_after_file_upload`.
+* Keeps the existing Meeting material metabox and sync-all action for full status, links, polling, and batch sync.
+* Scopes inline controls to Agenda, Agenda Packet, and Minutes PDF fields only.
 
 = 0.1.21 =
 

@@ -36,6 +36,7 @@ class Meeting_Materials {
 		add_action( 'admin_post_' . self::ACTION_SYNC_MATERIAL, array( __CLASS__, 'handle_sync_material' ) );
 		add_action( 'admin_post_' . self::ACTION_POLL_MATERIAL, array( __CLASS__, 'handle_poll_material' ) );
 		add_action( 'admin_post_' . self::ACTION_SYNC_ALL, array( __CLASS__, 'handle_sync_all' ) );
+		add_action( 'proud_form_after_file_upload', array( __CLASS__, 'render_inline_upload_control' ), 10, 3 );
 	}
 
 	/**
@@ -315,6 +316,72 @@ class Meeting_Materials {
 	}
 
 	/**
+	 * Render a compact sync control near ProudCity Meeting upload fields.
+	 *
+	 * @param mixed  $media_id Attachment ID from ProudCity.
+	 * @param string $url Current attachment URL from ProudCity.
+	 * @param array  $field ProudCity field configuration.
+	 */
+	public static function render_inline_upload_control( $media_id, $url, $field ) {
+		if ( ! Settings::configured() || ! function_exists( 'get_post' ) ) {
+			return;
+		}
+
+		$post = get_post();
+		if ( ! is_object( $post ) || empty( $post->ID ) || 'meeting' !== $post->post_type ) {
+			return;
+		}
+
+		$meeting_id = absint( $post->ID );
+		if ( ! self::can_manage_meeting( $meeting_id ) ) {
+			return;
+		}
+
+		$slot = self::slot_for_proud_upload_field( $field );
+		if ( ! $slot ) {
+			return;
+		}
+
+		$attachment_id = absint( $media_id );
+		$url           = is_scalar( $url ) ? esc_url_raw( (string) $url ) : '';
+
+		if ( ! $attachment_id && $url && function_exists( 'attachment_url_to_postid' ) ) {
+			$attachment_id = absint( attachment_url_to_postid( $url ) );
+		}
+
+		if ( ! $attachment_id || ! self::is_pdf_attachment( $attachment_id, $url ) ) {
+			return;
+		}
+
+		$status      = get_post_meta( $attachment_id, Document_State::META_STATUS, true );
+		$document_id = get_post_meta( $attachment_id, Document_State::META_DOCUMENT_ID, true );
+		$html_url    = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_HTML_URL, true ) );
+		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_EDITOR_URL, true ) );
+		$local_url   = Local_HTML::local_url( $attachment_id );
+		?>
+		<div class="filetoweb-integration-inline-meeting-sync" style="margin:8px 0 0;">
+			<span style="margin-right:8px;"><?php echo self::status_badge( $status ); ?></span>
+			<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
+			<?php if ( $document_id ) : ?>
+				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Poll status', 'filetoweb-integration' ); ?></a>
+			<?php endif; ?>
+			<div style="margin-top:4px;">
+				<a href="<?php echo esc_url( $url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Original PDF', 'filetoweb-integration' ); ?></a>
+				<?php if ( $local_url ) : ?>
+					<span aria-hidden="true"> | </span><a href="<?php echo esc_url( $local_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Local HTML copy', 'filetoweb-integration' ); ?></a>
+				<?php endif; ?>
+				<?php if ( $html_url ) : ?>
+					<span aria-hidden="true"> | </span><a href="<?php echo esc_url( $html_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Generated HTML', 'filetoweb-integration' ); ?></a>
+				<?php endif; ?>
+				<?php if ( $editor_url ) : ?>
+					<span aria-hidden="true"> | </span><a href="<?php echo esc_url( $editor_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Edit in FileToWeb', 'filetoweb-integration' ); ?></a>
+				<?php endif; ?>
+			</div>
+		</div>
+		<?php
+	}
+
+	/**
 	 * Handle single material sync action.
 	 */
 	public static function handle_sync_material() {
@@ -532,6 +599,42 @@ class Meeting_Materials {
 		$path = $source_url ? parse_url( $source_url, PHP_URL_PATH ) : '';
 
 		return $path ? basename( $path ) : '';
+	}
+
+	/**
+	 * Map ProudCity upload field config to a Meeting material slot.
+	 *
+	 * @param array $field ProudCity field configuration.
+	 * @return string
+	 */
+	private static function slot_for_proud_upload_field( $field ) {
+		if ( ! is_array( $field ) ) {
+			return '';
+		}
+
+		$names = array();
+		foreach ( array( '#name', 'name', '#id', 'id' ) as $key ) {
+			if ( isset( $field[ $key ] ) && is_scalar( $field[ $key ] ) ) {
+				$names[] = sanitize_key( (string) $field[ $key ] );
+			}
+		}
+
+		$map = array(
+			'meeting_agenda'          => 'agenda',
+			'meeting_agenda_packet'   => 'agenda_packet',
+			'meeting_minutes'         => 'minutes',
+			'agenda_attachment'       => 'agenda',
+			'agenda_packet_attachment' => 'agenda_packet',
+			'minutes_attachment'      => 'minutes',
+		);
+
+		foreach ( $names as $name ) {
+			if ( isset( $map[ $name ] ) ) {
+				return $map[ $name ];
+			}
+		}
+
+		return '';
 	}
 
 	/**

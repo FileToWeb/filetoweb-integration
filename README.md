@@ -7,7 +7,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - Newly created or edited PDF attachments are submitted to FileToWeb.
 - Upload-triggered syncs nudge WP-Cron, and polling retries intentionally scheduled or transiently timed-out uploads.
 - Proud Document saves reuse the linked attachment when one is present; otherwise the plugin resolves the document URL back to a WordPress attachment with `attachment_url_to_postid()`.
-- ProudCity Meeting Agenda, Agenda Packet, and Minutes attachments sync independently when the Meeting is saved.
+- ProudCity Meeting Agenda, Agenda Packet, and Minutes attachments sync independently when the Meeting is saved, and supported ProudCity builds can show inline sync controls below those upload fields.
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
 - Ready FileToWeb output is cached into WordPress-local HTML during sync/poll/admin actions, not during citizen page loads.
 - Public front-end PDF links are replaced with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.

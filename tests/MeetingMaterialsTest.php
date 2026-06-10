@@ -55,6 +55,11 @@ class MeetingMaterialsTest extends TestCase {
 
 		Functions\when( '__' )->returnArg();
 		Functions\when( 'esc_html__' )->returnArg();
+		Functions\when( 'esc_html_e' )->alias(
+			function ( $value ) {
+				echo $value;
+			}
+		);
 		Functions\when( 'esc_html' )->returnArg();
 		Functions\when( 'esc_attr' )->returnArg();
 		Functions\when( 'esc_url' )->returnArg();
@@ -78,6 +83,11 @@ class MeetingMaterialsTest extends TestCase {
 		Functions\when( 'untrailingslashit' )->alias(
 			function ( $value ) {
 				return rtrim( (string) $value, '/' );
+			}
+		);
+		Functions\when( 'trailingslashit' )->alias(
+			function ( $value ) {
+				return rtrim( (string) $value, '/' ) . '/';
 			}
 		);
 		Functions\when( 'wp_json_encode' )->alias(
@@ -109,6 +119,22 @@ class MeetingMaterialsTest extends TestCase {
 		);
 		Functions\when( 'current_time' )->justReturn( '2026-06-04 12:00:00' );
 		Functions\when( 'do_action' )->justReturn( null );
+		Functions\when( 'wp_upload_dir' )->justReturn(
+			array(
+				'basedir' => sys_get_temp_dir(),
+			)
+		);
+		Functions\when( 'admin_url' )->alias(
+			function ( $path = '' ) {
+				return 'https://example.test/wp-admin/' . ltrim( $path, '/' );
+			}
+		);
+		Functions\when( 'wp_nonce_url' )->alias(
+			function ( $url, $action ) {
+				return $url . '&_wpnonce=' . rawurlencode( $action );
+			}
+		);
+		Functions\when( 'current_user_can' )->justReturn( true );
 		Functions\when( 'FileToWeb\Integration\gethostbynamel' )->alias(
 			function ( $host ) {
 				if ( 'example.test' === $host ) {
@@ -286,5 +312,170 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertSame( 0, $counts['failed'] );
 		$this->assertCount( 1, $this->request_bodies );
 		$this->assertStringEndsWith( ':attachment:101', $this->request_bodies[0]['external_id'] );
+	}
+
+	public function test_inline_upload_control_renders_for_meeting_pdf_field(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment'                 => 101,
+			Document_State::META_STATUS         => '',
+		);
+
+		$this->meeting_meta[101] = array(
+			Document_State::META_STATUS      => 'ready',
+			Document_State::META_DOCUMENT_ID => 'doc-101',
+			Document_State::META_HTML_URL    => 'https://filetoweb.com/d/demo/1',
+			Document_State::META_EDITOR_URL  => 'https://app.filetoweb.com/home/demo',
+		);
+
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__;
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'filetoweb-integration-inline-meeting-sync', $output );
+		$this->assertStringContainsString( 'Ready', $output );
+		$this->assertStringContainsString( 'Sync this PDF', $output );
+		$this->assertStringContainsString( 'Poll status', $output );
+		$this->assertStringContainsString( 'slot=agenda', $output );
+		$this->assertStringContainsString( 'Original PDF', $output );
+		$this->assertStringContainsString( 'Generated HTML', $output );
+		$this->assertStringContainsString( 'Edit in FileToWeb', $output );
+	}
+
+	public function test_inline_upload_control_uses_proudcity_packet_and_minutes_field_names(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_packet_attachment' => 102,
+			'minutes_attachment'       => 103,
+		);
+
+		foreach ( array( 102, 103 ) as $attachment_id ) {
+			$this->attachment_urls[ $attachment_id ]  = 'https://example.test/wp-content/uploads/material-' . $attachment_id . '.pdf';
+			$this->attachment_mimes[ $attachment_id ] = 'application/pdf';
+			$this->attachment_files[ $attachment_id ] = __FILE__;
+		}
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			102,
+			'https://example.test/wp-content/uploads/material-102.pdf',
+			array(
+				'#name' => 'meeting_agenda_packet',
+			)
+		);
+		$packet_output = ob_get_clean();
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			103,
+			'https://example.test/wp-content/uploads/material-103.pdf',
+			array(
+				'#name' => 'meeting_minutes',
+			)
+		);
+		$minutes_output = ob_get_clean();
+
+		$this->assertStringContainsString( 'slot=agenda_packet', $packet_output );
+		$this->assertStringContainsString( 'slot=minutes', $minutes_output );
+	}
+
+	public function test_inline_upload_control_does_not_render_outside_meetings(): void {
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'post',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertSame( '', $output );
+	}
+
+	public function test_inline_upload_control_does_not_render_for_unknown_or_empty_fields(): void {
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'unrelated_upload',
+			)
+		);
+		$unknown_output = ob_get_clean();
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			'',
+			'',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$empty_output = ob_get_clean();
+
+		$this->assertSame( '', $unknown_output );
+		$this->assertSame( '', $empty_output );
+	}
+
+	public function test_inline_upload_control_does_not_render_for_non_pdf_attachment(): void {
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.docx';
+		$this->attachment_mimes[101] = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+		$this->attachment_files[101] = __FILE__;
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.docx',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertSame( '', $output );
 	}
 }

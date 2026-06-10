@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.22
+
+- Adds inline FileToWeb sync controls below ProudCity Meeting PDF upload fields when `wp-proud-core` exposes `proud_form_after_file_upload`.
+- Keeps the existing Meeting material metabox and sync-all action for full status, links, polling, and batch sync.
+- Scopes inline controls to Agenda, Agenda Packet, and Minutes PDF fields only.
+
 ## 0.1.21
 
 - Stops automatic WordPress Page creation from normal PDF attachment and Proud Document sync.
