@@ -401,6 +401,104 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringContainsString( 'slot=minutes', $minutes_output );
 	}
 
+	public function test_inline_upload_control_uses_generated_proudform_field_names(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment'        => 101,
+			'agenda_packet_attachment' => 102,
+			'minutes_attachment'       => 103,
+		);
+
+		foreach ( array( 101, 102, 103 ) as $attachment_id ) {
+			$this->attachment_urls[ $attachment_id ]  = 'https://example.test/wp-content/uploads/material-' . $attachment_id . '.pdf';
+			$this->attachment_mimes[ $attachment_id ] = 'application/pdf';
+			$this->attachment_files[ $attachment_id ] = __FILE__;
+		}
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		$cases = array(
+			array(
+				'attachment_id' => 101,
+				'name'          => 'form-meeting_agenda[1][agenda_attachment]',
+				'expected_slot' => 'agenda',
+			),
+			array(
+				'attachment_id' => 102,
+				'name'          => 'form-meeting_agenda_packet[1][agenda_packet_attachment]',
+				'expected_slot' => 'agenda_packet',
+			),
+			array(
+				'attachment_id' => 103,
+				'name'          => 'form-meeting_minutes[1][minutes_attachment]',
+				'expected_slot' => 'minutes',
+			),
+		);
+
+		foreach ( $cases as $case ) {
+			ob_start();
+			Meeting_Materials::render_inline_upload_control(
+				$case['attachment_id'],
+				$this->attachment_urls[ $case['attachment_id'] ],
+				array(
+					'#name' => $case['name'],
+				)
+			);
+			$output = ob_get_clean();
+
+			$this->assertStringContainsString( 'filetoweb-integration-inline-meeting-sync', $output );
+			$this->assertStringContainsString( 'slot=' . $case['expected_slot'], $output );
+		}
+	}
+
+	public function test_inline_upload_control_uses_generated_proudform_field_ids(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_packet_attachment' => 102,
+			'minutes_attachment'       => 103,
+		);
+
+		foreach ( array( 102, 103 ) as $attachment_id ) {
+			$this->attachment_urls[ $attachment_id ]  = 'https://example.test/wp-content/uploads/material-' . $attachment_id . '.pdf';
+			$this->attachment_mimes[ $attachment_id ] = 'application/pdf';
+			$this->attachment_files[ $attachment_id ] = __FILE__;
+		}
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			102,
+			$this->attachment_urls[102],
+			array(
+				'#id' => 'form-meeting_agenda_packet-1-agenda_packet_attachment',
+			)
+		);
+		$packet_output = ob_get_clean();
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			103,
+			$this->attachment_urls[103],
+			array(
+				'#id' => 'form-meeting_minutes-1-minutes_attachment',
+			)
+		);
+		$minutes_output = ob_get_clean();
+
+		$this->assertStringContainsString( 'slot=agenda_packet', $packet_output );
+		$this->assertStringNotContainsString( 'slot=agenda&amp;', $packet_output );
+		$this->assertStringContainsString( 'slot=minutes', $minutes_output );
+	}
+
 	public function test_inline_upload_control_does_not_render_outside_meetings(): void {
 		Functions\when( 'get_post' )->justReturn(
 			(object) array(

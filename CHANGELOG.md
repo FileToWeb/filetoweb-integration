@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.24
+
+- Recognizes real ProudForm-generated Meeting attachment field names and IDs for inline sync controls.
+- Keeps Agenda Packet mapping distinct from Agenda so the inline action targets the correct Meeting material.
+
 ## 0.1.23
 
 - Makes the optional ProudCity Document EPUB download configurable and off by default.

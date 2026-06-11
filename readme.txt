@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.23
+Stable tag: 0.1.24
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -71,6 +71,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.24 =
+
+* Recognizes real ProudForm-generated Meeting attachment field names and IDs for inline sync controls.
+* Keeps Agenda Packet mapping distinct from Agenda so the inline action targets the correct Meeting material.
 
 = 0.1.23 =
 

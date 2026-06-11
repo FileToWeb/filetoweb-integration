@@ -615,22 +615,28 @@ class Meeting_Materials {
 		$names = array();
 		foreach ( array( '#name', 'name', '#id', 'id' ) as $key ) {
 			if ( isset( $field[ $key ] ) && is_scalar( $field[ $key ] ) ) {
-				$names[] = sanitize_key( (string) $field[ $key ] );
+				$value   = (string) $field[ $key ];
+				$names[] = $value;
+				$names[] = sanitize_key( $value );
 			}
 		}
 
 		$map = array(
-			'meeting_agenda'          => 'agenda',
 			'meeting_agenda_packet'   => 'agenda_packet',
+			'meeting_agenda'          => 'agenda',
 			'meeting_minutes'         => 'minutes',
-			'agenda_attachment'       => 'agenda',
 			'agenda_packet_attachment' => 'agenda_packet',
+			'agenda_attachment'       => 'agenda',
 			'minutes_attachment'      => 'minutes',
 		);
 
 		foreach ( $names as $name ) {
-			if ( isset( $map[ $name ] ) ) {
-				return $map[ $name ];
+			$name = is_scalar( $name ) ? (string) $name : '';
+
+			foreach ( $map as $needle => $slot ) {
+				if ( $name === $needle || false !== strpos( $name, $needle ) ) {
+					return $slot;
+				}
 			}
 		}
 
