@@ -66,6 +66,21 @@ class SettingsTest extends TestCase {
 		$this->assertFalse( Settings::is_api_base_url_allowed( 'https://evil.example' ) );
 	}
 
+	public function test_epub_download_is_disabled_by_default(): void {
+		Functions\when( 'sanitize_text_field' )->returnArg();
+		Functions\when( 'get_option' )->alias(
+			function ( $name, $default = false ) {
+				if ( Settings::OPTION_SETTINGS === $name ) {
+					return array();
+				}
+
+				return $default;
+			}
+		);
+
+		$this->assertFalse( Settings::epub_download_enabled() );
+	}
+
 	public function test_settings_are_sanitized_into_one_option_array(): void {
 		Functions\when( 'sanitize_text_field' )->returnArg();
 		Functions\when( 'add_settings_error' )->justReturn( null );
@@ -189,5 +204,55 @@ class SettingsTest extends TestCase {
 		$this->assertSame( 'ftw_api_legacy', $updated[ Settings::OPTION_SETTINGS ][ Settings::KEY_API_KEY ] );
 		$this->assertSame( 17, $updated[ Settings::OPTION_SETTINGS ][ Settings::KEY_BATCH_SIZE ] );
 		$this->assertContains( Settings::LEGACY_OPTION_API_KEY, $deleted );
+	}
+
+	public function test_epub_default_off_migration_disables_existing_epub_once(): void {
+		$updated = array();
+
+		Functions\when( 'sanitize_text_field' )->returnArg();
+		Functions\when( 'get_option' )->alias(
+			function ( $name, $default = false ) {
+				$values = array(
+					Settings::OPTION_EPUB_DEFAULT_OFF_MIGRATED => '',
+					Settings::OPTION_SETTINGS                  => array(
+						Settings::KEY_ENABLED       => '1',
+						Settings::KEY_API_BASE_URL  => 'https://filetoweb.com',
+						Settings::KEY_API_KEY       => 'ftw_api_existing',
+						Settings::KEY_REPLACE_LINKS => '1',
+						Settings::KEY_EPUB_DOWNLOAD => '1',
+						Settings::KEY_BATCH_SIZE    => 25,
+					),
+				);
+
+				return array_key_exists( $name, $values ) ? $values[ $name ] : $default;
+			}
+		);
+		Functions\when( 'update_option' )->alias(
+			function ( $name, $value ) use ( &$updated ) {
+				$updated[ $name ] = $value;
+				return true;
+			}
+		);
+
+		Settings::migrate_epub_default_off();
+
+		$this->assertSame( '0', $updated[ Settings::OPTION_SETTINGS ][ Settings::KEY_EPUB_DOWNLOAD ] );
+		$this->assertSame( '1', $updated[ Settings::OPTION_EPUB_DEFAULT_OFF_MIGRATED ] );
+	}
+
+	public function test_epub_default_off_migration_does_not_rerun_after_marker(): void {
+		Functions\when( 'get_option' )->alias(
+			function ( $name, $default = false ) {
+				if ( Settings::OPTION_EPUB_DEFAULT_OFF_MIGRATED === $name ) {
+					return '1';
+				}
+
+				return $default;
+			}
+		);
+		Functions\expect( 'update_option' )->never();
+
+		Settings::migrate_epub_default_off();
+		$this->addToAssertionCount( 1 );
 	}
 }

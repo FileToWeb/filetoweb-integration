@@ -17,6 +17,7 @@ $option_names = array(
 	'filetoweb_integration_replace_links',
 	'filetoweb_integration_batch_size',
 	'filetoweb_integration_bulk_queue',
+	'filetoweb_integration_epub_default_off_migrated',
 );
 
 foreach ( $option_names as $option_name ) {

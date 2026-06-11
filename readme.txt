@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.22
+Stable tag: 0.1.23
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,7 +25,7 @@ Features:
 * WP-Cron polling for pending conversions and intentionally scheduled upload retries.
 * Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML instead of public FileToWeb URLs.
 * ProudCity Document preview replacement while preserving the original PDF download link.
-* Optional ProudCity Document EPUB download link for ready PDF-backed documents.
+* Optional, opt-in ProudCity Document EPUB download link for ready PDF-backed documents.
 * ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync, upload-field controls on supported ProudCity builds, and WordPress-local preview replacement.
 * Standard WordPress widget for linking to or embedding a PDF attachment or Proud Document's local HTML copy.
 * Pages > Convert PDF to Page workflow for intentionally creating editable draft WordPress Pages from uploaded PDFs.
@@ -71,6 +71,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.23 =
+
+* Makes the optional ProudCity Document EPUB download configurable and off by default.
+* Adds a one-time migration that hides EPUB downloads on existing installs unless an admin re-enables them later.
 
 = 0.1.22 =
 

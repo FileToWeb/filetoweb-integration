@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.23
+
+- Makes the optional ProudCity Document EPUB download configurable and off by default.
+- Adds a one-time migration that hides EPUB downloads on existing installs unless an admin re-enables them later.
+
 ## 0.1.22
 
 - Adds inline FileToWeb sync controls below ProudCity Meeting PDF upload fields when `wp-proud-core` exposes `proud_form_after_file_upload`.

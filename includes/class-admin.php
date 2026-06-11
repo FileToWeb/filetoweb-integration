@@ -137,7 +137,7 @@ class Admin {
 								<input type="checkbox" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_EPUB_DOWNLOAD ) ); ?>" value="1" <?php checked( Settings::epub_download_enabled() ); ?> />
 								<?php esc_html_e( 'Show an EPUB download option on ready Proud Document pages', 'filetoweb-integration' ); ?>
 							</label>
-							<p class="description"><?php esc_html_e( 'The original PDF download remains available. The EPUB link points to FileToWeb and prepares the ebook file only when clicked.', 'filetoweb-integration' ); ?></p>
+							<p class="description"><?php esc_html_e( 'Off by default. If enabled, the original PDF download remains available and FileToWeb prepares the EPUB file only when clicked.', 'filetoweb-integration' ); ?></p>
 						</td>
 					</tr>
 					<tr>

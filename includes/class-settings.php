@@ -13,6 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class Settings {
 	const OPTION_SETTINGS = 'filetoweb_integration_settings';
+	const OPTION_EPUB_DEFAULT_OFF_MIGRATED = 'filetoweb_integration_epub_default_off_migrated';
 
 	const KEY_ENABLED       = 'enabled';
 	const KEY_API_BASE_URL  = 'api_base_url';
@@ -35,6 +36,7 @@ class Settings {
 		public static function init() {
 			add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
 			add_action( 'init', array( __CLASS__, 'migrate_legacy_options' ), 5 );
+			add_action( 'init', array( __CLASS__, 'migrate_epub_default_off' ), 6 );
 			add_filter( 'option_page_capability_filetoweb_integration', array( __CLASS__, 'settings_page_capability' ) );
 		}
 
@@ -343,6 +345,29 @@ class Settings {
 	}
 
 	/**
+	 * Hide the optional EPUB download by default on existing pilot installs.
+	 *
+	 * This one-time migration intentionally runs once so an administrator can
+	 * re-enable EPUB later without the plugin flipping it back off.
+	 */
+	public static function migrate_epub_default_off() {
+		if ( get_option( self::OPTION_EPUB_DEFAULT_OFF_MIGRATED, '' ) ) {
+			return;
+		}
+
+		$settings = get_option( self::OPTION_SETTINGS, null );
+
+		if ( is_array( $settings ) ) {
+			$settings                            = self::normalize_settings( $settings, self::defaults(), false, false );
+			$settings[ self::KEY_EPUB_DOWNLOAD ] = '0';
+
+			update_option( self::OPTION_SETTINGS, $settings );
+		}
+
+		update_option( self::OPTION_EPUB_DEFAULT_OFF_MIGRATED, '1' );
+	}
+
+	/**
 	 * Delete legacy individual option rows.
 	 */
 	public static function delete_legacy_options() {
@@ -364,7 +389,7 @@ class Settings {
 			self::KEY_API_BASE_URL  => self::DEFAULT_API_BASE_URL,
 			self::KEY_API_KEY       => '',
 			self::KEY_REPLACE_LINKS => '1',
-			self::KEY_EPUB_DOWNLOAD => '1',
+			self::KEY_EPUB_DOWNLOAD => '0',
 			self::KEY_BATCH_SIZE    => 25,
 		);
 	}
