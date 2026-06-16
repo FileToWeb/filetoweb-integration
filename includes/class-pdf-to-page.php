@@ -14,6 +14,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 class PDF_To_Page {
 	const PAGE_SLUG     = 'filetoweb-pdf-to-page';
 	const ACTION_UPLOAD = 'filetoweb_integration_pdf_to_page_upload';
+	const ACTION_POLL_JOB = 'filetoweb_integration_pdf_to_page_poll_job';
+	const OPTION_JOBS   = 'filetoweb_integration_pdf_to_page_jobs';
 	const MAX_BYTES     = 104857600; // 100 MB.
 
 	/**
@@ -22,6 +24,7 @@ class PDF_To_Page {
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'add_pages_submenu' ) );
 		add_action( 'admin_post_' . self::ACTION_UPLOAD, array( __CLASS__, 'handle_upload' ) );
+		add_action( 'admin_post_' . self::ACTION_POLL_JOB, array( __CLASS__, 'handle_poll_job' ) );
 		add_action( 'filetoweb_integration_after_poll_post', array( __CLASS__, 'maybe_update_ready_page' ), 30, 2 );
 	}
 
@@ -55,7 +58,7 @@ class PDF_To_Page {
 				<div class="notice notice-warning"><p><?php esc_html_e( 'Configure FileToWeb before converting PDFs to pages.', 'filetoweb-integration' ); ?></p></div>
 			<?php endif; ?>
 
-			<p><?php esc_html_e( 'Upload a PDF to create a draft WordPress Page. FileToWeb converts the PDF, then the plugin updates the draft with editable WordPress HTML when ready.', 'filetoweb-integration' ); ?></p>
+			<p><?php esc_html_e( 'Upload a PDF for conversion. This screen tracks processing, then creates an editable draft WordPress Page when the HTML is ready.', 'filetoweb-integration' ); ?></p>
 
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
 				<?php wp_nonce_field( self::ACTION_UPLOAD ); ?>
@@ -69,11 +72,11 @@ class PDF_To_Page {
 						</td>
 					</tr>
 				</table>
-				<?php submit_button( __( 'Create draft page', 'filetoweb-integration' ) ); ?>
+				<?php submit_button( __( 'Convert PDF', 'filetoweb-integration' ) ); ?>
 			</form>
 
 			<hr />
-			<h2><?php esc_html_e( 'Recent PDF-to-Page drafts', 'filetoweb-integration' ); ?></h2>
+			<h2><?php esc_html_e( 'Recent PDF-to-Page conversions', 'filetoweb-integration' ); ?></h2>
 			<?php self::render_recent_pages(); ?>
 		</div>
 		<?php
@@ -101,43 +104,78 @@ class PDF_To_Page {
 			self::redirect_to_admin_page();
 		}
 
-		$result = self::create_draft_from_validated_upload( $file );
+		$result = self::create_job_from_validated_upload( $file );
 
 		if ( ! $result['ok'] ) {
 			Admin::set_notice( $result['error'] );
-
-			if ( ! empty( $result['page_id'] ) ) {
-				self::redirect_to_edit_page( $result['page_id'] );
-			}
-
 			self::redirect_to_admin_page();
 		}
 
-		Admin::set_notice( __( 'Draft page created. FileToWeb conversion is processing; the draft will update when ready.', 'filetoweb-integration' ) );
-		self::redirect_to_edit_page( $result['page_id'] );
+		if ( ! empty( $result['page_id'] ) ) {
+			Admin::set_notice( __( 'Conversion is ready. A draft Page was created.', 'filetoweb-integration' ) );
+		} else {
+			Admin::set_notice( __( 'FileToWeb conversion is processing. The draft Page will be created when the HTML is ready.', 'filetoweb-integration' ) );
+		}
+
+		self::redirect_to_admin_page();
 	}
 
 	/**
-	 * Create a draft Page from a validated PDF upload and hand it to FileToWeb.
+	 * Handle manual polling from the converter screen.
+	 */
+	public static function handle_poll_job() {
+		if ( ! Capabilities::current_user_can_manage_native_page() ) {
+			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
+		}
+
+		$job_id = isset( $_GET['job_id'] ) ? sanitize_key( wp_unslash( $_GET['job_id'] ) ) : '';
+		check_admin_referer( self::ACTION_POLL_JOB . '_' . $job_id );
+
+		$result = self::poll_job( $job_id );
+
+		if ( 'updated' === $result ) {
+			Admin::set_notice( __( 'PDF-to-Page status updated.', 'filetoweb-integration' ) );
+		} elseif ( 'failed' === $result ) {
+			Admin::set_notice( __( 'PDF-to-Page conversion failed. Check the status row for details.', 'filetoweb-integration' ) );
+		} else {
+			Admin::set_notice( __( 'PDF-to-Page conversion is still processing.', 'filetoweb-integration' ) );
+		}
+
+		self::redirect_to_admin_page();
+	}
+
+	/**
+	 * Create a conversion job from a validated PDF upload and hand it to FileToWeb.
 	 *
 	 * @param array $file Validated upload from validated_uploaded_pdf().
 	 * @return array
 	 */
-	public static function create_draft_from_validated_upload( $file ) {
-		$page_id = self::create_placeholder_page( $file['filename'] );
+	public static function create_job_from_validated_upload( $file ) {
+		$job_id = self::new_job_id();
 
-		if ( ! $page_id ) {
-			return self::workflow_error( __( 'Draft page could not be created.', 'filetoweb-integration' ), 0 );
-		}
+		$job = array(
+			'id'                    => $job_id,
+			'filename'              => $file['filename'],
+			'fingerprint'           => $file['sha256'],
+			'fingerprint_algorithm' => 'sha256',
+			'external_id'           => self::external_id( $job_id ),
+			'document_id'           => '',
+			'status'                => 'awaiting_upload',
+			'html_url'              => '',
+			'continuous_url'        => '',
+			'editor_url'            => '',
+			'page_count'            => 0,
+			'page_id'               => 0,
+			'notify_email'          => self::current_user_email(),
+			'error'                 => '',
+			'created_at'            => current_time( 'mysql', true ),
+			'updated_at'            => current_time( 'mysql', true ),
+			'completed_at'          => '',
+		);
 
-		update_post_meta( $page_id, Document_State::META_PDF_TO_PAGE, '1' );
-		update_post_meta( $page_id, Document_State::META_PDF_TO_PAGE_FILENAME, $file['filename'] );
-		update_post_meta( $page_id, Document_State::META_SOURCE_FINGERPRINT, $file['sha256'] );
-		update_post_meta( $page_id, Document_State::META_SOURCE_FINGERPRINT_ALGORITHM, 'sha256' );
-		update_post_meta( $page_id, Document_State::META_LAST_TRIGGER, 'pdf_to_page_upload' );
-		self::store_notification_email( $page_id );
+		self::save_job( $job );
 
-		$source   = self::source_for_page_upload( $page_id, $file );
+		$source   = self::source_for_job_upload( $job, $file );
 		$response = Api_Client::upsert_document(
 			array(
 				'external_id' => $source['external_id'],
@@ -152,32 +190,35 @@ class PDF_To_Page {
 					),
 				),
 				'metadata'    => array(
-					'wordpress_page_id' => $page_id,
-					'wordpress_site'    => home_url(),
-					'filetoweb_trigger' => 'pdf_to_page_upload',
-					'plugin_version'    => defined( 'FILETOWEB_INTEGRATION_VERSION' ) ? FILETOWEB_INTEGRATION_VERSION : '',
+					'wordpress_pdf_to_page_job_id' => $job_id,
+					'wordpress_site'               => home_url(),
+					'filetoweb_trigger'            => 'pdf_to_page_upload',
+					'plugin_version'               => defined( 'FILETOWEB_INTEGRATION_VERSION' ) ? FILETOWEB_INTEGRATION_VERSION : '',
 				),
 			)
 		);
 
 		if ( ! $response['ok'] || empty( $response['body']['document'] ) || ! is_array( $response['body']['document'] ) ) {
-			Document_State::mark_failed( $page_id, $response['error'] );
-			return self::workflow_error( sprintf( __( 'FileToWeb upload setup failed: %s', 'filetoweb-integration' ), $response['error'] ), $page_id );
+			self::mark_job_failed( $job_id, $response['error'] );
+			self::delete_temp_file( $file['tmp_name'] );
+			return self::workflow_error( sprintf( __( 'FileToWeb upload setup failed: %s', 'filetoweb-integration' ), $response['error'] ), $job_id, 0 );
 		}
 
 		$document = $response['body']['document'];
-		Document_State::write_from_api( $page_id, $document, $source );
+		$job      = self::write_job_from_api( $job_id, $document, $source );
 
 		if ( empty( $document['upload'] ) || ! is_array( $document['upload'] ) ) {
-			Document_State::mark_failed( $page_id, __( 'FileToWeb did not return signed upload instructions.', 'filetoweb-integration' ) );
-			return self::workflow_error( __( 'FileToWeb did not return signed upload instructions.', 'filetoweb-integration' ), $page_id );
+			self::mark_job_failed( $job_id, __( 'FileToWeb did not return signed upload instructions.', 'filetoweb-integration' ) );
+			self::delete_temp_file( $file['tmp_name'] );
+			return self::workflow_error( __( 'FileToWeb did not return signed upload instructions.', 'filetoweb-integration' ), $job_id, 0 );
 		}
 
 		$upload_response = Api_Client::upload_file( $document['upload'], $file['tmp_name'] );
 
 		if ( ! $upload_response['ok'] ) {
-			Document_State::mark_failed( $page_id, $upload_response['error'] );
-			return self::workflow_error( sprintf( __( 'FileToWeb upload failed: %s', 'filetoweb-integration' ), $upload_response['error'] ), $page_id );
+			self::mark_job_failed( $job_id, $upload_response['error'] );
+			self::delete_temp_file( $file['tmp_name'] );
+			return self::workflow_error( sprintf( __( 'FileToWeb upload failed: %s', 'filetoweb-integration' ), $upload_response['error'] ), $job_id, 0 );
 		}
 
 		$complete_response = Api_Client::complete_upload(
@@ -189,23 +230,161 @@ class PDF_To_Page {
 		);
 
 		if ( ! $complete_response['ok'] || empty( $complete_response['body']['document'] ) || ! is_array( $complete_response['body']['document'] ) ) {
-			Document_State::mark_failed( $page_id, $complete_response['error'] );
-			return self::workflow_error( sprintf( __( 'FileToWeb upload finalization failed: %s', 'filetoweb-integration' ), $complete_response['error'] ), $page_id );
+			self::mark_job_failed( $job_id, $complete_response['error'] );
+			self::delete_temp_file( $file['tmp_name'] );
+			return self::workflow_error( sprintf( __( 'FileToWeb upload finalization failed: %s', 'filetoweb-integration' ), $complete_response['error'] ), $job_id, 0 );
 		}
 
-		Document_State::write_polled_state( $page_id, $complete_response['body']['document'] );
-		self::maybe_update_ready_page( $page_id, $complete_response['body']['document'] );
+		$job = self::write_job_from_api( $job_id, $complete_response['body']['document'], $source );
 		self::delete_temp_file( $file['tmp_name'] );
+		self::maybe_complete_job( $job_id, $complete_response['body']['document'] );
+		$job = self::job( $job_id );
 
 		return array(
 			'ok'      => true,
 			'error'   => '',
-			'page_id' => $page_id,
+			'job_id'  => $job_id,
+			'page_id' => ! empty( $job['page_id'] ) ? absint( $job['page_id'] ) : 0,
 		);
 	}
 
 	/**
-	 * Update a PDF-to-Page draft when its FileToWeb document is ready.
+	 * Backwards-compatible alias for older companion code/tests.
+	 *
+	 * @param array $file Validated upload from validated_uploaded_pdf().
+	 * @return array
+	 */
+	public static function create_draft_from_validated_upload( $file ) {
+		return self::create_job_from_validated_upload( $file );
+	}
+
+	/**
+	 * Poll pending PDF-to-Page conversion jobs.
+	 *
+	 * @param int $limit Max jobs.
+	 * @return array
+	 */
+	public static function poll_pending_jobs( $limit ) {
+		$limit  = max( 0, min( 100, absint( $limit ) ) );
+		$counts = array(
+			'updated' => 0,
+			'failed'  => 0,
+			'skipped' => 0,
+		);
+
+		if ( 0 === $limit || ! Settings::configured() ) {
+			return $counts;
+		}
+
+		foreach ( self::jobs() as $job_id => $job ) {
+			if ( $limit <= 0 ) {
+				break;
+			}
+
+			$status = isset( $job['status'] ) ? Security::sanitize_status( $job['status'] ) : '';
+			if ( ! in_array( $status, array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' ), true ) ) {
+				continue;
+			}
+
+			$result = self::poll_job( $job_id );
+			if ( isset( $counts[ $result ] ) ) {
+				++$counts[ $result ];
+			} else {
+				++$counts['skipped'];
+			}
+
+			--$limit;
+		}
+
+		return $counts;
+	}
+
+	/**
+	 * Poll one PDF-to-Page job.
+	 *
+	 * @param string $job_id Job ID.
+	 * @return string
+	 */
+	public static function poll_job( $job_id ) {
+		if ( ! Settings::configured() ) {
+			return 'skipped';
+		}
+
+		$job = self::job( $job_id );
+
+		if ( empty( $job['document_id'] ) ) {
+			return 'skipped';
+		}
+
+		$response = Api_Client::get_document( $job['document_id'] );
+
+		if ( ! $response['ok'] ) {
+			self::mark_job_failed( $job_id, $response['error'] );
+			return 'failed';
+		}
+
+		if ( empty( $response['body']['document'] ) || ! is_array( $response['body']['document'] ) ) {
+			return 'skipped';
+		}
+
+		self::write_job_from_api( $job_id, $response['body']['document'], self::source_for_job( $job ) );
+		self::maybe_complete_job( $job_id, $response['body']['document'] );
+
+		return 'updated';
+	}
+
+	/**
+	 * Create the draft Page when a PDF-to-Page job is ready.
+	 *
+	 * @param string $job_id Job ID.
+	 * @param array  $document API document.
+	 */
+	public static function maybe_complete_job( $job_id, $document = array() ) {
+		$job = self::job( $job_id );
+
+		if ( empty( $job ) || 'ready' !== Security::sanitize_status( $job['status'] ) ) {
+			return;
+		}
+
+		if ( ! empty( $job['page_id'] ) ) {
+			self::maybe_update_ready_page( absint( $job['page_id'] ), $document );
+			return;
+		}
+
+		$page_id = self::create_ready_draft_page( $job['filename'] );
+
+		if ( ! $page_id ) {
+			self::mark_job_failed( $job_id, __( 'Draft page could not be created.', 'filetoweb-integration' ) );
+			return;
+		}
+
+		self::write_job_to_page_meta( $page_id, $job );
+		Local_HTML::refresh_for_post( $page_id, is_array( $document ) ? $document : self::document_from_job( $job ) );
+
+		$content = Local_HTML::local_body_for_post( $page_id );
+
+		if ( $content ) {
+			wp_update_post(
+				array(
+					'ID'           => $page_id,
+					'post_content' => $content,
+				)
+			);
+		}
+
+		$job['page_id']      = $page_id;
+		$job['completed_at'] = current_time( 'mysql', true );
+		$job['updated_at']   = current_time( 'mysql', true );
+		self::save_job( $job );
+
+		update_post_meta( $page_id, Document_State::META_PDF_TO_PAGE_COMPLETED_AT, $job['completed_at'] );
+		self::send_ready_email_once( $page_id );
+	}
+
+	/**
+	 * Update a legacy placeholder PDF-to-Page draft with ready content.
+	 *
+	 * Kept for Pages created by plugin versions 0.1.21-0.1.24.
 	 *
 	 * @param int   $post_id Page ID.
 	 * @param array $document API document.
@@ -255,9 +434,58 @@ class PDF_To_Page {
 	}
 
 	/**
-	 * Render recent converter pages.
+	 * Render recent converter jobs and legacy draft pages.
 	 */
 	private static function render_recent_pages() {
+		$rows = self::recent_rows();
+
+		if ( empty( $rows ) ) {
+			echo '<p><em>' . esc_html__( 'No PDF-to-Page conversions yet.', 'filetoweb-integration' ) . '</em></p>';
+			return;
+		}
+
+		echo '<table class="widefat striped"><thead><tr>';
+		echo '<th>' . esc_html__( 'Page', 'filetoweb-integration' ) . '</th>';
+		echo '<th>' . esc_html__( 'PDF', 'filetoweb-integration' ) . '</th>';
+		echo '<th>' . esc_html__( 'Status', 'filetoweb-integration' ) . '</th>';
+		echo '<th>' . esc_html__( 'Updated', 'filetoweb-integration' ) . '</th>';
+		echo '<th>' . esc_html__( 'Actions', 'filetoweb-integration' ) . '</th>';
+		echo '</tr></thead><tbody>';
+
+		foreach ( $rows as $row ) {
+			echo '<tr>';
+			echo '<td>' . self::page_cell( $row ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			echo '<td>' . esc_html( $row['filename'] ) . '</td>';
+			echo '<td>' . Admin::status_badge( $row['status'] ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			echo '<td>' . esc_html( $row['updated_at'] ? $row['updated_at'] . ' UTC' : __( 'Not updated yet', 'filetoweb-integration' ) ) . '</td>';
+			echo '<td>' . self::actions_cell( $row ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			echo '</tr>';
+		}
+
+		echo '</tbody></table>';
+	}
+
+	/**
+	 * Build rows for active jobs and legacy PDF-to-Page draft Pages.
+	 *
+	 * @return array
+	 */
+	private static function recent_rows() {
+		$rows = array();
+
+		foreach ( self::jobs() as $job ) {
+			$rows[] = array(
+				'type'       => 'job',
+				'id'         => $job['id'],
+				'page_id'    => absint( $job['page_id'] ),
+				'title'      => self::title_from_filename( $job['filename'] ),
+				'filename'   => $job['filename'],
+				'status'     => Security::sanitize_status( $job['status'] ),
+				'updated_at' => $job['completed_at'] ? $job['completed_at'] : $job['updated_at'],
+				'error'      => $job['error'],
+			);
+		}
+
 		$pages = get_posts(
 			array(
 				'post_type'      => 'page',
@@ -270,33 +498,118 @@ class PDF_To_Page {
 			)
 		);
 
-		if ( empty( $pages ) ) {
-			echo '<p><em>' . esc_html__( 'No PDF-to-Page drafts yet.', 'filetoweb-integration' ) . '</em></p>';
-			return;
-		}
-
-		echo '<table class="widefat striped"><thead><tr>';
-		echo '<th>' . esc_html__( 'Page', 'filetoweb-integration' ) . '</th>';
-		echo '<th>' . esc_html__( 'PDF', 'filetoweb-integration' ) . '</th>';
-		echo '<th>' . esc_html__( 'Status', 'filetoweb-integration' ) . '</th>';
-		echo '<th>' . esc_html__( 'Updated', 'filetoweb-integration' ) . '</th>';
-		echo '</tr></thead><tbody>';
-
 		foreach ( $pages as $page ) {
-			$edit_url  = get_edit_post_link( $page->ID, '' );
-			$filename  = get_post_meta( $page->ID, Document_State::META_PDF_TO_PAGE_FILENAME, true );
-			$status    = get_post_meta( $page->ID, Document_State::META_STATUS, true );
-			$completed = get_post_meta( $page->ID, Document_State::META_PDF_TO_PAGE_COMPLETED_AT, true );
+			if ( self::row_exists_for_page( $rows, $page->ID ) ) {
+				continue;
+			}
 
-			echo '<tr>';
-			echo '<td><a href="' . esc_url( $edit_url ) . '">' . esc_html( get_the_title( $page ) ) . '</a></td>';
-			echo '<td>' . esc_html( $filename ) . '</td>';
-			echo '<td>' . Admin::status_badge( $status ) . '</td>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-			echo '<td>' . esc_html( $completed ? $completed . ' UTC' : __( 'Not ready yet', 'filetoweb-integration' ) ) . '</td>';
-			echo '</tr>';
+			$rows[] = array(
+				'type'       => 'page',
+				'id'         => '',
+				'page_id'    => absint( $page->ID ),
+				'title'      => get_the_title( $page ),
+				'filename'   => get_post_meta( $page->ID, Document_State::META_PDF_TO_PAGE_FILENAME, true ),
+				'status'     => get_post_meta( $page->ID, Document_State::META_STATUS, true ),
+				'updated_at' => get_post_meta( $page->ID, Document_State::META_PDF_TO_PAGE_COMPLETED_AT, true ),
+				'error'      => get_post_meta( $page->ID, Document_State::META_LAST_ERROR, true ),
+			);
 		}
 
-		echo '</tbody></table>';
+		usort(
+			$rows,
+			function ( $a, $b ) {
+				return strcmp( (string) $b['updated_at'], (string) $a['updated_at'] );
+			}
+		);
+
+		return array_slice( $rows, 0, 10 );
+	}
+
+	/**
+	 * Does a row already point to a Page?
+	 *
+	 * @param array $rows Rows.
+	 * @param int   $page_id Page ID.
+	 * @return bool
+	 */
+	private static function row_exists_for_page( $rows, $page_id ) {
+		foreach ( $rows as $row ) {
+			if ( absint( $row['page_id'] ) === absint( $page_id ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Render the Page cell for a status row.
+	 *
+	 * @param array $row Row.
+	 * @return string
+	 */
+	private static function page_cell( $row ) {
+		$page_id = absint( $row['page_id'] );
+
+		if ( $page_id ) {
+			$edit_url = get_edit_post_link( $page_id, '' );
+
+			if ( $edit_url ) {
+				return '<a href="' . esc_url( $edit_url ) . '">' . esc_html( get_the_title( $page_id ) ) . '</a>';
+			}
+		}
+
+		if ( ! empty( $row['error'] ) ) {
+			return '<span aria-label="' . esc_attr( $row['error'] ) . '">' . esc_html__( 'Not created', 'filetoweb-integration' ) . '</span>';
+		}
+
+		return '<em>' . esc_html__( 'Draft will be created when ready', 'filetoweb-integration' ) . '</em>';
+	}
+
+	/**
+	 * Render row actions.
+	 *
+	 * @param array $row Row.
+	 * @return string
+	 */
+	private static function actions_cell( $row ) {
+		$actions = array();
+		$page_id = absint( $row['page_id'] );
+
+		if ( $page_id ) {
+			$edit_url = get_edit_post_link( $page_id, '' );
+
+			if ( $edit_url ) {
+				$actions[] = '<a class="button button-small" href="' . esc_url( $edit_url ) . '">' . esc_html__( 'Edit draft', 'filetoweb-integration' ) . '</a>';
+			}
+		} elseif ( 'job' === $row['type'] && ! empty( $row['id'] ) ) {
+			$actions[] = '<a class="button button-small" href="' . esc_url( self::poll_job_url( $row['id'] ) ) . '">' . esc_html__( 'Poll status', 'filetoweb-integration' ) . '</a>';
+		}
+
+		if ( ! empty( $row['error'] ) ) {
+			$actions[] = '<span class="description">' . esc_html( $row['error'] ) . '</span>';
+		}
+
+		return $actions ? implode( ' ', $actions ) : '&mdash;';
+	}
+
+	/**
+	 * Build a poll URL for a PDF-to-Page job.
+	 *
+	 * @param string $job_id Job ID.
+	 * @return string
+	 */
+	private static function poll_job_url( $job_id ) {
+		return wp_nonce_url(
+			add_query_arg(
+				array(
+					'action' => self::ACTION_POLL_JOB,
+					'job_id' => sanitize_key( $job_id ),
+				),
+				admin_url( 'admin-post.php' )
+			),
+			self::ACTION_POLL_JOB . '_' . sanitize_key( $job_id )
+		);
 	}
 
 	/**
@@ -366,13 +679,15 @@ class PDF_To_Page {
 	 * Build a workflow error response.
 	 *
 	 * @param string $message Message.
-	 * @param int    $page_id Draft page ID if available.
+	 * @param string $job_id Job ID if available.
+	 * @param int    $page_id Page ID if available.
 	 * @return array
 	 */
-	private static function workflow_error( $message, $page_id ) {
+	private static function workflow_error( $message, $job_id = '', $page_id = 0 ) {
 		return array(
 			'ok'      => false,
 			'error'   => Security::sanitize_error( $message ),
+			'job_id'  => sanitize_key( $job_id ),
 			'page_id' => absint( $page_id ),
 		);
 	}
@@ -404,18 +719,18 @@ class PDF_To_Page {
 	}
 
 	/**
-	 * Create the initial draft Page.
+	 * Create the ready draft Page.
 	 *
 	 * @param string $filename PDF filename.
 	 * @return int
 	 */
-	private static function create_placeholder_page( $filename ) {
+	private static function create_ready_draft_page( $filename ) {
 		$page_id = wp_insert_post(
 			array(
 				'post_type'    => 'page',
 				'post_status'  => 'draft',
 				'post_title'   => self::title_from_filename( $filename ),
-				'post_content' => self::placeholder_content(),
+				'post_content' => '',
 			)
 		);
 
@@ -427,40 +742,285 @@ class PDF_To_Page {
 	}
 
 	/**
-	 * Placeholder page content while FileToWeb is processing.
+	 * Build source metadata used by Document_State for a job.
 	 *
-	 * @return string
+	 * @param array $job Job.
+	 * @return array
 	 */
-	private static function placeholder_content() {
-		return '<p>' . esc_html__( 'FileToWeb is converting this PDF. This draft page will update automatically when the HTML version is ready.', 'filetoweb-integration' ) . '</p>';
+	private static function source_for_job( $job ) {
+		return array(
+			'external_id'           => $job['external_id'],
+			'source_url'            => '',
+			'filename'              => $job['filename'],
+			'fingerprint'           => $job['fingerprint'],
+			'fingerprint_algorithm' => $job['fingerprint_algorithm'],
+			'sync_post_id'          => 0,
+		);
 	}
 
 	/**
-	 * Build source metadata used by Document_State.
+	 * Build source metadata used by Document_State for an upload job.
 	 *
-	 * @param int   $page_id Page ID.
+	 * @param array $job Job.
 	 * @param array $file Validated upload file.
 	 * @return array
 	 */
-	private static function source_for_page_upload( $page_id, $file ) {
+	private static function source_for_job_upload( $job, $file ) {
 		return array(
-			'external_id'           => self::external_id( $page_id ),
+			'external_id'           => $job['external_id'],
 			'source_url'            => '',
 			'filename'              => $file['filename'],
 			'fingerprint'           => $file['sha256'],
 			'fingerprint_algorithm' => 'sha256',
-			'sync_post_id'          => absint( $page_id ),
+			'sync_post_id'          => 0,
 		);
 	}
 
 	/**
 	 * Stable external ID for the dedicated PDF-to-Page workflow.
 	 *
-	 * @param int $page_id Page ID.
+	 * @param string $job_id Job ID.
 	 * @return string
 	 */
-	private static function external_id( $page_id ) {
-		return 'wordpress:' . Source_Resolver::site_hash() . ':pdf-to-page:' . absint( $page_id );
+	private static function external_id( $job_id ) {
+		return 'wordpress:' . Source_Resolver::site_hash() . ':pdf-to-page:' . sanitize_key( $job_id );
+	}
+
+	/**
+	 * Return the API document representation from a job.
+	 *
+	 * @param array $job Job.
+	 * @return array
+	 */
+	private static function document_from_job( $job ) {
+		return array(
+			'id'             => $job['document_id'],
+			'external_id'    => $job['external_id'],
+			'status'         => $job['status'],
+			'html_url'       => $job['html_url'],
+			'continuous_url' => $job['continuous_url'],
+			'editor_url'     => $job['editor_url'],
+			'page_count'     => $job['page_count'],
+			'error'          => $job['error'],
+		);
+	}
+
+	/**
+	 * Write job state to a ready draft Page.
+	 *
+	 * @param int   $page_id Page ID.
+	 * @param array $job Job.
+	 */
+	private static function write_job_to_page_meta( $page_id, $job ) {
+		update_post_meta( $page_id, Document_State::META_PDF_TO_PAGE, '1' );
+		update_post_meta( $page_id, Document_State::META_PDF_TO_PAGE_FILENAME, $job['filename'] );
+		update_post_meta( $page_id, Document_State::META_EXTERNAL_ID, self::sanitize_external_id( $job['external_id'] ) );
+		update_post_meta( $page_id, Document_State::META_DOCUMENT_ID, Security::sanitize_identifier( $job['document_id'] ) );
+		update_post_meta( $page_id, Document_State::META_SOURCE_FINGERPRINT, self::sanitize_fingerprint( $job['fingerprint'] ) );
+		update_post_meta( $page_id, Document_State::META_SOURCE_FINGERPRINT_ALGORITHM, sanitize_key( $job['fingerprint_algorithm'] ) );
+		update_post_meta( $page_id, Document_State::META_STATUS, Security::sanitize_status( $job['status'] ) );
+		update_post_meta( $page_id, Document_State::META_HTML_URL, Security::sanitize_filetoweb_url( $job['html_url'] ) );
+		update_post_meta( $page_id, Document_State::META_CONTINUOUS_URL, Security::sanitize_filetoweb_url( $job['continuous_url'] ) );
+		update_post_meta( $page_id, Document_State::META_EDITOR_URL, Security::sanitize_filetoweb_url( $job['editor_url'] ) );
+		update_post_meta( $page_id, Document_State::META_PAGE_COUNT, absint( $job['page_count'] ) );
+		update_post_meta( $page_id, Document_State::META_LAST_ERROR, Security::sanitize_error( $job['error'] ) );
+		update_post_meta( $page_id, Document_State::META_ORIGINAL_URL, '' );
+		update_post_meta( $page_id, Document_State::META_LAST_TRIGGER, 'pdf_to_page_upload' );
+		update_post_meta( $page_id, Document_State::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
+
+		if ( ! empty( $job['notify_email'] ) ) {
+			update_post_meta( $page_id, Document_State::META_PDF_TO_PAGE_NOTIFY_EMAIL, sanitize_email( $job['notify_email'] ) );
+		}
+	}
+
+	/**
+	 * Create a new job ID.
+	 *
+	 * @return string
+	 */
+	private static function new_job_id() {
+		if ( function_exists( 'wp_generate_uuid4' ) ) {
+			return sanitize_key( wp_generate_uuid4() );
+		}
+
+		return sanitize_key( uniqid( 'pdf-to-page-', true ) );
+	}
+
+	/**
+	 * Return current user email.
+	 *
+	 * @return string
+	 */
+	private static function current_user_email() {
+		$user = wp_get_current_user();
+
+		if ( ! is_object( $user ) || empty( $user->user_email ) ) {
+			return '';
+		}
+
+		return sanitize_email( $user->user_email );
+	}
+
+	/**
+	 * Return all PDF-to-Page jobs.
+	 *
+	 * @return array
+	 */
+	private static function jobs() {
+		$jobs = get_option( self::OPTION_JOBS, array() );
+
+		if ( ! is_array( $jobs ) ) {
+			return array();
+		}
+
+		$normalized = array();
+		foreach ( $jobs as $job_id => $job ) {
+			$job = self::normalize_job( is_array( $job ) ? $job : array(), $job_id );
+
+			if ( ! empty( $job['id'] ) ) {
+				$normalized[ $job['id'] ] = $job;
+			}
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * Return one PDF-to-Page job.
+	 *
+	 * @param string $job_id Job ID.
+	 * @return array
+	 */
+	private static function job( $job_id ) {
+		$job_id = sanitize_key( $job_id );
+		$jobs   = self::jobs();
+
+		return isset( $jobs[ $job_id ] ) ? $jobs[ $job_id ] : array();
+	}
+
+	/**
+	 * Save one PDF-to-Page job.
+	 *
+	 * @param array $job Job.
+	 */
+	private static function save_job( $job ) {
+		$job = self::normalize_job( $job, isset( $job['id'] ) ? $job['id'] : '' );
+
+		if ( empty( $job['id'] ) ) {
+			return;
+		}
+
+		$jobs = self::jobs();
+		$jobs[ $job['id'] ] = $job;
+
+		update_option( self::OPTION_JOBS, $jobs, false );
+	}
+
+	/**
+	 * Normalize a PDF-to-Page job row.
+	 *
+	 * @param array  $job Job.
+	 * @param string $fallback_id Fallback ID.
+	 * @return array
+	 */
+	private static function normalize_job( $job, $fallback_id = '' ) {
+		$id = ! empty( $job['id'] ) ? $job['id'] : $fallback_id;
+
+		return array(
+			'id'                    => sanitize_key( $id ),
+			'filename'              => isset( $job['filename'] ) ? sanitize_file_name( $job['filename'] ) : '',
+			'fingerprint'           => isset( $job['fingerprint'] ) ? self::sanitize_fingerprint( $job['fingerprint'] ) : '',
+			'fingerprint_algorithm' => isset( $job['fingerprint_algorithm'] ) ? sanitize_key( $job['fingerprint_algorithm'] ) : '',
+			'external_id'           => isset( $job['external_id'] ) ? self::sanitize_external_id( $job['external_id'] ) : '',
+			'document_id'           => isset( $job['document_id'] ) ? Security::sanitize_identifier( $job['document_id'] ) : '',
+			'status'                => isset( $job['status'] ) ? Security::sanitize_status( $job['status'] ) : '',
+			'html_url'              => isset( $job['html_url'] ) ? Security::sanitize_filetoweb_url( $job['html_url'] ) : '',
+			'continuous_url'        => isset( $job['continuous_url'] ) ? Security::sanitize_filetoweb_url( $job['continuous_url'] ) : '',
+			'editor_url'            => isset( $job['editor_url'] ) ? Security::sanitize_filetoweb_url( $job['editor_url'] ) : '',
+			'page_count'            => isset( $job['page_count'] ) ? absint( $job['page_count'] ) : 0,
+			'page_id'               => isset( $job['page_id'] ) ? absint( $job['page_id'] ) : 0,
+			'notify_email'          => isset( $job['notify_email'] ) ? sanitize_email( $job['notify_email'] ) : '',
+			'error'                 => isset( $job['error'] ) ? Security::sanitize_error( $job['error'] ) : '',
+			'created_at'            => isset( $job['created_at'] ) ? sanitize_text_field( $job['created_at'] ) : '',
+			'updated_at'            => isset( $job['updated_at'] ) ? sanitize_text_field( $job['updated_at'] ) : '',
+			'completed_at'          => isset( $job['completed_at'] ) ? sanitize_text_field( $job['completed_at'] ) : '',
+		);
+	}
+
+	/**
+	 * Write FileToWeb API state into a job.
+	 *
+	 * @param string $job_id Job ID.
+	 * @param array  $document API document.
+	 * @param array  $source Source.
+	 * @return array
+	 */
+	private static function write_job_from_api( $job_id, $document, $source ) {
+		$job = self::job( $job_id );
+
+		if ( empty( $job ) || ! is_array( $document ) ) {
+			return $job;
+		}
+
+		$job['external_id']           = isset( $document['external_id'] ) ? $document['external_id'] : $source['external_id'];
+		$job['document_id']           = isset( $document['id'] ) ? $document['id'] : $job['document_id'];
+		$job['fingerprint']           = $source['fingerprint'];
+		$job['fingerprint_algorithm'] = $source['fingerprint_algorithm'];
+		$job['status']                = isset( $document['status'] ) ? $document['status'] : $job['status'];
+		$job['html_url']              = isset( $document['html_url'] ) ? $document['html_url'] : $job['html_url'];
+		$job['continuous_url']        = isset( $document['continuous_url'] ) ? $document['continuous_url'] : $job['continuous_url'];
+		$job['editor_url']            = isset( $document['editor_url'] ) ? $document['editor_url'] : $job['editor_url'];
+		$job['page_count']            = isset( $document['page_count'] ) ? $document['page_count'] : $job['page_count'];
+		$job['error']                 = isset( $document['error'] ) ? $document['error'] : '';
+		$job['updated_at']            = current_time( 'mysql', true );
+
+		self::save_job( $job );
+
+		return self::job( $job_id );
+	}
+
+	/**
+	 * Mark a job failed.
+	 *
+	 * @param string $job_id Job ID.
+	 * @param string $error Error.
+	 */
+	private static function mark_job_failed( $job_id, $error ) {
+		$job = self::job( $job_id );
+
+		if ( empty( $job ) ) {
+			return;
+		}
+
+		$job['status']     = 'failed';
+		$job['error']      = $error;
+		$job['updated_at'] = current_time( 'mysql', true );
+
+		self::save_job( $job );
+	}
+
+	/**
+	 * Sanitize external ID without weakening the stable id format.
+	 *
+	 * @param mixed $value External ID.
+	 * @return string
+	 */
+	private static function sanitize_external_id( $value ) {
+		$value = Security::sanitize_identifier( $value );
+
+		return preg_replace( '/[^a-zA-Z0-9:_\-.]/', '', $value );
+	}
+
+	/**
+	 * Sanitize source fingerprint.
+	 *
+	 * @param mixed $value Fingerprint.
+	 * @return string
+	 */
+	private static function sanitize_fingerprint( $value ) {
+		$value = is_scalar( $value ) ? sanitize_text_field( (string) $value ) : '';
+
+		return substr( $value, 0, 255 );
 	}
 
 	/**

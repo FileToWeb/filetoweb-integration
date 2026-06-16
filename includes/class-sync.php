@@ -178,6 +178,17 @@ class Sync {
 			}
 		}
 
+		$remaining = max( 0, $limit - count( $posts ) );
+		if ( $remaining > 0 && class_exists( __NAMESPACE__ . '\\PDF_To_Page' ) ) {
+			$job_counts = PDF_To_Page::poll_pending_jobs( $remaining );
+
+			foreach ( $job_counts as $key => $value ) {
+				if ( isset( $counts[ $key ] ) ) {
+					$counts[ $key ] += absint( $value );
+				}
+			}
+		}
+
 		foreach ( $retry_counts as $key => $value ) {
 			if ( isset( $counts[ $key ] ) ) {
 				$counts[ $key ] += absint( $value );

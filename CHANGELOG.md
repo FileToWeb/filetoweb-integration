@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.25
+
+- Keeps admins on Pages > Convert PDF to Page while uploaded PDFs are processing.
+- Tracks pending PDF-to-Page conversions without creating placeholder draft Pages.
+- Creates the editable draft Page only after FileToWeb returns ready HTML.
+
 ## 0.1.24
 
 - Recognizes real ProudForm-generated Meeting attachment field names and IDs for inline sync controls.

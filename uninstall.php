@@ -17,6 +17,7 @@ $option_names = array(
 	'filetoweb_integration_replace_links',
 	'filetoweb_integration_batch_size',
 	'filetoweb_integration_bulk_queue',
+	'filetoweb_integration_pdf_to_page_jobs',
 	'filetoweb_integration_epub_default_off_migrated',
 );
 
@@ -48,6 +49,11 @@ $meta_keys = array(
 	'_filetoweb_local_page_approved',
 	'_filetoweb_local_page_source_fingerprint',
 	'_filetoweb_local_page_updated_at',
+	'_filetoweb_pdf_to_page',
+	'_filetoweb_pdf_to_page_filename',
+	'_filetoweb_pdf_to_page_notify_email',
+	'_filetoweb_pdf_to_page_notified_at',
+	'_filetoweb_pdf_to_page_completed_at',
 	'_filetoweb_source_post_id',
 );
 

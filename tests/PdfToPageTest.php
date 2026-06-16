@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 class PdfToPageTest extends TestCase {
 	private $meta        = array();
+	private $options     = array();
 	private $uploads_dir = '';
 
 	protected function setUp(): void {
@@ -16,11 +17,13 @@ class PdfToPageTest extends TestCase {
 		Monkey\setUp();
 
 		$this->meta        = array();
+		$this->options     = array();
 		$this->uploads_dir = sys_get_temp_dir() . '/ftw-pdf-to-page-' . uniqid();
 
 		Functions\when( '__' )->returnArg();
 		Functions\when( 'esc_html__' )->returnArg();
 		Functions\when( 'esc_html' )->returnArg();
+		Functions\when( 'esc_attr' )->returnArg();
 		Functions\when( 'esc_url' )->returnArg();
 		Functions\when( 'esc_url_raw' )->returnArg();
 		Functions\when( 'sanitize_text_field' )->returnArg();
@@ -71,7 +74,17 @@ class PdfToPageTest extends TestCase {
 					);
 				}
 
+				if ( isset( $this->options[ $name ] ) ) {
+					return $this->options[ $name ];
+				}
+
 				return $default;
+			}
+		);
+		Functions\when( 'update_option' )->alias(
+			function ( $name, $value ) {
+				$this->options[ $name ] = $value;
+				return true;
 			}
 		);
 		Functions\when( 'get_post_meta' )->alias(
@@ -156,21 +169,14 @@ class PdfToPageTest extends TestCase {
 		unlink( $tmp );
 	}
 
-	public function test_upload_flow_uses_signed_upload_completes_and_deletes_temp_file(): void {
+	public function test_upload_flow_uses_signed_upload_without_creating_draft_page(): void {
 		$tmp = tempnam( sys_get_temp_dir(), 'ftw-pdf-' );
 		file_put_contents( $tmp, '%PDF-1.4 test pdf' );
 
 		$requests = array();
 
-		Functions\when( 'wp_insert_post' )->alias(
-			function ( $postarr ) {
-				$this->assertSame( 'page', $postarr['post_type'] );
-				$this->assertSame( 'draft', $postarr['post_status'] );
-				$this->assertSame( 'Agenda Packet', $postarr['post_title'] );
-
-				return 501;
-			}
-		);
+		Functions\expect( 'wp_insert_post' )->never();
+		Functions\when( 'wp_generate_uuid4' )->justReturn( 'job-501' );
 		Functions\when( 'is_wp_error' )->justReturn( false );
 		Functions\when( 'wp_get_current_user' )->justReturn( (object) array( 'user_email' => 'admin@example.test' ) );
 		Functions\when( 'wp_json_encode' )->alias(
@@ -185,7 +191,7 @@ class PdfToPageTest extends TestCase {
 				if ( 'https://filetoweb.com/v1/documents' === $url ) {
 					$body = json_decode( $args['body'], true );
 					$this->assertSame( 'upload', $body['source']['type'] );
-					$this->assertSame( 'wordpress:fe457a395a16:pdf-to-page:501', $body['external_id'] );
+					$this->assertSame( 'wordpress:fe457a395a16:pdf-to-page:job-501', $body['external_id'] );
 
 					return array(
 						'code' => 200,
@@ -264,13 +270,154 @@ class PdfToPageTest extends TestCase {
 		);
 
 		$this->assertTrue( $result['ok'] );
-		$this->assertSame( 501, $result['page_id'] );
-		$this->assertSame( '1', $this->meta[501][ Document_State::META_PDF_TO_PAGE ] );
-		$this->assertSame( 'doc-501', $this->meta[501][ Document_State::META_DOCUMENT_ID ] );
-		$this->assertSame( 'processing', $this->meta[501][ Document_State::META_STATUS ] );
-		$this->assertSame( 'admin@example.test', $this->meta[501][ Document_State::META_PDF_TO_PAGE_NOTIFY_EMAIL ] );
+		$this->assertSame( 'job-501', $result['job_id'] );
+		$this->assertSame( 0, $result['page_id'] );
+		$this->assertArrayHasKey( PDF_To_Page::OPTION_JOBS, $this->options );
+		$this->assertSame( 'doc-501', $this->options[ PDF_To_Page::OPTION_JOBS ]['job-501']['document_id'] );
+		$this->assertSame( 'processing', $this->options[ PDF_To_Page::OPTION_JOBS ]['job-501']['status'] );
+		$this->assertSame( 'admin@example.test', $this->options[ PDF_To_Page::OPTION_JOBS ]['job-501']['notify_email'] );
 		$this->assertCount( 3, $requests );
 		$this->assertFileDoesNotExist( $tmp );
+	}
+
+	public function test_ready_job_creates_draft_page_and_sends_one_email(): void {
+		$page_id = 701;
+		$job_id  = 'job-ready';
+
+		$this->options[ PDF_To_Page::OPTION_JOBS ] = array(
+			$job_id => array(
+				'id'                    => $job_id,
+				'filename'              => 'Ready-Agenda.pdf',
+				'fingerprint'           => 'fp-ready',
+				'fingerprint_algorithm' => 'sha256',
+				'external_id'           => 'wordpress:fe457a395a16:pdf-to-page:' . $job_id,
+				'document_id'           => 'doc-ready',
+				'status'                => 'processing',
+				'html_url'              => 'https://filetoweb.com/d/doc-ready/1',
+				'continuous_url'        => 'https://filetoweb.com/d/doc-ready/continuous',
+				'editor_url'            => 'https://app.filetoweb.com/home/city/ai-editor?documentId=doc-ready',
+				'page_count'            => 0,
+				'page_id'               => 0,
+				'notify_email'          => 'admin@example.test',
+				'error'                 => '',
+				'created_at'            => '2026-06-09 11:00:00',
+				'updated_at'            => '2026-06-09 11:00:00',
+				'completed_at'          => '',
+			),
+		);
+
+		$current_content = '';
+		$inserted_posts  = array();
+		$updated_posts   = array();
+		$emails          = array();
+
+		Functions\when( 'wp_insert_post' )->alias(
+			function ( $postarr ) use ( &$inserted_posts, $page_id ) {
+				$inserted_posts[] = $postarr;
+				$this->assertSame( 'page', $postarr['post_type'] );
+				$this->assertSame( 'draft', $postarr['post_status'] );
+				$this->assertSame( 'Ready Agenda', $postarr['post_title'] );
+				$this->assertSame( '', $postarr['post_content'] );
+
+				return $page_id;
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'get_post_status' )->justReturn( 'draft' );
+		Functions\when( 'get_post_field' )->alias(
+			function () use ( &$current_content ) {
+				return $current_content;
+			}
+		);
+		Functions\when( 'wp_update_post' )->alias(
+			function ( $postarr ) use ( &$updated_posts, &$current_content ) {
+				$updated_posts[] = $postarr;
+				$current_content = $postarr['post_content'];
+				return $postarr['ID'];
+			}
+		);
+		Functions\when( 'wp_upload_dir' )->alias(
+			function () {
+				return array(
+					'basedir' => $this->uploads_dir,
+					'baseurl' => 'https://city.example/wp-content/uploads',
+				);
+			}
+		);
+		Functions\when( 'wp_mkdir_p' )->alias(
+			function ( $dir ) {
+				return is_dir( $dir ) || mkdir( $dir, 0777, true );
+			}
+		);
+		Functions\when( 'wp_generate_password' )->justReturn( 'token-ready' );
+		Functions\when( 'add_query_arg' )->alias(
+			function ( $args, $url ) {
+				return (string) $url . '?' . http_build_query( $args );
+			}
+		);
+		Functions\when( 'wp_remote_request' )->alias(
+			function ( $url ) {
+				$this->assertSame( 'https://filetoweb.com/v1/documents/doc-ready', $url );
+
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'             => 'doc-ready',
+								'external_id'    => 'wordpress:fe457a395a16:pdf-to-page:job-ready',
+								'status'         => 'ready',
+								'html_url'       => 'https://filetoweb.com/d/doc-ready/1',
+								'continuous_url' => 'https://filetoweb.com/d/doc-ready/continuous',
+								'editor_url'     => 'https://app.filetoweb.com/home/city/ai-editor?documentId=doc-ready',
+								'page_count'     => 3,
+							),
+						)
+					),
+				);
+			}
+		);
+		Functions\when( 'wp_remote_get' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => '<!doctype html><html><body><main>Ready job content</main></body></html>',
+			)
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_body' )->alias(
+			function ( $response ) {
+				return $response['body'];
+			}
+		);
+		Functions\when( 'get_edit_post_link' )->justReturn( 'https://city.example/wp-admin/post.php?post=701&action=edit' );
+		Functions\when( 'get_the_title' )->justReturn( 'Ready Agenda' );
+		Functions\when( 'is_email' )->alias(
+			function ( $email ) {
+				return false !== strpos( $email, '@' );
+			}
+		);
+		Functions\when( 'wp_mail' )->alias(
+			function ( $to, $subject, $message ) use ( &$emails ) {
+				$emails[] = array( $to, $subject, $message );
+				return true;
+			}
+		);
+
+		$this->assertSame( 'updated', PDF_To_Page::poll_job( $job_id ) );
+
+		$this->assertCount( 1, $inserted_posts );
+		$this->assertCount( 1, $updated_posts );
+		$this->assertSame( $page_id, $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ]['page_id'] );
+		$this->assertSame( 'ready', $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ]['status'] );
+		$this->assertStringContainsString( 'Ready job content', $updated_posts[0]['post_content'] );
+		$this->assertSame( '1', $this->meta[ $page_id ][ Document_State::META_PDF_TO_PAGE ] );
+		$this->assertSame( 'doc-ready', $this->meta[ $page_id ][ Document_State::META_DOCUMENT_ID ] );
+		$this->assertSame( '2026-06-09 12:00:00', $this->meta[ $page_id ][ Document_State::META_PDF_TO_PAGE_COMPLETED_AT ] );
+		$this->assertCount( 1, $emails );
 	}
 
 	public function test_ready_poll_updates_same_draft_page_and_sends_one_email(): void {
