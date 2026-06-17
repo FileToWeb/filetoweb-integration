@@ -12,11 +12,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class PDF_To_Page {
-	const PAGE_SLUG     = 'filetoweb-pdf-to-page';
-	const ACTION_UPLOAD = 'filetoweb_integration_pdf_to_page_upload';
-	const ACTION_POLL_JOB = 'filetoweb_integration_pdf_to_page_poll_job';
-	const OPTION_JOBS   = 'filetoweb_integration_pdf_to_page_jobs';
-	const MAX_BYTES     = 104857600; // 100 MB.
+	const PAGE_SLUG             = 'filetoweb-pdf-to-page';
+	const ACTION_UPLOAD         = 'filetoweb_integration_pdf_to_page_upload';
+	const ACTION_POLL_JOB       = 'filetoweb_integration_pdf_to_page_poll_job';
+	const ACTION_AJAX_POLL_JOBS = 'filetoweb_integration_pdf_to_page_poll_jobs';
+	const OPTION_JOBS           = 'filetoweb_integration_pdf_to_page_jobs';
+	const MAX_BYTES             = 104857600; // 100 MB.
+	const AUTO_POLL_INTERVAL_MS = 10000;
 
 	/**
 	 * Register hooks.
@@ -25,6 +27,7 @@ class PDF_To_Page {
 		add_action( 'admin_menu', array( __CLASS__, 'add_pages_submenu' ) );
 		add_action( 'admin_post_' . self::ACTION_UPLOAD, array( __CLASS__, 'handle_upload' ) );
 		add_action( 'admin_post_' . self::ACTION_POLL_JOB, array( __CLASS__, 'handle_poll_job' ) );
+		add_action( 'wp_ajax_' . self::ACTION_AJAX_POLL_JOBS, array( __CLASS__, 'handle_ajax_poll_jobs' ) );
 		add_action( 'filetoweb_integration_after_poll_post', array( __CLASS__, 'maybe_update_ready_page' ), 30, 2 );
 	}
 
@@ -49,6 +52,8 @@ class PDF_To_Page {
 		if ( ! Capabilities::current_user_can_manage_native_page() ) {
 			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
 		}
+
+		$recent_rows = self::recent_rows();
 
 		?>
 		<div class="wrap">
@@ -77,7 +82,10 @@ class PDF_To_Page {
 
 			<hr />
 			<h2><?php esc_html_e( 'Recent PDF-to-Page conversions', 'filetoweb-integration' ); ?></h2>
-			<?php self::render_recent_pages(); ?>
+			<div id="filetoweb-integration-pdf-to-page-recent" data-filetoweb-pdf-to-page-auto-poll="<?php echo esc_attr( self::has_pending_rows( $recent_rows ) ? '1' : '0' ); ?>">
+				<?php self::render_recent_pages( $recent_rows ); ?>
+			</div>
+			<?php self::render_auto_poll_script( $recent_rows ); ?>
 		</div>
 		<?php
 	}
@@ -142,6 +150,37 @@ class PDF_To_Page {
 		}
 
 		self::redirect_to_admin_page();
+	}
+
+	/**
+	 * Poll pending PDF-to-Page jobs from the open admin screen.
+	 */
+	public static function handle_ajax_poll_jobs() {
+		if ( ! Capabilities::current_user_can_manage_native_page() ) {
+			wp_send_json_error(
+				array(
+					'message' => __( 'Unauthorized', 'filetoweb-integration' ),
+				),
+				403
+			);
+		}
+
+		check_ajax_referer( self::ACTION_AJAX_POLL_JOBS );
+
+		$counts = self::poll_pending_jobs( Settings::batch_size() );
+		$rows   = self::recent_rows();
+
+		ob_start();
+		self::render_recent_pages( $rows );
+		$html = ob_get_clean();
+
+		wp_send_json_success(
+			array(
+				'html'        => $html,
+				'has_pending' => self::has_pending_rows( $rows ),
+				'counts'      => $counts,
+			)
+		);
 	}
 
 	/**
@@ -282,7 +321,7 @@ class PDF_To_Page {
 			}
 
 			$status = isset( $job['status'] ) ? Security::sanitize_status( $job['status'] ) : '';
-			if ( ! in_array( $status, array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' ), true ) ) {
+			if ( ! self::is_pending_status( $status ) ) {
 				continue;
 			}
 
@@ -436,8 +475,10 @@ class PDF_To_Page {
 	/**
 	 * Render recent converter jobs and legacy draft pages.
 	 */
-	private static function render_recent_pages() {
-		$rows = self::recent_rows();
+	private static function render_recent_pages( $rows = null ) {
+		if ( null === $rows ) {
+			$rows = self::recent_rows();
+		}
 
 		if ( empty( $rows ) ) {
 			echo '<p><em>' . esc_html__( 'No PDF-to-Page conversions yet.', 'filetoweb-integration' ) . '</em></p>';
@@ -463,6 +504,116 @@ class PDF_To_Page {
 		}
 
 		echo '</tbody></table>';
+	}
+
+	/**
+	 * Render the lightweight auto-poll script for pending PDF-to-Page jobs.
+	 *
+	 * @param array $rows Recent rows.
+	 */
+	private static function render_auto_poll_script( $rows ) {
+		if ( ! Settings::configured() || ! self::has_pending_rows( $rows ) ) {
+			return;
+		}
+
+		?>
+		<script>
+		(function() {
+			var container = document.getElementById('filetoweb-integration-pdf-to-page-recent');
+			if (!container || !window.ajaxurl || container.getAttribute('data-filetoweb-pdf-to-page-auto-poll') !== '1') {
+				return;
+			}
+
+			var action = '<?php echo esc_js( self::ACTION_AJAX_POLL_JOBS ); ?>';
+			var nonce = '<?php echo esc_js( wp_create_nonce( self::ACTION_AJAX_POLL_JOBS ) ); ?>';
+			var interval = <?php echo absint( self::AUTO_POLL_INTERVAL_MS ); ?>;
+			var inFlight = false;
+			var stopped = false;
+
+			function schedule() {
+				if (!stopped) {
+					window.setTimeout(poll, interval);
+				}
+			}
+
+			function poll() {
+				if (inFlight || stopped) {
+					return;
+				}
+
+				inFlight = true;
+
+				var xhr = new XMLHttpRequest();
+				xhr.open('POST', window.ajaxurl, true);
+				xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+				xhr.onreadystatechange = function() {
+					if (xhr.readyState !== 4) {
+						return;
+					}
+
+					inFlight = false;
+
+					if (xhr.status >= 200 && xhr.status < 300) {
+						try {
+							var response = JSON.parse(xhr.responseText);
+							if (response && response.success && response.data && response.data.html) {
+								container.innerHTML = response.data.html;
+
+								if (!response.data.has_pending) {
+									stopped = true;
+									container.setAttribute('data-filetoweb-pdf-to-page-auto-poll', '0');
+									return;
+								}
+							}
+						} catch (error) {}
+					}
+
+					schedule();
+				};
+				xhr.send('action=' + encodeURIComponent(action) + '&_ajax_nonce=' + encodeURIComponent(nonce));
+			}
+
+			schedule();
+		}());
+		</script>
+		<?php
+	}
+
+	/**
+	 * Does any recent row still need polling?
+	 *
+	 * @param array $rows Recent rows.
+	 * @return bool
+	 */
+	private static function has_pending_rows( $rows ) {
+		foreach ( $rows as $row ) {
+			$status = isset( $row['status'] ) ? $row['status'] : '';
+
+			if ( self::is_pending_status( $status ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Is a FileToWeb status still actively converting or waiting to be checked?
+	 *
+	 * @param string $status Status.
+	 * @return bool
+	 */
+	private static function is_pending_status( $status ) {
+		return in_array( Security::sanitize_status( $status ), self::pending_statuses(), true );
+	}
+
+	/**
+	 * Statuses that should continue polling.
+	 *
+	 * @return array
+	 */
+	private static function pending_statuses() {
+		return array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' );
 	}
 
 	/**

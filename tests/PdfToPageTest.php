@@ -140,6 +140,27 @@ class PdfToPageTest extends TestCase {
 		PDF_To_Page::add_pages_submenu();
 	}
 
+	public function test_init_registers_auto_poll_ajax_hook(): void {
+		$hooks = array();
+
+		Functions\when( 'add_action' )->alias(
+			function ( $hook, $callback ) use ( &$hooks ) {
+				$hooks[] = array( $hook, $callback );
+				return true;
+			}
+		);
+
+		PDF_To_Page::init();
+
+		$this->assertContains(
+			array(
+				'wp_ajax_' . PDF_To_Page::ACTION_AJAX_POLL_JOBS,
+				array( PDF_To_Page::class, 'handle_ajax_poll_jobs' ),
+			),
+			$hooks
+		);
+	}
+
 	public function test_upload_validation_rejects_missing_non_pdf_and_oversized_files(): void {
 		$_FILES = array();
 		$this->assertFalse( PDF_To_Page::validated_uploaded_pdf()['ok'] );
@@ -418,6 +439,163 @@ class PdfToPageTest extends TestCase {
 		$this->assertSame( 'doc-ready', $this->meta[ $page_id ][ Document_State::META_DOCUMENT_ID ] );
 		$this->assertSame( '2026-06-09 12:00:00', $this->meta[ $page_id ][ Document_State::META_PDF_TO_PAGE_COMPLETED_AT ] );
 		$this->assertCount( 1, $emails );
+	}
+
+	public function test_ajax_auto_poll_updates_recent_rows_when_job_becomes_ready(): void {
+		$page_id = 771;
+		$job_id  = 'job-ajax-ready';
+
+		$this->options[ PDF_To_Page::OPTION_JOBS ] = array(
+			$job_id => array(
+				'id'                    => $job_id,
+				'filename'              => 'Auto-Poll-Agenda.pdf',
+				'fingerprint'           => 'fp-ajax-ready',
+				'fingerprint_algorithm' => 'sha256',
+				'external_id'           => 'wordpress:fe457a395a16:pdf-to-page:' . $job_id,
+				'document_id'           => 'doc-ajax-ready',
+				'status'                => 'processing',
+				'html_url'              => 'https://filetoweb.com/d/doc-ajax-ready/1',
+				'continuous_url'        => 'https://filetoweb.com/d/doc-ajax-ready/continuous',
+				'editor_url'            => 'https://app.filetoweb.com/home/city/ai-editor?documentId=doc-ajax-ready',
+				'page_count'            => 0,
+				'page_id'               => 0,
+				'notify_email'          => 'admin@example.test',
+				'error'                 => '',
+				'created_at'            => '2026-06-09 11:00:00',
+				'updated_at'            => '2026-06-09 11:00:00',
+				'completed_at'          => '',
+			),
+		);
+
+		$current_content = '';
+		$json_payload    = null;
+
+		Functions\when( 'current_user_can' )->justReturn( true );
+		Functions\when( 'check_ajax_referer' )->justReturn( true );
+		Functions\when( 'wp_send_json_error' )->alias(
+			function () {
+				throw new \RuntimeException( 'json-error' );
+			}
+		);
+		Functions\when( 'wp_send_json_success' )->alias(
+			function ( $payload ) use ( &$json_payload ) {
+				$json_payload = $payload;
+				throw new \RuntimeException( 'json-success' );
+			}
+		);
+		Functions\when( 'wp_insert_post' )->alias(
+			function ( $postarr ) use ( $page_id ) {
+				$this->assertSame( 'page', $postarr['post_type'] );
+				$this->assertSame( 'draft', $postarr['post_status'] );
+				$this->assertSame( 'Auto Poll Agenda', $postarr['post_title'] );
+
+				return $page_id;
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'get_post_status' )->justReturn( 'draft' );
+		Functions\when( 'get_post_field' )->alias(
+			function () use ( &$current_content ) {
+				return $current_content;
+			}
+		);
+		Functions\when( 'wp_update_post' )->alias(
+			function ( $postarr ) use ( &$current_content ) {
+				$current_content = $postarr['post_content'];
+				return $postarr['ID'];
+			}
+		);
+		Functions\when( 'wp_upload_dir' )->alias(
+			function () {
+				return array(
+					'basedir' => $this->uploads_dir,
+					'baseurl' => 'https://city.example/wp-content/uploads',
+				);
+			}
+		);
+		Functions\when( 'wp_mkdir_p' )->alias(
+			function ( $dir ) {
+				return is_dir( $dir ) || mkdir( $dir, 0777, true );
+			}
+		);
+		Functions\when( 'wp_generate_password' )->justReturn( 'token-ajax' );
+		Functions\when( 'add_query_arg' )->alias(
+			function ( $args, $url ) {
+				return (string) $url . '?' . http_build_query( $args );
+			}
+		);
+		Functions\when( 'wp_nonce_url' )->alias(
+			function ( $url ) {
+				return $url . '&_wpnonce=test';
+			}
+		);
+		Functions\when( 'admin_url' )->alias(
+			function ( $path = '' ) {
+				return 'https://city.example/wp-admin/' . ltrim( (string) $path, '/' );
+			}
+		);
+		Functions\when( 'get_posts' )->justReturn( array() );
+		Functions\when( 'get_edit_post_link' )->justReturn( 'https://city.example/wp-admin/post.php?post=771&action=edit' );
+		Functions\when( 'get_the_title' )->justReturn( 'Auto Poll Agenda' );
+		Functions\when( 'is_email' )->alias(
+			function ( $email ) {
+				return false !== strpos( $email, '@' );
+			}
+		);
+		Functions\when( 'wp_mail' )->justReturn( true );
+		Functions\when( 'wp_remote_request' )->alias(
+			function ( $url ) {
+				$this->assertSame( 'https://filetoweb.com/v1/documents/doc-ajax-ready', $url );
+
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'             => 'doc-ajax-ready',
+								'external_id'    => 'wordpress:fe457a395a16:pdf-to-page:job-ajax-ready',
+								'status'         => 'ready',
+								'html_url'       => 'https://filetoweb.com/d/doc-ajax-ready/1',
+								'continuous_url' => 'https://filetoweb.com/d/doc-ajax-ready/continuous',
+								'editor_url'     => 'https://app.filetoweb.com/home/city/ai-editor?documentId=doc-ajax-ready',
+								'page_count'     => 2,
+							),
+						)
+					),
+				);
+			}
+		);
+		Functions\when( 'wp_remote_get' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => '<!doctype html><html><body><main>Auto-polled content</main></body></html>',
+			)
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_body' )->alias(
+			function ( $response ) {
+				return $response['body'];
+			}
+		);
+
+		try {
+			PDF_To_Page::handle_ajax_poll_jobs();
+			$this->fail( 'Expected JSON response.' );
+		} catch ( \RuntimeException $exception ) {
+			$this->assertSame( 'json-success', $exception->getMessage() );
+		}
+
+		$this->assertIsArray( $json_payload );
+		$this->assertFalse( $json_payload['has_pending'] );
+		$this->assertSame( 1, $json_payload['counts']['updated'] );
+		$this->assertStringContainsString( 'Auto-Poll-Agenda.pdf', $json_payload['html'] );
+		$this->assertStringContainsString( 'Edit draft', $json_payload['html'] );
+		$this->assertSame( $page_id, $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ]['page_id'] );
+		$this->assertStringContainsString( 'Auto-polled content', $current_content );
 	}
 
 	public function test_ready_poll_updates_same_draft_page_and_sends_one_email(): void {

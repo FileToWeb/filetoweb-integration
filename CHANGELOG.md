@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.27
+
+- Auto-refreshes pending Pages > Convert PDF to Page jobs while the admin screen is open.
+- Keeps the manual Poll status action available as an immediate fallback.
+
 ## 0.1.26
 
 - Aligns inline ProudCity Meeting FileToWeb controls with the existing Change File / Remove File button row.
