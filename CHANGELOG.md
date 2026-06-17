@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.26
+
+- Aligns inline ProudCity Meeting FileToWeb controls with the existing Change File / Remove File button row.
+- Keeps the Meeting material status badge and links visible without pushing the sync actions out of alignment.
+
 ## 0.1.25
 
 - Keeps admins on Pages > Convert PDF to Page while uploaded PDFs are processing.

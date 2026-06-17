@@ -349,9 +349,11 @@ class MeetingMaterialsTest extends TestCase {
 		$output = ob_get_clean();
 
 		$this->assertStringContainsString( 'filetoweb-integration-inline-meeting-sync', $output );
+		$this->assertStringContainsString( 'clear:both;display:block;margin:6px 0 0;', $output );
 		$this->assertStringContainsString( 'Ready', $output );
 		$this->assertStringContainsString( 'Sync this PDF', $output );
 		$this->assertStringContainsString( 'Poll status', $output );
+		$this->assertLessThan( strpos( $output, 'Ready' ), strpos( $output, 'Sync this PDF' ) );
 		$this->assertStringContainsString( 'slot=agenda', $output );
 		$this->assertStringContainsString( 'Original PDF', $output );
 		$this->assertStringContainsString( 'Generated HTML', $output );

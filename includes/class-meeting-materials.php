@@ -359,13 +359,13 @@ class Meeting_Materials {
 		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_EDITOR_URL, true ) );
 		$local_url   = Local_HTML::local_url( $attachment_id );
 		?>
-		<div class="filetoweb-integration-inline-meeting-sync" style="margin:8px 0 0;">
-			<span style="margin-right:8px;"><?php echo self::status_badge( $status ); ?></span>
+		<div class="filetoweb-integration-inline-meeting-sync" style="clear:both;display:block;margin:6px 0 0;">
 			<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
 			<?php if ( $document_id ) : ?>
 				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Poll status', 'filetoweb-integration' ); ?></a>
 			<?php endif; ?>
-			<div style="margin-top:4px;">
+			<span style="display:inline-block;margin-left:6px;vertical-align:middle;"><?php echo self::status_badge( $status ); ?></span>
+			<div style="font-size:12px;line-height:1.5;margin-top:4px;">
 				<a href="<?php echo esc_url( $url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Original PDF', 'filetoweb-integration' ); ?></a>
 				<?php if ( $local_url ) : ?>
 					<span aria-hidden="true"> | </span><a href="<?php echo esc_url( $local_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Local HTML copy', 'filetoweb-integration' ); ?></a>
