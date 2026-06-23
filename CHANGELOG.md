@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.28
+
+- Aligns inline ProudCity Meeting FileToWeb controls with ProudCity's Change File / Remove File button row.
+
 ## 0.1.27
 
 - Auto-refreshes pending Pages > Convert PDF to Page jobs while the admin screen is open.

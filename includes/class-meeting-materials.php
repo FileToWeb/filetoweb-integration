@@ -359,7 +359,7 @@ class Meeting_Materials {
 		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_EDITOR_URL, true ) );
 		$local_url   = Local_HTML::local_url( $attachment_id );
 		?>
-		<div class="filetoweb-integration-inline-meeting-sync" style="clear:both;display:block;margin:6px 0 0;">
+		<div class="filetoweb-integration-inline-meeting-sync" style="clear:both;display:block;margin:6px 0 0 150px;">
 			<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
 			<?php if ( $document_id ) : ?>
 				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Poll status', 'filetoweb-integration' ); ?></a>
