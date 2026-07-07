@@ -32,6 +32,7 @@ class Plugin {
 			PDF_To_Page::init();
 			Bulk_Queue::init();
 			Link_Rewriter::init();
+			Accessibility_Attribution::init();
 
 		if ( apply_filters( 'filetoweb_integration_enable_widget', true ) ) {
 			Document_Widget::init();

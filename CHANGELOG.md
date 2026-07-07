@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.29
+
+- Adds a FileToWeb attribution paragraph to public accessibility statement pages when the integration is enabled.
+- Keeps attribution render-time only, filterable, and out of saved WordPress page content.
+
 ## 0.1.28
 
 - Aligns inline ProudCity Meeting FileToWeb controls with ProudCity's Change File / Remove File button row.

@@ -33,5 +33,6 @@ require_once __DIR__ . '/../includes/class-native-page.php';
 require_once __DIR__ . '/../includes/class-pdf-to-page.php';
 require_once __DIR__ . '/../includes/class-bulk-queue.php';
 require_once __DIR__ . '/../includes/class-link-rewriter.php';
+require_once __DIR__ . '/../includes/class-accessibility-attribution.php';
 require_once __DIR__ . '/../includes/class-widget.php';
 require_once __DIR__ . '/../includes/class-plugin.php';

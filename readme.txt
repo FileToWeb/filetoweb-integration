@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.28
+Stable tag: 0.1.29
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -29,6 +29,7 @@ Features:
 * ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync, upload-field controls on supported ProudCity builds, and WordPress-local preview replacement.
 * Standard WordPress widget for linking to or embedding a PDF attachment or Proud Document's local HTML copy.
 * Pages > Convert PDF to Page workflow for intentionally creating editable draft WordPress Pages after uploaded PDFs finish converting.
+* Render-time FileToWeb attribution on public accessibility statement pages when the integration is enabled.
 * Original PDF links are preserved in admin screens.
 
 == Installation ==
@@ -71,6 +72,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.29 =
+
+* Adds a FileToWeb attribution paragraph to public accessibility statement pages when the integration is enabled.
+* Keeps attribution render-time only, filterable, and out of saved WordPress page content.
 
 = 0.1.28 =
 
