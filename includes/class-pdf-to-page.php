@@ -63,7 +63,7 @@ class PDF_To_Page {
 				<div class="notice notice-warning"><p><?php esc_html_e( 'Configure FileToWeb before converting PDFs to pages.', 'filetoweb-integration' ); ?></p></div>
 			<?php endif; ?>
 
-			<p><?php esc_html_e( 'Upload a PDF for conversion. This screen tracks processing, then creates an editable draft WordPress Page when the HTML is ready.', 'filetoweb-integration' ); ?></p>
+				<p><?php esc_html_e( 'Upload a PDF for conversion. This screen tracks processing, which may take several minutes for larger PDFs, then creates an editable draft WordPress Page when the HTML is ready.', 'filetoweb-integration' ); ?></p>
 
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
 				<?php wp_nonce_field( self::ACTION_UPLOAD ); ?>

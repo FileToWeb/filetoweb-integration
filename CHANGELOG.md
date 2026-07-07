@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.30
+
+- Adds admin processing-time help next to Processing statuses for attachments, Proud Documents, Meetings, and PDF-to-Page conversions.
+- Clarifies that larger or more complex PDFs can take up to 10 minutes while public links keep using the original PDF.
+
 ## 0.1.29
 
 - Adds a FileToWeb attribution paragraph to public accessibility statement pages when the integration is enabled.

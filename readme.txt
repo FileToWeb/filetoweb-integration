@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.29
+Stable tag: 0.1.30
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -23,6 +23,7 @@ Features:
 * Manual bounded backfill for existing PDF attachments and Proud Document posts.
 * Bulk queue controls for all Proud Documents or all ProudCity Meeting PDFs.
 * WP-Cron polling for pending conversions and intentionally scheduled upload retries.
+* Admin processing-time help on pending conversion statuses so users know larger PDFs can take several minutes.
 * Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML instead of public FileToWeb URLs.
 * ProudCity Document preview replacement while preserving the original PDF download link.
 * Optional, opt-in ProudCity Document EPUB download link for ready PDF-backed documents.
@@ -72,6 +73,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.30 =
+
+* Adds admin processing-time help next to Processing statuses for attachments, Proud Documents, Meetings, and PDF-to-Page conversions.
+* Clarifies that larger or more complex PDFs can take up to 10 minutes while public links keep using the original PDF.
 
 = 0.1.29 =
 

@@ -565,22 +565,31 @@ class Meeting_Materials {
 	private static function status_badge( $status ) {
 		$status = $status ? Security::sanitize_status( $status ) : '';
 
-		if ( 'ready' === $status ) {
-			$label = __( 'Ready', 'filetoweb-integration' );
-			$color = '#008a20';
-		} elseif ( in_array( $status, array( 'failed', 'error' ), true ) ) {
-			$label = __( 'Failed', 'filetoweb-integration' );
-			$color = '#b32d2e';
-		} elseif ( in_array( $status, array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' ), true ) ) {
-			$label = __( 'Processing', 'filetoweb-integration' );
-			$color = '#2271b1';
-		} else {
-			$label = __( 'Not synced', 'filetoweb-integration' );
-			$color = '#646970';
-		}
+			$is_processing = false;
 
-		return '<span style="display:inline-block;border:1px solid ' . esc_attr( $color ) . ';border-radius:3px;color:' . esc_attr( $color ) . ';font-weight:600;padding:1px 6px;">' . esc_html( $label ) . '</span>';
-	}
+			if ( 'ready' === $status ) {
+				$label = __( 'Ready', 'filetoweb-integration' );
+				$color = '#008a20';
+			} elseif ( in_array( $status, array( 'failed', 'error' ), true ) ) {
+				$label = __( 'Failed', 'filetoweb-integration' );
+				$color = '#b32d2e';
+			} elseif ( in_array( $status, array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' ), true ) ) {
+				$label         = __( 'Processing', 'filetoweb-integration' );
+				$color         = '#2271b1';
+				$is_processing = true;
+			} else {
+				$label = __( 'Not synced', 'filetoweb-integration' );
+				$color = '#646970';
+			}
+
+			$badge = '<span style="display:inline-block;border:1px solid ' . esc_attr( $color ) . ';border-radius:3px;color:' . esc_attr( $color ) . ';font-weight:600;padding:1px 6px;">' . esc_html( $label ) . '</span>';
+
+			if ( $is_processing ) {
+				$badge .= Admin::processing_help_icon();
+			}
+
+			return $badge;
+		}
 
 	/**
 	 * Resolve a display filename.

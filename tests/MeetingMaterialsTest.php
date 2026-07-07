@@ -351,6 +351,7 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringContainsString( 'filetoweb-integration-inline-meeting-sync', $output );
 		$this->assertStringContainsString( 'clear:both;display:block;margin:6px 0 0 150px;', $output );
 		$this->assertStringContainsString( 'Ready', $output );
+		$this->assertStringNotContainsString( 'filetoweb-processing-help', $output );
 		$this->assertStringContainsString( 'Sync this PDF', $output );
 		$this->assertStringContainsString( 'Poll status', $output );
 		$this->assertLessThan( strpos( $output, 'Ready' ), strpos( $output, 'Sync this PDF' ) );
@@ -358,6 +359,70 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringContainsString( 'Original PDF', $output );
 		$this->assertStringContainsString( 'Generated HTML', $output );
 		$this->assertStringContainsString( 'Edit in FileToWeb', $output );
+	}
+
+	public function test_inline_upload_control_renders_processing_time_help_for_processing_material(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment' => 101,
+		);
+
+		$this->meeting_meta[101] = array(
+			Document_State::META_STATUS      => 'processing',
+			Document_State::META_DOCUMENT_ID => 'doc-101',
+		);
+
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__;
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'Processing', $output );
+		$this->assertStringContainsString( 'filetoweb-processing-help', $output );
+		$this->assertStringContainsString( 'up to 10 minutes', $output );
+	}
+
+	public function test_meeting_material_metabox_renders_processing_time_help(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment' => 101,
+		);
+
+		$this->meeting_meta[101] = array(
+			Document_State::META_STATUS      => 'processing',
+			Document_State::META_DOCUMENT_ID => 'doc-101',
+		);
+
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__;
+
+		ob_start();
+		Meeting_Materials::render_meta_box(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'Processing', $output );
+		$this->assertStringContainsString( 'filetoweb-processing-help', $output );
+		$this->assertStringContainsString( 'up to 10 minutes', $output );
 	}
 
 	public function test_inline_upload_control_uses_proudcity_packet_and_minutes_field_names(): void {

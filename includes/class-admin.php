@@ -276,11 +276,16 @@ class Admin {
 
 		$config = isset( $styles[ $state ] ) ? $styles[ $state ] : $styles['not_synced'];
 
-		echo '<div class="filetoweb-status-alert" style="border-left:4px solid ' . esc_attr( $config[0] ) . ';background:' . esc_attr( $config[1] ) . ';padding:10px 12px;margin:0 0 12px;">';
-		echo '<span style="display:inline-block;border:1px solid ' . esc_attr( $config[0] ) . ';border-radius:3px;color:' . esc_attr( $config[0] ) . ';font-weight:600;padding:2px 8px;margin-bottom:6px;">' . esc_html( $config[2] ) . '</span>';
-		echo '<p style="margin:4px 0 0;">' . esc_html( $config[3] ) . '</p>';
-		echo '</div>';
-	}
+			echo '<div class="filetoweb-status-alert" style="border-left:4px solid ' . esc_attr( $config[0] ) . ';background:' . esc_attr( $config[1] ) . ';padding:10px 12px;margin:0 0 12px;">';
+			echo '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">';
+			echo '<span style="display:inline-block;border:1px solid ' . esc_attr( $config[0] ) . ';border-radius:3px;color:' . esc_attr( $config[0] ) . ';font-weight:600;padding:2px 8px;">' . esc_html( $config[2] ) . '</span>';
+			if ( 'processing' === $state ) {
+				echo self::processing_help_icon(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			}
+			echo '</div>';
+			echo '<p style="margin:4px 0 0;">' . esc_html( $config[3] ) . '</p>';
+			echo '</div>';
+		}
 
 	/**
 	 * Normalize a FileToWeb status into an admin display state.
@@ -323,8 +328,32 @@ class Admin {
 
 		$config = isset( $styles[ $state ] ) ? $styles[ $state ] : $styles['not_synced'];
 
-		return '<span style="display:inline-block;border:1px solid ' . esc_attr( $config[0] ) . ';border-radius:3px;color:' . esc_attr( $config[0] ) . ';font-weight:600;padding:1px 6px;">' . esc_html( $config[1] ) . '</span>';
-	}
+			$badge = '<span style="display:inline-block;border:1px solid ' . esc_attr( $config[0] ) . ';border-radius:3px;color:' . esc_attr( $config[0] ) . ';font-weight:600;padding:1px 6px;">' . esc_html( $config[1] ) . '</span>';
+
+			if ( 'processing' === $state ) {
+				$badge .= self::processing_help_icon();
+			}
+
+			return $badge;
+		}
+
+		/**
+		 * Render compact help for processing-time expectations.
+		 *
+		 * @return string
+		 */
+		public static function processing_help_icon() {
+			$text = __( 'Most PDFs finish within a few minutes. Larger or more complex PDFs can take up to 10 minutes. You can leave this screen; public links keep using the original PDF until the HTML version is ready. Use Poll status to refresh.', 'filetoweb-integration' );
+
+			return '<details class="filetoweb-processing-help" style="display:inline-block;position:relative;margin-left:4px;vertical-align:middle;">'
+				. '<summary aria-label="' . esc_attr( __( 'About FileToWeb processing time', 'filetoweb-integration' ) ) . '" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1px solid #8c8f94;border-radius:50%;color:#2271b1;background:#fff;font-size:12px;font-weight:700;line-height:1;cursor:pointer;list-style:none;">'
+				. '<span aria-hidden="true">i</span>'
+				. '</summary>'
+				. '<span class="filetoweb-processing-help-text" role="tooltip" style="display:block;position:absolute;z-index:10000;top:22px;right:0;width:260px;padding:8px 10px;border:1px solid #c3c4c7;background:#fff;color:#1d2327;box-shadow:0 2px 8px rgba(0,0,0,.12);font-size:12px;font-weight:400;line-height:1.4;text-align:left;">'
+				. esc_html( $text )
+				. '</span>'
+				. '</details>';
+		}
 
 	/**
 	 * Handle single item sync.
