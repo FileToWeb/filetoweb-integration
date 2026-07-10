@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.30
+Stable tag: 0.1.31
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -38,9 +38,10 @@ Features:
 1. Install the plugin into `wp-content/plugins/filetoweb-integration`.
 2. Activate FileToWeb Integration from the WordPress Plugins screen.
 3. Open Settings > FileToWeb.
-4. Enter a scoped FileToWeb API key.
+4. Create a project-scoped API key in FileToWeb under Settings > API keys, then paste it into the plugin.
 5. Confirm the API URL is `https://filetoweb.com`.
 6. Leave public replacement enabled if ready PDF links should point to WordPress-local HTML.
+7. Click Test connection to confirm the FileToWeb workspace and folder.
 
 == Frequently Asked Questions ==
 
@@ -73,6 +74,14 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.31 =
+
+* Adds a nonce-protected Test connection action to the FileToWeb settings page.
+* Confirms the connected FileToWeb workspace and folder without displaying the stored API key.
+* Verifies that the configured key has the document read and write permissions required for conversion.
+* Keeps Settings API registration compatible with ProudCity's legacy local WordPress image.
+* Keeps non-JSON API failures concise instead of rendering upstream HTML in WordPress notices.
 
 = 0.1.30 =
 

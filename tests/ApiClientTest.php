@@ -78,4 +78,44 @@ class ApiClientTest extends TestCase {
 
 		$this->assertTrue( $result['ok'] );
 	}
+
+	public function test_auth_context_uses_the_stored_bearer_key(): void {
+		Functions\expect( 'wp_remote_request' )
+			->once()
+			->with(
+				'https://filetoweb.com/v1/auth/context',
+				\Mockery::on(
+					function ( $args ) {
+						return is_array( $args )
+							&& 'GET' === $args['method']
+							&& 'Bearer ftw_api_test' === $args['headers']['Authorization']
+							&& ! empty( $args['reject_unsafe_urls'] );
+					}
+				)
+			)
+			->andReturn( array( 'body' => '{"account":{"name":"Pilot"},"project":{"name":"WordPress"}}' ) );
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"account":{"name":"Pilot"},"project":{"name":"WordPress"}}' );
+
+		$result = Api_Client::get_auth_context();
+
+		$this->assertTrue( $result['ok'] );
+		$this->assertSame( 'Pilot', $result['body']['account']['name'] );
+		$this->assertSame( 'WordPress', $result['body']['project']['name'] );
+	}
+
+	public function test_html_api_errors_are_reduced_to_the_http_status(): void {
+		Functions\expect( 'wp_remote_request' )->once()->andReturn( array() );
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 404 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn( '<!doctype html><html><body>Not Found</body></html>' );
+		Functions\when( 'wp_strip_all_tags' )->alias( 'strip_tags' );
+
+		$result = Api_Client::get_auth_context();
+
+		$this->assertFalse( $result['ok'] );
+		$this->assertSame( 'FileToWeb API returned HTTP 404.', $result['error'] );
+		$this->assertStringNotContainsString( '<html', $result['error'] );
+	}
 }

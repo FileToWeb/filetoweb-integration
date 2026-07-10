@@ -13,6 +13,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class Api_Client {
 	/**
+	 * Verify the configured key and return its effective workspace context.
+	 *
+	 * @return array
+	 */
+	public static function get_auth_context() {
+		return self::request( 'GET', '/auth/context', null );
+	}
+
+	/**
 	 * Upsert a FileToWeb document.
 	 *
 	 * @param array $payload API payload.
@@ -148,7 +157,7 @@ class Api_Client {
 		$decoded  = json_decode( $raw_body, true );
 
 		if ( $code < 200 || $code >= 300 ) {
-			return self::error( self::extract_error_message( $decoded, $raw_body ) );
+			return self::error( self::extract_error_message( $decoded, $raw_body, $code ) );
 		}
 
 		return array(
@@ -232,13 +241,20 @@ class Api_Client {
 	 *
 	 * @param mixed  $decoded Decoded JSON.
 	 * @param string $raw_body Raw body.
+	 * @param int    $status_code HTTP status code.
 	 * @return string
 	 */
-	private static function extract_error_message( $decoded, $raw_body ) {
+	private static function extract_error_message( $decoded, $raw_body, $status_code ) {
 		if ( is_array( $decoded ) && isset( $decoded['error'] ) && is_array( $decoded['error'] ) && isset( $decoded['error']['message'] ) ) {
 			return $decoded['error']['message'];
 		}
 
-		return $raw_body ? $raw_body : __( 'FileToWeb API request failed.', 'filetoweb-integration' );
+		$raw_body = trim( (string) $raw_body );
+
+		if ( $raw_body && $raw_body === wp_strip_all_tags( $raw_body ) && strlen( $raw_body ) <= 300 ) {
+			return $raw_body;
+		}
+
+		return sprintf( __( 'FileToWeb API returned HTTP %d.', 'filetoweb-integration' ), absint( $status_code ) );
 	}
 }

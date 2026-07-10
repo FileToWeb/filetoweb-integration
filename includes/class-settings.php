@@ -53,6 +53,18 @@ class Settings {
 	 * Register the plugin-owned settings row.
 	 */
 	public static function register_settings() {
+		global $wp_version;
+
+		if ( version_compare( $wp_version, '4.7', '<' ) ) {
+			register_setting(
+				'filetoweb_integration',
+				self::OPTION_SETTINGS,
+				array( __CLASS__, 'sanitize_settings' )
+			);
+
+			return;
+		}
+
 		register_setting(
 			'filetoweb_integration',
 			self::OPTION_SETTINGS,

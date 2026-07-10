@@ -42,6 +42,8 @@ class SettingsTest extends TestCase {
 	}
 
 	public function test_registers_one_settings_option_row(): void {
+		$GLOBALS['wp_version'] = '6.8';
+
 		Functions\expect( 'register_setting' )
 			->once()
 			->with(
@@ -54,6 +56,21 @@ class SettingsTest extends TestCase {
 							&& array( Settings::class, 'sanitize_settings' ) === $args['sanitize_callback'];
 					}
 				)
+			);
+
+		Settings::register_settings();
+		$this->addToAssertionCount( 1 );
+	}
+
+	public function test_legacy_wordpress_registers_the_same_sanitizer_callback(): void {
+		$GLOBALS['wp_version'] = '4.6.1';
+
+		Functions\expect( 'register_setting' )
+			->once()
+			->with(
+				'filetoweb_integration',
+				Settings::OPTION_SETTINGS,
+				array( Settings::class, 'sanitize_settings' )
 			);
 
 		Settings::register_settings();

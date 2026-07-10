@@ -25,6 +25,7 @@ class Admin {
 		add_action( 'admin_post_filetoweb_integration_poll_now', array( __CLASS__, 'handle_poll_now' ) );
 		add_action( 'admin_post_filetoweb_integration_backfill', array( __CLASS__, 'handle_backfill' ) );
 		add_action( 'admin_post_filetoweb_integration_poll_pending', array( __CLASS__, 'handle_poll_pending' ) );
+		add_action( 'admin_post_filetoweb_integration_test_connection', array( __CLASS__, 'handle_test_connection' ) );
 		add_filter( 'manage_document_posts_columns', array( __CLASS__, 'add_document_status_column' ) );
 		add_action( 'manage_document_posts_custom_column', array( __CLASS__, 'render_document_status_column' ), 10, 2 );
 		add_filter( 'post_row_actions', array( __CLASS__, 'add_document_row_actions' ), 10, 2 );
@@ -149,6 +150,15 @@ class Admin {
 					</tr>
 				</table>
 				<?php submit_button( __( 'Save FileToWeb settings', 'filetoweb-integration' ) ); ?>
+			</form>
+
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top:8px;">
+				<?php wp_nonce_field( 'filetoweb_integration_test_connection' ); ?>
+				<input type="hidden" name="action" value="filetoweb_integration_test_connection" />
+				<?php submit_button( __( 'Test connection', 'filetoweb-integration' ), 'secondary', 'submit', false, Settings::api_key() ? array() : array( 'disabled' => 'disabled' ) ); ?>
+				<?php if ( ! Settings::api_key() ) : ?>
+					<span class="description" style="margin-left:8px;"><?php esc_html_e( 'Save an API key before testing the connection.', 'filetoweb-integration' ); ?></span>
+				<?php endif; ?>
 			</form>
 
 			<hr />
@@ -404,16 +414,86 @@ class Admin {
 	}
 
 	/**
+	 * Verify the stored API key against FileToWeb.
+	 */
+	public static function handle_test_connection() {
+		if ( ! self::can_manage_settings() ) {
+			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
+		}
+
+		check_admin_referer( 'filetoweb_integration_test_connection' );
+
+		$result = Api_Client::get_auth_context();
+		$notice = self::format_connection_notice( $result );
+
+		self::set_connection_notice( $notice['type'], $notice['message'] );
+		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG ) );
+		exit;
+	}
+
+	/**
+	 * Convert an API context response into a safe admin notice.
+	 *
+	 * @param array $result API client result.
+	 * @return array
+	 */
+	public static function format_connection_notice( $result ) {
+		if ( empty( $result['ok'] ) ) {
+			$error = isset( $result['error'] ) ? sanitize_text_field( $result['error'] ) : __( 'Unknown connection error.', 'filetoweb-integration' );
+
+			return array(
+				'type'    => 'error',
+				'message' => sprintf( __( 'FileToWeb connection failed: %s', 'filetoweb-integration' ), $error ),
+			);
+		}
+
+		$body         = isset( $result['body'] ) && is_array( $result['body'] ) ? $result['body'] : array();
+		$account      = isset( $body['account'] ) && is_array( $body['account'] ) ? $body['account'] : array();
+		$project      = isset( $body['project'] ) && is_array( $body['project'] ) ? $body['project'] : array();
+		$scopes       = isset( $body['scopes'] ) && is_array( $body['scopes'] ) ? array_map( 'sanitize_text_field', $body['scopes'] ) : array();
+		$account_name = isset( $account['name'] ) ? sanitize_text_field( $account['name'] ) : '';
+		$project_name = isset( $project['name'] ) ? sanitize_text_field( $project['name'] ) : '';
+
+		if ( '' === $account_name || '' === $project_name ) {
+			return array(
+				'type'    => 'error',
+				'message' => __( 'FileToWeb connected, but the workspace or folder details were unavailable.', 'filetoweb-integration' ),
+			);
+		}
+
+		if ( ! in_array( 'documents:read', $scopes, true ) || ! in_array( 'documents:write', $scopes, true ) ) {
+			return array(
+				'type'    => 'error',
+				'message' => __( 'FileToWeb connected, but this API key does not have the document read and write permissions required by the plugin.', 'filetoweb-integration' ),
+			);
+		}
+
+		return array(
+			'type'    => 'success',
+			'message' => sprintf(
+				__( 'Connected to FileToWeb workspace “%1$s”, folder “%2$s”.', 'filetoweb-integration' ),
+				$account_name,
+				$project_name
+			),
+		);
+	}
+
+	/**
 	 * Render transient-backed admin notice.
 	 */
 	public static function render_admin_notice() {
 		$notice = self::get_notice();
 
-		if ( ! $notice ) {
-			return;
+		if ( $notice ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html( $notice ) . '</p></div>';
 		}
 
-		echo '<div class="notice notice-success is-dismissible"><p>' . esc_html( $notice ) . '</p></div>';
+		$connection_notice = self::get_connection_notice();
+
+		if ( $connection_notice ) {
+			$class = 'error' === $connection_notice['type'] ? 'notice-error' : 'notice-success';
+			echo '<div class="notice ' . esc_attr( $class ) . ' is-dismissible"><p>' . esc_html( $connection_notice['message'] ) . '</p></div>';
+		}
 	}
 
 	/**
@@ -622,5 +702,54 @@ class Admin {
 	 */
 	private static function notice_key() {
 		return 'filetoweb_integration_notice_' . absint( get_current_user_id() );
+	}
+
+	/**
+	 * Store a one-time connection notice for the current user.
+	 *
+	 * @param string $type Notice type.
+	 * @param string $message Notice message.
+	 */
+	private static function set_connection_notice( $type, $message ) {
+		set_transient(
+			self::connection_notice_key(),
+			array(
+				'type'    => 'error' === $type ? 'error' : 'success',
+				'message' => sanitize_text_field( $message ),
+			),
+			60
+		);
+	}
+
+	/**
+	 * Read and clear the current user's connection notice.
+	 *
+	 * @return array|null
+	 */
+	private static function get_connection_notice() {
+		$key    = self::connection_notice_key();
+		$notice = get_transient( $key );
+
+		if ( $notice ) {
+			delete_transient( $key );
+		}
+
+		if ( ! is_array( $notice ) || empty( $notice['message'] ) ) {
+			return null;
+		}
+
+		return array(
+			'type'    => isset( $notice['type'] ) && 'error' === $notice['type'] ? 'error' : 'success',
+			'message' => sanitize_text_field( $notice['message'] ),
+		);
+	}
+
+	/**
+	 * Current-user connection notice key.
+	 *
+	 * @return string
+	 */
+	private static function connection_notice_key() {
+		return 'filetoweb_integration_connection_notice_' . absint( get_current_user_id() );
 	}
 }

@@ -123,4 +123,50 @@ class AdminStatusTest extends TestCase {
 		$this->assertStringNotContainsString( 'filetoweb-processing-help', $ready );
 		$this->assertStringNotContainsString( 'filetoweb-processing-help', $failed );
 	}
+
+	public function test_connection_notice_names_the_workspace_and_folder(): void {
+		$notice = Admin::format_connection_notice(
+			array(
+				'ok'   => true,
+				'body' => array(
+					'account' => array( 'name' => 'Delaware County' ),
+					'project' => array( 'name' => 'Website PDFs' ),
+					'scopes'  => array( 'documents:read', 'documents:write' ),
+				),
+			)
+		);
+
+		$this->assertSame( 'success', $notice['type'] );
+		$this->assertStringContainsString( 'Delaware County', $notice['message'] );
+		$this->assertStringContainsString( 'Website PDFs', $notice['message'] );
+	}
+
+	public function test_connection_notice_reports_api_errors_without_a_key(): void {
+		$notice = Admin::format_connection_notice(
+			array(
+				'ok'    => false,
+				'error' => 'Invalid API key',
+			)
+		);
+
+		$this->assertSame( 'error', $notice['type'] );
+		$this->assertStringContainsString( 'Invalid API key', $notice['message'] );
+		$this->assertStringNotContainsString( 'ftw_api_', $notice['message'] );
+	}
+
+	public function test_connection_notice_rejects_a_read_only_key(): void {
+		$notice = Admin::format_connection_notice(
+			array(
+				'ok'   => true,
+				'body' => array(
+					'account' => array( 'name' => 'Delaware County' ),
+					'project' => array( 'name' => 'Website PDFs' ),
+					'scopes'  => array( 'documents:read' ),
+				),
+			)
+		);
+
+		$this->assertSame( 'error', $notice['type'] );
+		$this->assertStringContainsString( 'read and write permissions', $notice['message'] );
+	}
 }

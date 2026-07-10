@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.31
+
+- Adds a nonce-protected Test connection action to the FileToWeb settings page.
+- Confirms the connected FileToWeb workspace and folder without displaying the stored API key.
+- Verifies that the configured key has the document read and write permissions required for conversion.
+- Keeps Settings API registration compatible with ProudCity's legacy local WordPress image.
+- Keeps non-JSON API failures concise instead of rendering upstream HTML in WordPress notices.
+
 ## 0.1.30
 
 - Adds admin processing-time help next to Processing statuses for attachments, Proud Documents, Meetings, and PDF-to-Page conversions.
