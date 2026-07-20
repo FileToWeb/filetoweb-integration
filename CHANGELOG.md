@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.32
+
+- Publishes sanitized, fingerprinted HTML preview bundles and provider-neutral `_proud_html_preview` records with complete artifact manifests for ProudCity Documents and Meeting materials.
+- Mirrors supported images, fonts, stylesheets, CSS URLs, and srcset assets into WordPress uploads before atomically publishing each record.
+- Synchronizes bundle files through WP Stateless's non-media hook when available, without requiring WP Stateless.
+- Migrates existing local HTML caches to the durable preview contract without reconverting unchanged PDFs.
+- Preserves completed previews on deactivation, disables them through the explicit public-replacement setting, and removes FileToWeb records/artifacts on uninstall.
+- Queues remote non-media artifacts for provider-neutral verified deletion when supported ProudCity core is present during uninstall.
+
 ## 0.1.31
 
 - Adds a nonce-protected Test connection action to the FileToWeb settings page.

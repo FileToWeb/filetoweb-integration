@@ -24,6 +24,7 @@ class LocalHtmlTest extends TestCase {
 				Document_State::META_HTML_URL           => 'https://filetoweb.com/d/demo/1',
 				Document_State::META_CONTINUOUS_URL     => 'https://filetoweb.com/d/demo/continuous',
 				Document_State::META_SOURCE_FINGERPRINT => 'fingerprint-123',
+				Document_State::META_ORIGINAL_URL        => 'https://example.test/wp-content/uploads/agenda.pdf',
 			),
 		);
 
@@ -48,6 +49,17 @@ class LocalHtmlTest extends TestCase {
 				return rtrim( (string) $value, '/' ) . '/';
 			}
 		);
+		Functions\when( 'untrailingslashit' )->alias(
+			function ( $value ) {
+				return rtrim( (string) $value, '/' );
+			}
+		);
+		Functions\when( 'wp_normalize_path' )->alias(
+			function ( $value ) {
+				return str_replace( '\\', '/', (string) $value );
+			}
+		);
+		Functions\when( 'has_action' )->justReturn( false );
 		Functions\when( 'wp_upload_dir' )->alias(
 			function () {
 				return array(
@@ -92,6 +104,10 @@ class LocalHtmlTest extends TestCase {
 		);
 		Functions\when( 'get_option' )->alias(
 			function ( $name, $default = false ) {
+				if ( \FileToWeb\Integration\Proud_HTML_Preview::OPTION_PROVIDERS === $name ) {
+					return array( 'filetoweb' => true );
+				}
+
 				if ( Settings::OPTION_SETTINGS === $name ) {
 					return array(
 						Settings::KEY_ENABLED       => '1',
@@ -174,8 +190,10 @@ class LocalHtmlTest extends TestCase {
 		$this->assertStringContainsString( 'data-filetoweb-local-viewer', $html );
 		$this->assertStringContainsString( 'Converted content', $html );
 		$this->assertStringNotContainsString( 'src="/d/demo/assets/page-1/logo.png"', $html );
-		$this->assertStringContainsString( 'src="https://example.test/wp-content/uploads/filetoweb-integration/assets/123-fingerprint123/page-1/logo.png"', $html );
-		$this->assertFileExists( $this->uploads_dir . '/filetoweb-integration/assets/123-fingerprint123/page-1/logo.png' );
+		$this->assertStringContainsString( 'src="https://example.test/wp-content/uploads/filetoweb-integration/previews/123/fingerprint123/assets/', $html );
+		$assets = glob( $this->uploads_dir . '/filetoweb-integration/previews/123/fingerprint123/assets/*.png' );
+		$this->assertCount( 1, $assets );
+		$this->assertFileExists( $assets[0] );
 		$this->assertSame(
 			array(
 				'https://filetoweb.com/d/demo/continuous?chrome=0',
@@ -184,6 +202,8 @@ class LocalHtmlTest extends TestCase {
 			$this->requests
 		);
 		$this->assertSame( 'https://filetoweb.com/d/demo/continuous?chrome=0', $this->meta[123][ Document_State::META_LOCAL_HTML_SOURCE_URL ] );
+		$this->assertSame( 'filetoweb', $this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ]['provider'] );
+		$this->assertSame( 'https://example.test/wp-content/uploads/agenda.pdf', $this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ]['source_url'] );
 
 		$this->assertSame(
 			'https://example.test/?filetoweb_local_html=123&ftw_token=token-123',

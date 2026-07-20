@@ -76,6 +76,9 @@ class Local_HTML {
 		}
 
 		if ( self::has_current_local_html( $post_id, $viewer_url, $fingerprint ) ) {
+			if ( get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true ) ) {
+				Proud_HTML_Preview::migrate_existing_post( $post_id );
+			}
 			Native_Page::maybe_auto_create_draft( $post_id );
 			return 'current';
 		}
@@ -94,22 +97,32 @@ class Local_HTML {
 			return 'failed';
 		}
 
-		$html = self::mirror_filetoweb_assets( $post_id, $fingerprint, $viewer_url, $html );
+		$source_url = get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
 
-		$path = self::write_local_file( $post_id, $fingerprint, $html );
+		if ( $source_url ) {
+			$record = Proud_HTML_Preview::publish( $post_id, $html, $viewer_url, $source_url, $fingerprint );
 
-		if ( ! $path ) {
-			update_post_meta( $post_id, Document_State::META_LAST_ERROR, __( 'FileToWeb local HTML cache could not be written.', 'filetoweb-integration' ) );
-			return 'failed';
+			if ( ! $record ) {
+				update_post_meta( $post_id, Document_State::META_LAST_ERROR, __( 'FileToWeb local HTML cache could not be written.', 'filetoweb-integration' ) );
+				return 'failed';
+			}
+		} else {
+			// PDF-to-Page uploads intentionally retain no public source PDF and
+			// use the local cache only as an intermediate draft-page artifact.
+			$html = self::mirror_filetoweb_assets( $post_id, $fingerprint, $viewer_url, $html );
+			$path = self::write_local_file( $post_id, $fingerprint, $html );
+
+			if ( ! $path ) {
+				update_post_meta( $post_id, Document_State::META_LAST_ERROR, __( 'FileToWeb local HTML cache could not be written.', 'filetoweb-integration' ) );
+				return 'failed';
+			}
+
+			update_post_meta( $post_id, Document_State::META_LOCAL_HTML_PATH, $path );
+			update_post_meta( $post_id, Document_State::META_LOCAL_HTML_TOKEN, wp_generate_password( 32, false, false ) );
+			update_post_meta( $post_id, Document_State::META_LOCAL_HTML_SOURCE_URL, $viewer_url );
+			update_post_meta( $post_id, Document_State::META_LOCAL_HTML_SOURCE_FP, $fingerprint );
+			update_post_meta( $post_id, Document_State::META_LOCAL_HTML_UPDATED_AT, current_time( 'mysql', true ) );
 		}
-
-		$token = wp_generate_password( 32, false, false );
-
-		update_post_meta( $post_id, Document_State::META_LOCAL_HTML_PATH, $path );
-		update_post_meta( $post_id, Document_State::META_LOCAL_HTML_TOKEN, $token );
-		update_post_meta( $post_id, Document_State::META_LOCAL_HTML_SOURCE_URL, $viewer_url );
-		update_post_meta( $post_id, Document_State::META_LOCAL_HTML_SOURCE_FP, $fingerprint );
-		update_post_meta( $post_id, Document_State::META_LOCAL_HTML_UPDATED_AT, current_time( 'mysql', true ) );
 
 		Native_Page::maybe_auto_create_draft( $post_id );
 
@@ -127,6 +140,15 @@ class Local_HTML {
 
 		if ( ! self::has_local_html( $post_id ) ) {
 			return '';
+		}
+
+		if ( function_exists( '\\Proud\\Core\\proud_html_preview_url' ) && Proud_HTML_Preview::record_for_post( $post_id ) ) {
+			$source_url = get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
+			$durable_url = call_user_func( '\\Proud\\Core\\proud_html_preview_url', $post_id, $source_url );
+
+			if ( $durable_url ) {
+				return $durable_url;
+			}
 		}
 
 		$token = get_post_meta( $post_id, Document_State::META_LOCAL_HTML_TOKEN, true );

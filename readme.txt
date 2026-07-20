@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.31
+Stable tag: 0.1.32
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,6 +25,8 @@ Features:
 * WP-Cron polling for pending conversions and intentionally scheduled upload retries.
 * Admin processing-time help on pending conversion statuses so users know larger PDFs can take several minutes.
 * Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML instead of public FileToWeb URLs.
+* Durable provider-neutral preview records with complete artifact manifests for supported ProudCity Document and Meeting templates, with sanitized fingerprinted bundles under WordPress uploads.
+* Fail-closed preview publication: if WordPress cannot parse and sanitize generated HTML, the original PDF remains in use.
 * ProudCity Document preview replacement while preserving the original PDF download link.
 * Optional, opt-in ProudCity Document EPUB download link for ready PDF-backed documents.
 * ProudCity Meeting material support for Agenda, Agenda Packet, and Minutes PDFs, with per-material sync, upload-field controls on supported ProudCity builds, and WordPress-local preview replacement.
@@ -53,9 +55,9 @@ No. Original WordPress media files remain in place. The plugin stores FileToWeb 
 
 Yes. The settings page includes a bounded Backfill batch action. Administrators control the batch size so migration can be paced against site performance and FileToWeb credit usage.
 
-= Can the integration be disabled? =
+= What happens if the plugin is deactivated, disabled, or uninstalled? =
 
-Yes. Disable the plugin or turn off the Enabled setting. When disabled, sync, polling, backfill, and public replacement stop, and original PDF links remain in use.
+On ProudCity releases that support the provider-neutral preview contract, deactivation stops sync and polling but preserves completed Proud Document and Meeting HTML previews. Explicitly turning off public replacement disables the FileToWeb provider and restores the original PDF preview. Uninstalling removes FileToWeb preview records and artifacts; supported ProudCity core releases retry remote WP Stateless deletion until storage confirms removal. Generic links in arbitrary page and widget content require the active plugin.
 
 = Where is the API key stored? =
 
@@ -74,6 +76,14 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.32 =
+
+* Publishes sanitized, fingerprinted HTML preview bundles and provider-neutral `_proud_html_preview` records for ProudCity Documents and Meeting materials.
+* Mirrors supported images, fonts, stylesheets, CSS URLs, and srcset assets into WordPress uploads before atomically publishing each record.
+* Synchronizes bundle files through WP Stateless's non-media hook when available, without requiring WP Stateless.
+* Migrates existing local HTML caches to the durable preview contract without reconverting unchanged PDFs.
+* Preserves completed previews on deactivation, disables them through the explicit public-replacement setting, and removes FileToWeb records/artifacts on uninstall.
 
 = 0.1.31 =
 

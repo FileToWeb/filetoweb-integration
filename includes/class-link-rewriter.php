@@ -68,7 +68,10 @@ class Link_Rewriter {
 	 * @return string
 	 */
 	public static function filter_attachment_url( $url, $attachment_id ) {
-		if ( Source_Resolver::is_reading_original_source() || ! self::is_public_replacement_context() ) {
+		$proudcity_is_resolving_source = function_exists( '\\Proud\\Core\\proud_html_preview_is_resolving_source' )
+			&& call_user_func( '\\Proud\\Core\\proud_html_preview_is_resolving_source' );
+
+		if ( Source_Resolver::is_reading_original_source() || $proudcity_is_resolving_source || ! self::is_public_replacement_context() ) {
 			return $url;
 		}
 

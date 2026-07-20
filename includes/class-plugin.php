@@ -23,6 +23,7 @@ class Plugin {
 		);
 
 		Settings::init();
+		Proud_HTML_Preview::init();
 		Sync::init();
 			Cron::init();
 			Admin::init();
@@ -43,6 +44,7 @@ class Plugin {
 	 * Activation hook.
 	 */
 	public static function activate() {
+		Proud_HTML_Preview::activate();
 		Cron::schedule();
 	}
 

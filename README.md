@@ -10,7 +10,8 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - ProudCity Meeting Agenda, Agenda Packet, and Minutes attachments sync independently when the Meeting is saved, and supported ProudCity builds can show inline sync controls below those upload fields.
 - ProudCity Document EPUB downloads are available as an opt-in setting and are off by default.
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
-- Ready FileToWeb output is cached into WordPress-local HTML during sync/poll/admin actions, not during citizen page loads.
+- Ready FileToWeb output is published as a sanitized, fingerprinted bundle under WordPress uploads during sync/poll/admin actions, not during citizen page loads.
+- Each completed bundle publishes a provider-neutral `_proud_html_preview` record with a complete artifact manifest that updated ProudCity core/theme releases can serve after this plugin is deactivated and clean up after uninstall.
 - Public front-end PDF links are replaced with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.
 - ProudCity Meeting preview iframes can show the WordPress-local HTML copy while keeping Download buttons and literal material links pointed at the original PDF.
 - Add-on plugins can override the ready public replacement URL through `filetoweb_integration_ready_replacement_url`.
@@ -50,6 +51,8 @@ The plugin rewrites:
 
 The original WordPress file remains intact. Public rendering does not make a live request to FileToWeb; if the WordPress-local copy is unavailable, the original PDF URL is left in place.
 
+On ProudCity releases that support `_proud_html_preview`, completed Proud Document and Meeting preview bundles remain available after plugin deactivation. Turning off **Replace public PDF links with generated HTML** explicitly disables the FileToWeb preview provider and restores PDF previews. Uninstalling removes FileToWeb preview records and artifacts; supported ProudCity core releases retain a provider-neutral queue until remote WP Stateless deletion is verified. Generic links in arbitrary page/widget content still require the active plugin because those replacements are performed at render time.
+
 ## Security Notes
 
 - API base URL must be HTTPS and on the allowed FileToWeb API host list.
@@ -57,6 +60,9 @@ The original WordPress file remains intact. Public rendering does not make a liv
 - Source URLs are checked for public HTTP/HTTPS hosts before HEAD requests or API submission.
 - FileToWeb response fields are explicitly allowlisted and sanitized before storage.
 - Result/editor URLs must use trusted FileToWeb hosts and are shown to admins, not used as the default public runtime URL.
+- Published preview bundles remove scripts, event handlers, unsafe elements/schemes, and mirror supported image, font, and stylesheet assets into WordPress uploads.
+- Preview publication fails closed to the original PDF if WordPress cannot parse and sanitize the generated HTML.
+- ProudCity's provider-neutral endpoint validates the provider, token, source identity, artifact path, and trusted uploads/GCS URL before serving a bundle with a restrictive Content Security Policy.
 - Admin actions use nonces and capability checks.
 - API settings default to the `activate_plugins` capability; PDF sync actions default to `edit_others_posts`; both can be filtered.
 - No global output buffering is used for public rewriting.

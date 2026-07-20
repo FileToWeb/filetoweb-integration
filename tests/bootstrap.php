@@ -17,11 +17,13 @@ if ( ! class_exists( 'WP_Widget' ) ) {
 }
 
 require_once __DIR__ . '/../vendor/autoload.php';
+require_once __DIR__ . '/proud-core-stubs.php';
 
 require_once __DIR__ . '/../includes/class-security.php';
 require_once __DIR__ . '/../includes/class-settings.php';
 require_once __DIR__ . '/../includes/class-capabilities.php';
 require_once __DIR__ . '/../includes/class-document-state.php';
+require_once __DIR__ . '/../includes/class-proud-html-preview.php';
 require_once __DIR__ . '/../includes/class-api-client.php';
 require_once __DIR__ . '/../includes/class-source-resolver.php';
 require_once __DIR__ . '/../includes/class-sync.php';
