@@ -360,8 +360,14 @@ class Meeting_Materials {
 		$local_url   = Local_HTML::local_url( $attachment_id );
 		?>
 		<div class="filetoweb-integration-inline-meeting-sync" style="clear:both;display:block;margin:6px 0 0 150px;">
-			<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
-			<?php if ( $document_id ) : ?>
+			<?php if ( 'failed' === Security::sanitize_status( $status ) && $document_id ) : ?>
+				<?php if ( self::can_retry_attachment( $attachment_id ) ) : ?>
+					<a class="button button-small button-primary" href="<?php echo esc_url( self::retry_processing_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Retry processing', 'filetoweb-integration' ); ?></a>
+				<?php endif; ?>
+			<?php else : ?>
+				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
+			<?php endif; ?>
+			<?php if ( $document_id && 'failed' !== Security::sanitize_status( $status ) ) : ?>
 				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Poll status', 'filetoweb-integration' ); ?></a>
 			<?php endif; ?>
 			<span style="display:inline-block;margin-left:6px;vertical-align:middle;"><?php echo self::status_badge( $status ); ?></span>
@@ -462,8 +468,14 @@ class Meeting_Materials {
 			</td>
 			<td>
 				<?php if ( Settings::configured() && self::can_manage_meeting( $meeting_id ) && $attachment_id && $is_pdf ) : ?>
-					<a class="button" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
-					<?php if ( $document_id ) : ?>
+					<?php if ( 'failed' === Security::sanitize_status( $status ) && $document_id ) : ?>
+						<?php if ( self::can_retry_attachment( $attachment_id ) ) : ?>
+							<a class="button button-primary" href="<?php echo esc_url( self::retry_processing_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Retry processing', 'filetoweb-integration' ); ?></a>
+						<?php endif; ?>
+					<?php else : ?>
+						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
+					<?php endif; ?>
+					<?php if ( $document_id && 'failed' !== Security::sanitize_status( $status ) ) : ?>
 						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Poll status', 'filetoweb-integration' ); ?></a>
 					<?php endif; ?>
 				<?php else : ?>
@@ -514,6 +526,18 @@ class Meeting_Materials {
 	}
 
 	/**
+	 * Match the authorization enforced by the generic attachment retry action.
+	 *
+	 * @param int $attachment_id Attachment ID.
+	 * @return bool
+	 */
+	private static function can_retry_attachment( $attachment_id ) {
+		$attachment_id = absint( $attachment_id );
+
+		return $attachment_id && Capabilities::current_user_can_sync( $attachment_id );
+	}
+
+	/**
 	 * Build a nonce-protected meeting admin action URL.
 	 *
 	 * @param string $action Action key.
@@ -537,6 +561,27 @@ class Meeting_Materials {
 		return wp_nonce_url(
 			admin_url( 'admin-post.php?action=' . $admin_action . '&meeting_id=' . $meeting_id . '&slot=' . rawurlencode( $slot ) ),
 			'filetoweb_integration_' . $action . '_' . $meeting_id . '_' . $slot
+		);
+	}
+
+	/**
+	 * Build the generic attachment retry URL used by the main admin handler.
+	 *
+	 * @param int $attachment_id Attachment ID.
+	 * @return string
+	 */
+	private static function retry_processing_url( $attachment_id ) {
+		$attachment_id = absint( $attachment_id );
+
+		return wp_nonce_url(
+			add_query_arg(
+				array(
+					'action'  => 'filetoweb_integration_retry_processing',
+					'post_id' => $attachment_id,
+				),
+				admin_url( 'admin-post.php' )
+			),
+			'filetoweb_integration_retry_processing_' . $attachment_id
 		);
 	}
 

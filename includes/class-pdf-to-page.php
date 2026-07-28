@@ -15,6 +15,7 @@ class PDF_To_Page {
 	const PAGE_SLUG             = 'filetoweb-pdf-to-page';
 	const ACTION_UPLOAD         = 'filetoweb_integration_pdf_to_page_upload';
 	const ACTION_POLL_JOB       = 'filetoweb_integration_pdf_to_page_poll_job';
+	const ACTION_RETRY_JOB      = 'filetoweb_integration_pdf_to_page_retry_job';
 	const ACTION_AJAX_POLL_JOBS = 'filetoweb_integration_pdf_to_page_poll_jobs';
 	const OPTION_JOBS           = 'filetoweb_integration_pdf_to_page_jobs';
 	const MAX_BYTES             = 104857600; // 100 MB.
@@ -27,6 +28,7 @@ class PDF_To_Page {
 		add_action( 'admin_menu', array( __CLASS__, 'add_pages_submenu' ) );
 		add_action( 'admin_post_' . self::ACTION_UPLOAD, array( __CLASS__, 'handle_upload' ) );
 		add_action( 'admin_post_' . self::ACTION_POLL_JOB, array( __CLASS__, 'handle_poll_job' ) );
+		add_action( 'admin_post_' . self::ACTION_RETRY_JOB, array( __CLASS__, 'handle_retry_job' ) );
 		add_action( 'wp_ajax_' . self::ACTION_AJAX_POLL_JOBS, array( __CLASS__, 'handle_ajax_poll_jobs' ) );
 		add_action( 'filetoweb_integration_after_poll_post', array( __CLASS__, 'maybe_update_ready_page' ), 30, 2 );
 	}
@@ -153,6 +155,40 @@ class PDF_To_Page {
 	}
 
 	/**
+	 * Handle an explicit retry for a failed PDF-to-Page conversion.
+	 */
+	public static function handle_retry_job() {
+		if ( ! Capabilities::current_user_can_manage_native_page() ) {
+			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
+		}
+
+		$job_id = isset( $_GET['job_id'] ) ? sanitize_key( wp_unslash( $_GET['job_id'] ) ) : '';
+		check_admin_referer( self::ACTION_RETRY_JOB . '_' . $job_id );
+
+		$job         = self::job( $job_id );
+		$document_id = ! empty( $job['document_id'] ) ? Security::sanitize_identifier( $job['document_id'] ) : '';
+		$response    = $document_id ? Api_Client::reprocess_document( $document_id ) : array(
+			'ok'         => false,
+			'error'      => __( 'FileToWeb document ID is missing.', 'filetoweb-integration' ),
+			'error_code' => 'missing_document',
+			'reference'  => '',
+			'retryable'  => false,
+		);
+
+		if ( ! empty( $response['ok'] ) && ! empty( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
+			$document = $response['body']['document'];
+			self::write_job_from_api( $job_id, $document, self::source_for_job( $job ) );
+			self::maybe_complete_job( $job_id, $document );
+			Admin::set_notice( __( 'FileToWeb processing has been queued again.', 'filetoweb-integration' ) );
+		} else {
+			self::mark_job_failed( $job_id, $response );
+			Admin::set_notice( __( 'FileToWeb could not queue the retry. Review the error and try again.', 'filetoweb-integration' ) );
+		}
+
+		self::redirect_to_admin_page();
+	}
+
+	/**
 	 * Poll pending PDF-to-Page jobs from the open admin screen.
 	 */
 	public static function handle_ajax_poll_jobs() {
@@ -238,7 +274,7 @@ class PDF_To_Page {
 		);
 
 		if ( ! $response['ok'] || empty( $response['body']['document'] ) || ! is_array( $response['body']['document'] ) ) {
-			self::mark_job_failed( $job_id, $response['error'] );
+			self::mark_job_failed( $job_id, $response );
 			self::delete_temp_file( $file['tmp_name'] );
 			return self::workflow_error( sprintf( __( 'FileToWeb upload setup failed: %s', 'filetoweb-integration' ), $response['error'] ), $job_id, 0 );
 		}
@@ -255,7 +291,7 @@ class PDF_To_Page {
 		$upload_response = Api_Client::upload_file( $document['upload'], $file['tmp_name'] );
 
 		if ( ! $upload_response['ok'] ) {
-			self::mark_job_failed( $job_id, $upload_response['error'] );
+			self::mark_job_failed( $job_id, $upload_response );
 			self::delete_temp_file( $file['tmp_name'] );
 			return self::workflow_error( sprintf( __( 'FileToWeb upload failed: %s', 'filetoweb-integration' ), $upload_response['error'] ), $job_id, 0 );
 		}
@@ -269,7 +305,7 @@ class PDF_To_Page {
 		);
 
 		if ( ! $complete_response['ok'] || empty( $complete_response['body']['document'] ) || ! is_array( $complete_response['body']['document'] ) ) {
-			self::mark_job_failed( $job_id, $complete_response['error'] );
+			self::mark_job_failed( $job_id, $complete_response );
 			self::delete_temp_file( $file['tmp_name'] );
 			return self::workflow_error( sprintf( __( 'FileToWeb upload finalization failed: %s', 'filetoweb-integration' ), $complete_response['error'] ), $job_id, 0 );
 		}
@@ -632,14 +668,17 @@ class PDF_To_Page {
 
 		foreach ( self::jobs() as $job ) {
 			$rows[] = array(
-				'type'       => 'job',
-				'id'         => $job['id'],
-				'page_id'    => absint( $job['page_id'] ),
-				'title'      => self::title_from_filename( $job['filename'] ),
-				'filename'   => $job['filename'],
-				'status'     => Security::sanitize_status( $job['status'] ),
-				'updated_at' => $job['completed_at'] ? $job['completed_at'] : $job['updated_at'],
-				'error'      => $job['error'],
+				'type'            => 'job',
+				'id'              => $job['id'],
+				'page_id'         => absint( $job['page_id'] ),
+				'title'           => self::title_from_filename( $job['filename'] ),
+				'filename'        => $job['filename'],
+				'status'          => Security::sanitize_status( $job['status'] ),
+				'updated_at'      => $job['completed_at'] ? $job['completed_at'] : $job['updated_at'],
+				'error'           => $job['error'],
+				'error_reference' => $job['error_reference'],
+				'document_id'     => $job['document_id'],
+				'error_retryable' => ! empty( $job['error_retryable'] ),
 			);
 		}
 
@@ -661,14 +700,17 @@ class PDF_To_Page {
 			}
 
 			$rows[] = array(
-				'type'       => 'page',
-				'id'         => '',
-				'page_id'    => absint( $page->ID ),
-				'title'      => get_the_title( $page ),
-				'filename'   => get_post_meta( $page->ID, Document_State::META_PDF_TO_PAGE_FILENAME, true ),
-				'status'     => get_post_meta( $page->ID, Document_State::META_STATUS, true ),
-				'updated_at' => get_post_meta( $page->ID, Document_State::META_PDF_TO_PAGE_COMPLETED_AT, true ),
-				'error'      => get_post_meta( $page->ID, Document_State::META_LAST_ERROR, true ),
+				'type'            => 'page',
+				'id'              => '',
+				'page_id'         => absint( $page->ID ),
+				'title'           => get_the_title( $page ),
+				'filename'        => get_post_meta( $page->ID, Document_State::META_PDF_TO_PAGE_FILENAME, true ),
+				'status'          => get_post_meta( $page->ID, Document_State::META_STATUS, true ),
+				'updated_at'      => get_post_meta( $page->ID, Document_State::META_PDF_TO_PAGE_COMPLETED_AT, true ),
+				'error'           => Security::sanitize_public_error( get_post_meta( $page->ID, Document_State::META_LAST_ERROR, true ) ),
+				'error_reference' => get_post_meta( $page->ID, Document_State::META_ERROR_REFERENCE, true ),
+				'document_id'     => get_post_meta( $page->ID, Document_State::META_DOCUMENT_ID, true ),
+				'error_retryable' => (bool) get_post_meta( $page->ID, Document_State::META_ERROR_RETRYABLE, true ),
 			);
 		}
 
@@ -739,12 +781,25 @@ class PDF_To_Page {
 			if ( $edit_url ) {
 				$actions[] = '<a class="button button-small" href="' . esc_url( $edit_url ) . '">' . esc_html__( 'Edit draft', 'filetoweb-integration' ) . '</a>';
 			}
-		} elseif ( 'job' === $row['type'] && ! empty( $row['id'] ) ) {
+		}
+
+		if (
+			'failed' === Security::sanitize_status( $row['status'] ) &&
+			! empty( $row['id'] ) &&
+			! empty( $row['document_id'] ) &&
+			! empty( $row['error_retryable'] )
+		) {
+			$actions[] = '<a class="button button-small button-primary" href="' . esc_url( self::retry_job_url( $row['id'] ) ) . '">' . esc_html__( 'Retry processing', 'filetoweb-integration' ) . '</a>';
+		} elseif ( ! $page_id && 'job' === $row['type'] && ! empty( $row['id'] ) ) {
 			$actions[] = '<a class="button button-small" href="' . esc_url( self::poll_job_url( $row['id'] ) ) . '">' . esc_html__( 'Poll status', 'filetoweb-integration' ) . '</a>';
 		}
 
 		if ( ! empty( $row['error'] ) ) {
-			$actions[] = '<span class="description">' . esc_html( $row['error'] ) . '</span>';
+			$actions[] = '<span class="description">' . esc_html( Security::sanitize_public_error( $row['error'] ) ) . '</span>';
+		}
+
+		if ( ! empty( $row['error_reference'] ) && preg_match( '/^FTW-[A-F0-9]{12}$/', (string) $row['error_reference'] ) ) {
+			$actions[] = '<span class="description">' . esc_html( sprintf( __( 'Support reference: %s', 'filetoweb-integration' ), $row['error_reference'] ) ) . '</span>';
 		}
 
 		return $actions ? implode( ' ', $actions ) : '&mdash;';
@@ -766,6 +821,25 @@ class PDF_To_Page {
 				admin_url( 'admin-post.php' )
 			),
 			self::ACTION_POLL_JOB . '_' . sanitize_key( $job_id )
+		);
+	}
+
+	/**
+	 * Build a retry URL for a failed PDF-to-Page job.
+	 *
+	 * @param string $job_id Job ID.
+	 * @return string
+	 */
+	private static function retry_job_url( $job_id ) {
+		return wp_nonce_url(
+			add_query_arg(
+				array(
+					'action' => self::ACTION_RETRY_JOB,
+					'job_id' => sanitize_key( $job_id ),
+				),
+				admin_url( 'admin-post.php' )
+			),
+			self::ACTION_RETRY_JOB . '_' . sanitize_key( $job_id )
 		);
 	}
 
@@ -1096,12 +1170,12 @@ class PDF_To_Page {
 			'editor_url'            => isset( $job['editor_url'] ) ? Security::sanitize_filetoweb_url( $job['editor_url'] ) : '',
 			'page_count'            => isset( $job['page_count'] ) ? absint( $job['page_count'] ) : 0,
 			'page_id'               => isset( $job['page_id'] ) ? absint( $job['page_id'] ) : 0,
-				'notify_email'          => isset( $job['notify_email'] ) ? sanitize_email( $job['notify_email'] ) : '',
-				'error'                 => isset( $job['error'] ) ? Security::sanitize_error( $job['error'] ) : '',
-				'error_code'            => isset( $job['error_code'] ) ? sanitize_key( $job['error_code'] ) : '',
-				'error_reference'       => isset( $job['error_reference'] ) && preg_match( '/^FTW-[A-F0-9]{12}$/', (string) $job['error_reference'] ) ? (string) $job['error_reference'] : '',
-				'error_retryable'       => ! empty( $job['error_retryable'] ),
-				'created_at'            => isset( $job['created_at'] ) ? sanitize_text_field( $job['created_at'] ) : '',
+			'notify_email'          => isset( $job['notify_email'] ) ? sanitize_email( $job['notify_email'] ) : '',
+			'error'                 => isset( $job['error'] ) ? Security::sanitize_public_error( $job['error'] ) : '',
+			'error_code'            => isset( $job['error_code'] ) ? sanitize_key( $job['error_code'] ) : '',
+			'error_reference'       => isset( $job['error_reference'] ) && preg_match( '/^FTW-[A-F0-9]{12}$/', (string) $job['error_reference'] ) ? (string) $job['error_reference'] : '',
+			'error_retryable'       => ! empty( $job['error_retryable'] ),
+			'created_at'            => isset( $job['created_at'] ) ? sanitize_text_field( $job['created_at'] ) : '',
 			'updated_at'            => isset( $job['updated_at'] ) ? sanitize_text_field( $job['updated_at'] ) : '',
 			'completed_at'          => isset( $job['completed_at'] ) ? sanitize_text_field( $job['completed_at'] ) : '',
 		);
@@ -1130,13 +1204,13 @@ class PDF_To_Page {
 		$job['html_url']              = isset( $document['html_url'] ) ? $document['html_url'] : $job['html_url'];
 		$job['continuous_url']        = isset( $document['continuous_url'] ) ? $document['continuous_url'] : $job['continuous_url'];
 		$job['editor_url']            = isset( $document['editor_url'] ) ? $document['editor_url'] : $job['editor_url'];
-			$job['page_count']            = isset( $document['page_count'] ) ? $document['page_count'] : $job['page_count'];
-			$job['error']                 = isset( $document['error'] ) ? $document['error'] : '';
-			$failure                      = isset( $document['failure'] ) && is_array( $document['failure'] ) ? $document['failure'] : array();
-			$job['error_code']            = isset( $failure['code'] ) ? $failure['code'] : '';
-			$job['error_reference']       = isset( $failure['reference'] ) ? $failure['reference'] : '';
-			$job['error_retryable']       = ! empty( $failure['retryable'] );
-			$job['updated_at']            = current_time( 'mysql', true );
+		$job['page_count']            = isset( $document['page_count'] ) ? $document['page_count'] : $job['page_count'];
+		$job['error']                 = isset( $document['error'] ) ? $document['error'] : '';
+		$failure                      = isset( $document['failure'] ) && is_array( $document['failure'] ) ? $document['failure'] : array();
+		$job['error_code']            = isset( $failure['code'] ) ? $failure['code'] : '';
+		$job['error_reference']       = isset( $failure['reference'] ) ? $failure['reference'] : '';
+		$job['error_retryable']       = ! empty( $failure['retryable'] );
+		$job['updated_at']            = current_time( 'mysql', true );
 
 		self::save_job( $job );
 
@@ -1147,48 +1221,48 @@ class PDF_To_Page {
 	 * Mark a job failed.
 	 *
 	 * @param string $job_id Job ID.
-	 * @param string $error Error.
+	 * @param array|string $response API response or fallback error.
 	 */
-		private static function mark_job_failed( $job_id, $response ) {
-			$job = self::job( $job_id );
+	private static function mark_job_failed( $job_id, $response ) {
+		$job = self::job( $job_id );
 
-			if ( empty( $job ) ) {
-				return;
-			}
-
-			$response               = is_array( $response ) ? $response : array( 'error' => $response );
-			$job['status']          = 'failed';
-			$job['error']           = isset( $response['error'] ) ? $response['error'] : '';
-			$job['error_code']      = isset( $response['error_code'] ) ? $response['error_code'] : '';
-			$job['error_reference'] = isset( $response['reference'] ) ? $response['reference'] : '';
-			$job['error_retryable'] = false;
-			$job['updated_at']      = current_time( 'mysql', true );
-
-			self::save_job( $job );
+		if ( empty( $job ) ) {
+			return;
 		}
 
-		/**
-		 * Keep a PDF-to-Page job pending after a temporary API failure.
-		 *
-		 * @param string $job_id Job ID.
-		 * @param array  $response API client response.
-		 */
-		private static function mark_job_pending_retry( $job_id, $response ) {
-			$job = self::job( $job_id );
+		$response               = is_array( $response ) ? $response : array( 'error' => $response );
+		$job['status']          = 'failed';
+		$job['error']           = isset( $response['error'] ) ? $response['error'] : '';
+		$job['error_code']      = isset( $response['error_code'] ) ? $response['error_code'] : '';
+		$job['error_reference'] = isset( $response['reference'] ) ? $response['reference'] : '';
+		$job['error_retryable'] = ! empty( $response['retryable'] );
+		$job['updated_at']      = current_time( 'mysql', true );
 
-			if ( empty( $job ) ) {
-				return;
-			}
+		self::save_job( $job );
+	}
 
-			$job['status']          = self::is_pending_status( $job['status'] ) ? $job['status'] : 'processing';
-			$job['error']           = isset( $response['error'] ) ? $response['error'] : '';
-			$job['error_code']      = isset( $response['error_code'] ) ? $response['error_code'] : '';
-			$job['error_reference'] = isset( $response['reference'] ) ? $response['reference'] : '';
-			$job['error_retryable'] = true;
-			$job['updated_at']      = current_time( 'mysql', true );
+	/**
+	 * Keep a PDF-to-Page job pending after a temporary API failure.
+	 *
+	 * @param string $job_id Job ID.
+	 * @param array  $response API client response.
+	 */
+	private static function mark_job_pending_retry( $job_id, $response ) {
+		$job = self::job( $job_id );
 
-			self::save_job( $job );
+		if ( empty( $job ) ) {
+			return;
 		}
+
+		$job['status']          = self::is_pending_status( $job['status'] ) ? $job['status'] : 'processing';
+		$job['error']           = isset( $response['error'] ) ? $response['error'] : '';
+		$job['error_code']      = isset( $response['error_code'] ) ? $response['error_code'] : '';
+		$job['error_reference'] = isset( $response['reference'] ) ? $response['reference'] : '';
+		$job['error_retryable'] = true;
+		$job['updated_at']      = current_time( 'mysql', true );
+
+		self::save_job( $job );
+	}
 
 	/**
 	 * Sanitize external ID without weakening the stable id format.

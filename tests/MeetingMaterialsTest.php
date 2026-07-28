@@ -134,6 +134,11 @@ class MeetingMaterialsTest extends TestCase {
 				return $url . '&_wpnonce=' . rawurlencode( $action );
 			}
 		);
+		Functions\when( 'add_query_arg' )->alias(
+			function ( $args, $url ) {
+				return $url . ( false === strpos( $url, '?' ) ? '?' : '&' ) . http_build_query( $args );
+			}
+		);
 		Functions\when( 'current_user_can' )->justReturn( true );
 		Functions\when( 'FileToWeb\Integration\gethostbynamel' )->alias(
 			function ( $host ) {
@@ -395,6 +400,83 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringContainsString( 'Processing', $output );
 		$this->assertStringContainsString( 'filetoweb-processing-help', $output );
 		$this->assertStringContainsString( 'up to 10 minutes', $output );
+	}
+
+	public function test_failed_meeting_material_renders_explicit_retry_action(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment' => 101,
+		);
+
+		$this->meeting_meta[101] = array(
+			Document_State::META_STATUS      => 'failed',
+			Document_State::META_DOCUMENT_ID => 'doc-101',
+		);
+
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__;
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'Retry processing', $output );
+		$this->assertStringContainsString( 'filetoweb_integration_retry_processing', $output );
+		$this->assertStringNotContainsString( 'Poll status', $output );
+		$this->assertStringNotContainsString( 'Sync this PDF', $output );
+	}
+
+	public function test_failed_meeting_material_hides_retry_without_attachment_permission(): void {
+		$this->meeting_meta[101] = array(
+			Document_State::META_STATUS      => 'failed',
+			Document_State::META_DOCUMENT_ID => 'doc-101',
+		);
+
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__;
+
+		Functions\when( 'current_user_can' )->alias(
+			function ( $capability, $post_id = 0 ) {
+				if ( 'edit_post' === $capability ) {
+					return 55 === absint( $post_id );
+				}
+
+				return true;
+			}
+		);
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringNotContainsString( 'Retry processing', $output );
+		$this->assertStringNotContainsString( 'Sync this PDF', $output );
 	}
 
 	public function test_meeting_material_metabox_renders_processing_time_help(): void {

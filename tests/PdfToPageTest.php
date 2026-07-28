@@ -56,6 +56,21 @@ class PdfToPageTest extends TestCase {
 		);
 		Functions\when( 'current_time' )->justReturn( '2026-06-09 12:00:00' );
 		Functions\when( 'home_url' )->justReturn( 'https://city.example' );
+		Functions\when( 'admin_url' )->alias(
+			function ( $path = '' ) {
+				return 'https://city.example/wp-admin/' . ltrim( $path, '/' );
+			}
+		);
+		Functions\when( 'add_query_arg' )->alias(
+			function ( $args, $url ) {
+				return $url . '?' . http_build_query( $args );
+			}
+		);
+		Functions\when( 'wp_nonce_url' )->alias(
+			function ( $url, $action ) {
+				return $url . '&_wpnonce=' . rawurlencode( $action );
+			}
+		);
 		Functions\when( 'apply_filters' )->alias(
 			function ( $tag, $value ) {
 				return $value;
@@ -156,6 +171,13 @@ class PdfToPageTest extends TestCase {
 			array(
 				'wp_ajax_' . PDF_To_Page::ACTION_AJAX_POLL_JOBS,
 				array( PDF_To_Page::class, 'handle_ajax_poll_jobs' ),
+			),
+			$hooks
+		);
+		$this->assertContains(
+			array(
+				'admin_post_' . PDF_To_Page::ACTION_RETRY_JOB,
+				array( PDF_To_Page::class, 'handle_retry_job' ),
 			),
 			$hooks
 		);
@@ -485,6 +507,59 @@ class PdfToPageTest extends TestCase {
 		$this->assertSame( 'processing', $job['status'] );
 		$this->assertSame( 'service_unavailable', $job['error_code'] );
 		$this->assertSame( 'FTW-ABCDEF123456', $job['error_reference'] );
+		$this->assertTrue( $job['error_retryable'] );
+	}
+
+	public function test_failed_pdf_to_page_job_renders_explicit_retry_action(): void {
+		$method = new \ReflectionMethod( PDF_To_Page::class, 'actions_cell' );
+
+		$html = $method->invoke(
+			null,
+			array(
+				'type'            => 'job',
+				'id'              => 'job-retry',
+				'page_id'         => 0,
+				'status'          => 'failed',
+				'document_id'     => 'doc-retry',
+				'error_retryable' => true,
+				'error'           => 'pdf_generator_v2 failed in Vertex.',
+				'error_reference' => 'FTW-A31C82F4D019',
+			)
+		);
+
+		$this->assertStringContainsString( 'Retry processing', $html );
+		$this->assertStringContainsString( PDF_To_Page::ACTION_RETRY_JOB, $html );
+		$this->assertStringNotContainsString( 'Poll status', $html );
+		$this->assertStringContainsString( 'Support reference: FTW-A31C82F4D019', $html );
+		$this->assertStringNotContainsString( 'pdf_generator', $html );
+		$this->assertStringNotContainsString( 'Vertex', $html );
+	}
+
+	public function test_failed_pdf_to_page_job_preserves_safe_failure_details(): void {
+		$this->options[ PDF_To_Page::OPTION_JOBS ] = array(
+			'job-failed' => array(
+				'id'          => 'job-failed',
+				'document_id' => 'doc-failed',
+				'status'      => 'processing',
+			),
+		);
+
+		$method = new \ReflectionMethod( PDF_To_Page::class, 'mark_job_failed' );
+		$method->invoke(
+			null,
+			'job-failed',
+			array(
+				'error'      => 'FileToWeb could not finish processing this PDF.',
+				'error_code' => 'processing_temporarily_unavailable',
+				'reference'  => 'FTW-A31C82F4D019',
+				'retryable'  => true,
+			)
+		);
+
+		$job = $this->options[ PDF_To_Page::OPTION_JOBS ]['job-failed'];
+		$this->assertSame( 'failed', $job['status'] );
+		$this->assertSame( 'processing_temporarily_unavailable', $job['error_code'] );
+		$this->assertSame( 'FTW-A31C82F4D019', $job['error_reference'] );
 		$this->assertTrue( $job['error_retryable'] );
 	}
 

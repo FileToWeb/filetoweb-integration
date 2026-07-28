@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.33
+Stable tag: 0.1.34
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.34 =
+
+* Adds explicit retry controls for failed Meeting materials and PDF-to-Page conversions.
+* Preserves customer-safe failure codes, support references, and retryability across every upload step.
 
 = 0.1.33 =
 
