@@ -23,6 +23,7 @@ class Admin {
 		add_action( 'add_meta_boxes', array( __CLASS__, 'add_meta_boxes' ) );
 		add_action( 'admin_post_filetoweb_integration_sync_now', array( __CLASS__, 'handle_sync_now' ) );
 		add_action( 'admin_post_filetoweb_integration_poll_now', array( __CLASS__, 'handle_poll_now' ) );
+		add_action( 'admin_post_filetoweb_integration_retry_processing', array( __CLASS__, 'handle_retry_processing' ) );
 		add_action( 'admin_post_filetoweb_integration_backfill', array( __CLASS__, 'handle_backfill' ) );
 		add_action( 'admin_post_filetoweb_integration_poll_pending', array( __CLASS__, 'handle_poll_pending' ) );
 		add_action( 'admin_post_filetoweb_integration_test_connection', array( __CLASS__, 'handle_test_connection' ) );
@@ -208,6 +209,7 @@ class Admin {
 	public static function render_status_meta_box( $post ) {
 		$status      = get_post_meta( $post->ID, Document_State::META_STATUS, true );
 		$error       = get_post_meta( $post->ID, Document_State::META_LAST_ERROR, true );
+		$error_ref   = get_post_meta( $post->ID, Document_State::META_ERROR_REFERENCE, true );
 		$html_url    = Security::sanitize_filetoweb_url( get_post_meta( $post->ID, Document_State::META_HTML_URL, true ) );
 		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $post->ID, Document_State::META_EDITOR_URL, true ) );
 		$document_id = get_post_meta( $post->ID, Document_State::META_DOCUMENT_ID, true );
@@ -242,6 +244,10 @@ class Admin {
 			echo '<p><strong>' . esc_html__( 'Error:', 'filetoweb-integration' ) . '</strong><br />' . esc_html( $error ) . '</p>';
 		}
 
+		if ( $error_ref ) {
+			echo '<p><strong>' . esc_html__( 'Support reference:', 'filetoweb-integration' ) . '</strong><br /><code>' . esc_html( $error_ref ) . '</code></p>';
+		}
+
 		if ( $original ) {
 			echo '<p><a href="' . esc_url( $original ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'View original PDF', 'filetoweb-integration' ) . '</a></p>';
 		}
@@ -256,7 +262,11 @@ class Admin {
 
 		if ( Settings::configured() && self::can_sync_post( $post->ID ) ) {
 			echo '<p>';
-			echo '<a class="button" href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync PDF now', 'filetoweb-integration' ) . '</a> ';
+			if ( 'failed' === $status && $document_id ) {
+				echo '<a class="button button-primary" href="' . esc_url( self::admin_action_url( 'retry_processing', $post->ID ) ) . '">' . esc_html__( 'Retry processing', 'filetoweb-integration' ) . '</a> ';
+			} else {
+				echo '<a class="button" href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync PDF now', 'filetoweb-integration' ) . '</a> ';
+			}
 
 			if ( $document_id ) {
 				echo '<a class="button" href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Poll status', 'filetoweb-integration' ) . '</a>';
@@ -377,6 +387,13 @@ class Admin {
 	 */
 	public static function handle_poll_now() {
 		self::handle_post_action( 'poll_now' );
+	}
+
+	/**
+	 * Handle an explicit failed-document retry.
+	 */
+	public static function handle_retry_processing() {
+		self::handle_post_action( 'retry_processing' );
 	}
 
 	/**
@@ -513,6 +530,23 @@ class Admin {
 		if ( 'sync_now' === $action ) {
 			$result  = 'attachment' === get_post_type( $post_id ) ? Sync::sync_attachment_now( $post_id, 'manual_sync' ) : Sync::sync_document_now( $post_id, 'manual_sync' );
 			$message = sprintf( __( 'FileToWeb sync %s.', 'filetoweb-integration' ), isset( $result['status'] ) ? $result['status'] : 'complete' );
+		} elseif ( 'retry_processing' === $action ) {
+			$document_id = Security::sanitize_identifier( get_post_meta( $post_id, Document_State::META_DOCUMENT_ID, true ) );
+			$result      = $document_id ? Api_Client::reprocess_document( $document_id ) : array( 'ok' => false, 'error' => __( 'FileToWeb document ID is missing.', 'filetoweb-integration' ) );
+
+			if ( ! empty( $result['ok'] ) && ! empty( $result['body']['document'] ) && is_array( $result['body']['document'] ) ) {
+				Document_State::write_polled_state( $post_id, $result['body']['document'] );
+				$message = __( 'FileToWeb processing has been queued again.', 'filetoweb-integration' );
+			} else {
+				Document_State::mark_failed(
+					$post_id,
+					isset( $result['error'] ) ? $result['error'] : __( 'FileToWeb retry failed.', 'filetoweb-integration' ),
+					isset( $result['error_code'] ) ? $result['error_code'] : '',
+					isset( $result['reference'] ) ? $result['reference'] : '',
+					! empty( $result['retryable'] )
+				);
+				$message = __( 'FileToWeb could not queue the retry. Review the error and try again.', 'filetoweb-integration' );
+			}
 		} else {
 			$result  = Sync::poll_post( $post_id );
 			$message = sprintf( __( 'FileToWeb poll %s.', 'filetoweb-integration' ), $result );
@@ -619,6 +653,9 @@ class Admin {
 
 		if ( get_post_meta( $post->ID, Document_State::META_DOCUMENT_ID, true ) ) {
 			$actions['filetoweb_poll'] = '<a href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Poll FileToWeb', 'filetoweb-integration' ) . '</a>';
+			if ( 'failed' === get_post_meta( $post->ID, Document_State::META_STATUS, true ) ) {
+				$actions['filetoweb_retry'] = '<a href="' . esc_url( self::admin_action_url( 'retry_processing', $post->ID ) ) . '">' . esc_html__( 'Retry FileToWeb processing', 'filetoweb-integration' ) . '</a>';
+			}
 		}
 
 		return $actions;

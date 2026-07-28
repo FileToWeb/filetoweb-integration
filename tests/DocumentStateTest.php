@@ -11,6 +11,7 @@ class DocumentStateTest extends TestCase {
 		parent::setUp();
 		Monkey\setUp();
 
+		Functions\when( '__' )->returnArg();
 		Functions\when( 'esc_url_raw' )->returnArg();
 		Functions\when( 'wp_unslash' )->returnArg();
 		Functions\when( 'sanitize_text_field' )->alias(
@@ -98,6 +99,99 @@ class DocumentStateTest extends TestCase {
 		$this->assertSame( 'https://filetoweb.com/d/doc/continuous', $stored[ Document_State::META_CONTINUOUS_URL ] );
 		$this->assertSame( '', $stored[ Document_State::META_EDITOR_URL ] );
 		$this->assertSame( 3, $stored[ Document_State::META_PAGE_COUNT ] );
-		$this->assertSame( 'alert(1)', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( '', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( '', $stored[ Document_State::META_ERROR_CODE ] );
+		$this->assertSame( '', $stored[ Document_State::META_ERROR_REFERENCE ] );
+		$this->assertSame( '', $stored[ Document_State::META_ERROR_RETRYABLE ] );
+	}
+
+	public function test_failed_document_stores_safe_structured_failure(): void {
+		$stored = array();
+
+		Functions\expect( 'update_post_meta' )
+			->atLeast()
+			->once()
+			->andReturnUsing(
+				function ( $post_id, $key, $value ) use ( &$stored ) {
+					$stored[ $key ] = $value;
+					return true;
+				}
+			);
+
+		Document_State::write_polled_state(
+			123,
+			array(
+				'status'  => 'failed',
+				'error'   => 'pdf_generator_v2 leaked internal detail',
+				'failure' => array(
+					'code'      => 'processing_incomplete',
+					'message'   => 'FileToWeb could not finish processing this PDF. Please try again.',
+					'reference' => 'FTW-A31C82F4D019',
+					'retryable' => true,
+				),
+			)
+		);
+
+		$this->assertSame( 'FileToWeb could not finish processing this PDF. Please try again.', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( 'processing_incomplete', $stored[ Document_State::META_ERROR_CODE ] );
+		$this->assertSame( 'FTW-A31C82F4D019', $stored[ Document_State::META_ERROR_REFERENCE ] );
+		$this->assertSame( '1', $stored[ Document_State::META_ERROR_RETRYABLE ] );
+		$this->assertStringNotContainsString( 'generator', $stored[ Document_State::META_LAST_ERROR ] );
+	}
+
+	public function test_successful_retry_clears_previous_failure_state(): void {
+		$stored = array();
+
+		Functions\expect( 'update_post_meta' )
+			->atLeast()
+			->once()
+			->andReturnUsing(
+				function ( $post_id, $key, $value ) use ( &$stored ) {
+					$stored[ $key ] = $value;
+					return true;
+				}
+			);
+
+		Document_State::write_polled_state(
+			123,
+			array(
+				'status'     => 'processing',
+				'page_count' => 24,
+				'error'      => null,
+				'failure'    => null,
+			)
+		);
+
+		$this->assertSame( '', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( '', $stored[ Document_State::META_ERROR_CODE ] );
+		$this->assertSame( '', $stored[ Document_State::META_ERROR_REFERENCE ] );
+		$this->assertSame( '', $stored[ Document_State::META_ERROR_RETRYABLE ] );
+	}
+
+	public function test_pending_retry_keeps_safe_support_fields(): void {
+		$stored = array();
+
+		Functions\expect( 'update_post_meta' )
+			->atLeast()
+			->once()
+			->andReturnUsing(
+				function ( $post_id, $key, $value ) use ( &$stored ) {
+					$stored[ $key ] = $value;
+					return true;
+				}
+			);
+
+		Document_State::mark_pending_retry(
+			123,
+			'FileToWeb could not complete this request. Please try again later.',
+			'service_unavailable',
+			'FTW-01AB23CD45EF',
+			true
+		);
+
+		$this->assertSame( 'pending', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'service_unavailable', $stored[ Document_State::META_ERROR_CODE ] );
+		$this->assertSame( 'FTW-01AB23CD45EF', $stored[ Document_State::META_ERROR_REFERENCE ] );
+		$this->assertSame( '1', $stored[ Document_State::META_ERROR_RETRYABLE ] );
 	}
 }

@@ -441,6 +441,53 @@ class PdfToPageTest extends TestCase {
 		$this->assertCount( 1, $emails );
 	}
 
+	public function test_retryable_poll_failure_keeps_pdf_to_page_job_pending(): void {
+		$job_id = 'job-temporary-failure';
+
+		$this->options[ PDF_To_Page::OPTION_JOBS ] = array(
+			$job_id => array(
+				'id'          => $job_id,
+				'document_id' => 'doc-temporary-failure',
+				'status'      => 'processing',
+				'error'       => '',
+			),
+		);
+
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_request' )->justReturn(
+			array(
+				'code' => 503,
+				'body' => json_encode(
+					array(
+						'error' => array(
+							'code'      => 'service_unavailable',
+							'message'   => 'FileToWeb could not complete this request. Please try again later.',
+							'reference' => 'FTW-ABCDEF123456',
+							'retryable' => true,
+						),
+					)
+				),
+			)
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_body' )->alias(
+			function ( $response ) {
+				return $response['body'];
+			}
+		);
+
+		$this->assertSame( 'updated', PDF_To_Page::poll_job( $job_id ) );
+		$job = $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ];
+		$this->assertSame( 'processing', $job['status'] );
+		$this->assertSame( 'service_unavailable', $job['error_code'] );
+		$this->assertSame( 'FTW-ABCDEF123456', $job['error_reference'] );
+		$this->assertTrue( $job['error_retryable'] );
+	}
+
 	public function test_ajax_auto_poll_updates_recent_rows_when_job_becomes_ready(): void {
 		$page_id = 771;
 		$job_id  = 'job-ajax-ready';

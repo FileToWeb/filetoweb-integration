@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.32
+Stable tag: 0.1.33
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,12 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.33 =
+
+* Stores customer-safe processing errors with a searchable support reference while hiding provider and pipeline details.
+* Adds a Retry processing action for failed documents using FileToWeb's explicit reprocess endpoint.
+* Preserves structured failure status during polling and clears prior failure details after a successful retry.
 
 = 0.1.32 =
 

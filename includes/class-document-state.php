@@ -22,6 +22,9 @@ class Document_State {
 	const META_EDITOR_URL                   = '_filetoweb_editor_url';
 	const META_PAGE_COUNT                   = '_filetoweb_page_count';
 		const META_LAST_ERROR                   = '_filetoweb_last_error';
+		const META_ERROR_CODE                   = '_filetoweb_error_code';
+		const META_ERROR_REFERENCE              = '_filetoweb_error_reference';
+		const META_ERROR_RETRYABLE              = '_filetoweb_error_retryable';
 		const META_LAST_SYNCED_AT               = '_filetoweb_last_synced_at';
 		const META_ORIGINAL_URL                 = '_filetoweb_original_url';
 		const META_LOCAL_HTML_PATH              = '_filetoweb_local_html_path';
@@ -57,6 +60,9 @@ class Document_State {
 			self::META_EDITOR_URL,
 			self::META_PAGE_COUNT,
 				self::META_LAST_ERROR,
+				self::META_ERROR_CODE,
+				self::META_ERROR_REFERENCE,
+				self::META_ERROR_RETRYABLE,
 				self::META_LAST_SYNCED_AT,
 				self::META_ORIGINAL_URL,
 				self::META_LOCAL_HTML_PATH,
@@ -100,7 +106,7 @@ class Document_State {
 		update_post_meta( $post_id, self::META_CONTINUOUS_URL, Security::sanitize_filetoweb_url( self::array_get( $document, 'continuous_url' ) ) );
 		update_post_meta( $post_id, self::META_EDITOR_URL, Security::sanitize_filetoweb_url( self::array_get( $document, 'editor_url' ) ) );
 		update_post_meta( $post_id, self::META_PAGE_COUNT, absint( self::array_get( $document, 'page_count' ) ) );
-		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_error( self::array_get( $document, 'error' ) ) );
+		self::write_failure_state( $post_id, $document );
 		update_post_meta( $post_id, self::META_ORIGINAL_URL, esc_url_raw( self::array_get( $source, 'source_url' ) ) );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
 	}
@@ -121,7 +127,7 @@ class Document_State {
 		update_post_meta( $post_id, self::META_CONTINUOUS_URL, Security::sanitize_filetoweb_url( self::array_get( $document, 'continuous_url' ) ) );
 		update_post_meta( $post_id, self::META_EDITOR_URL, Security::sanitize_filetoweb_url( self::array_get( $document, 'editor_url' ) ) );
 		update_post_meta( $post_id, self::META_PAGE_COUNT, absint( self::array_get( $document, 'page_count' ) ) );
-		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_error( self::array_get( $document, 'error' ) ) );
+		self::write_failure_state( $post_id, $document );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
 	}
 
@@ -171,9 +177,12 @@ class Document_State {
 	 * @param int    $post_id Post ID.
 	 * @param string $error Error.
 	 */
-	public static function mark_failed( $post_id, $error ) {
+	public static function mark_failed( $post_id, $error, $code = '', $reference = '', $retryable = false ) {
 		update_post_meta( $post_id, self::META_STATUS, 'failed' );
-		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_error( $error ) );
+		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_public_error( $error ) );
+		update_post_meta( $post_id, self::META_ERROR_CODE, sanitize_key( $code ) );
+		update_post_meta( $post_id, self::META_ERROR_REFERENCE, self::sanitize_error_reference( $reference ) );
+		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, $retryable ? '1' : '0' );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
 	}
 
@@ -186,6 +195,9 @@ class Document_State {
 	public static function mark_scheduled( $post_id, $trigger ) {
 		update_post_meta( $post_id, self::META_STATUS, 'pending' );
 		update_post_meta( $post_id, self::META_LAST_ERROR, '' );
+		update_post_meta( $post_id, self::META_ERROR_CODE, '' );
+		update_post_meta( $post_id, self::META_ERROR_REFERENCE, '' );
+		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, '' );
 		update_post_meta( $post_id, self::META_LAST_TRIGGER, sanitize_key( $trigger ) );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
 	}
@@ -195,11 +207,55 @@ class Document_State {
 	 *
 	 * @param int    $post_id Post ID.
 	 * @param string $error Error.
+	 * @param string $code Public error code.
+	 * @param string $reference Support reference.
+	 * @param bool   $retryable Whether an explicit retry is supported.
 	 */
-	public static function mark_pending_retry( $post_id, $error ) {
+	public static function mark_pending_retry( $post_id, $error, $code = '', $reference = '', $retryable = true ) {
 		update_post_meta( $post_id, self::META_STATUS, 'pending' );
-		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_error( $error ) );
+		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_public_error( $error ) );
+		update_post_meta( $post_id, self::META_ERROR_CODE, sanitize_key( $code ) );
+		update_post_meta( $post_id, self::META_ERROR_REFERENCE, self::sanitize_error_reference( $reference ) );
+		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, $retryable ? '1' : '0' );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
+	}
+
+	/**
+	 * Persist a customer-safe structured failure from a document response.
+	 *
+	 * @param int   $post_id Post ID.
+	 * @param array $document API document.
+	 */
+	private static function write_failure_state( $post_id, $document ) {
+		$failure = self::array_get( $document, 'failure' );
+
+		if ( is_array( $failure ) ) {
+			update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_public_error( self::array_get( $failure, 'message' ) ) );
+			update_post_meta( $post_id, self::META_ERROR_CODE, sanitize_key( self::array_get( $failure, 'code' ) ) );
+			update_post_meta( $post_id, self::META_ERROR_REFERENCE, self::sanitize_error_reference( self::array_get( $failure, 'reference' ) ) );
+			update_post_meta( $post_id, self::META_ERROR_RETRYABLE, ! empty( $failure['retryable'] ) ? '1' : '0' );
+			return;
+		}
+
+		$status = Security::sanitize_status( self::array_get( $document, 'status' ) );
+		$error  = 'failed' === $status ? Security::sanitize_public_error( self::array_get( $document, 'error' ) ) : '';
+
+		update_post_meta( $post_id, self::META_LAST_ERROR, $error );
+		update_post_meta( $post_id, self::META_ERROR_CODE, '' );
+		update_post_meta( $post_id, self::META_ERROR_REFERENCE, '' );
+		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, '' );
+	}
+
+	/**
+	 * Sanitize a FileToWeb support reference.
+	 *
+	 * @param mixed $reference Reference.
+	 * @return string
+	 */
+	private static function sanitize_error_reference( $reference ) {
+		$reference = is_scalar( $reference ) ? strtoupper( sanitize_text_field( (string) $reference ) ) : '';
+
+		return preg_match( '/^FTW-[A-F0-9]{12}$/', $reference ) ? $reference : '';
 	}
 
 	/**

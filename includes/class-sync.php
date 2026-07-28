@@ -131,12 +131,30 @@ class Sync {
 			return 'skipped';
 		}
 
-		$response = Api_Client::get_document( $document_id );
+			$response = Api_Client::get_document( $document_id );
 
-		if ( ! $response['ok'] ) {
-			Document_State::mark_failed( $post_id, $response['error'] );
-			return 'failed';
-		}
+			if ( ! $response['ok'] ) {
+				$retryable = ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $response['error'] );
+				if ( $retryable ) {
+					Document_State::mark_pending_retry(
+						$post_id,
+						$response['error'],
+						isset( $response['error_code'] ) ? $response['error_code'] : '',
+						isset( $response['reference'] ) ? $response['reference'] : '',
+						true
+					);
+					return 'updated';
+				}
+
+				Document_State::mark_failed(
+					$post_id,
+					$response['error'],
+					isset( $response['error_code'] ) ? $response['error_code'] : '',
+					isset( $response['reference'] ) ? $response['reference'] : '',
+					false
+				);
+				return 'failed';
+			}
 
 		if ( isset( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
 			Document_State::write_polled_state( $post_id, $response['body']['document'] );
@@ -471,15 +489,27 @@ class Sync {
 		$response = Api_Client::upsert_document( $payload );
 
 		if ( ! $response['ok'] ) {
-			if ( Api_Client::is_retryable_error( $response['error'] ) ) {
-				Document_State::mark_pending_retry( $post_id, $response['error'] );
+			if ( ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $response['error'] ) ) {
+				Document_State::mark_pending_retry(
+					$post_id,
+					$response['error'],
+					isset( $response['error_code'] ) ? $response['error_code'] : '',
+					isset( $response['reference'] ) ? $response['reference'] : '',
+					true
+				);
 				return array(
 					'status' => 'pending',
 					'error'  => $response['error'],
 				);
 			}
 
-			Document_State::mark_failed( $post_id, $response['error'] );
+			Document_State::mark_failed(
+				$post_id,
+				$response['error'],
+				isset( $response['error_code'] ) ? $response['error_code'] : '',
+				isset( $response['reference'] ) ? $response['reference'] : '',
+				! empty( $response['retryable'] )
+			);
 			return array(
 				'status' => 'failed',
 				'error'  => $response['error'],

@@ -118,4 +118,63 @@ class ApiClientTest extends TestCase {
 		$this->assertSame( 'FileToWeb API returned HTTP 404.', $result['error'] );
 		$this->assertStringNotContainsString( '<html', $result['error'] );
 	}
+
+	public function test_reprocess_document_calls_explicit_retry_endpoint(): void {
+		Functions\expect( 'wp_remote_request' )
+			->once()
+			->with(
+				'https://filetoweb.com/v1/documents/doc-123/reprocess',
+				\Mockery::on(
+					function ( $args ) {
+						return is_array( $args )
+							&& 'POST' === $args['method']
+							&& '[]' === $args['body'];
+					}
+				)
+			)
+			->andReturn( array() );
+		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"document":{"status":"processing"}}' );
+
+		$result = Api_Client::reprocess_document( 'doc-123' );
+
+		$this->assertTrue( $result['ok'] );
+		$this->assertSame( 'processing', $result['body']['document']['status'] );
+	}
+
+	public function test_structured_server_error_preserves_safe_support_fields_only(): void {
+		Functions\expect( 'wp_remote_request' )->once()->andReturn( array() );
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 503 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn(
+			'{"error":{"code":"service_unavailable","message":"FileToWeb could not complete this request. Please try again.","reference":"FTW-01AB23CD45EF","retryable":true}}'
+		);
+
+		$result = Api_Client::get_document( 'doc-123' );
+
+		$this->assertFalse( $result['ok'] );
+		$this->assertSame( 'service_unavailable', $result['error_code'] );
+		$this->assertSame( 'FTW-01AB23CD45EF', $result['reference'] );
+		$this->assertTrue( $result['retryable'] );
+		$this->assertStringNotContainsString( 'gemini', strtolower( $result['error'] ) );
+		$this->assertStringNotContainsString( 'vertex', strtolower( $result['error'] ) );
+	}
+
+	public function test_legacy_internal_error_is_replaced_before_admin_storage(): void {
+		Functions\expect( 'wp_remote_request' )->once()->andReturn( array() );
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 500 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn(
+			'{"error":{"message":"pdf_generator_v2 call_gemini failed in Vertex"}}'
+		);
+
+		$result = Api_Client::get_document( 'doc-123' );
+
+		$this->assertFalse( $result['ok'] );
+		$this->assertSame( 'FileToWeb could not complete this request. Please try again later.', $result['error'] );
+		$this->assertSame( 'service_unavailable', $result['error_code'] );
+		$this->assertTrue( $result['retryable'] );
+	}
 }

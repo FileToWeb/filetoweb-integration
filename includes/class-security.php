@@ -118,6 +118,24 @@ class Security {
 	}
 
 	/**
+	 * Remove provider and pipeline details from customer-facing errors.
+	 *
+	 * @param mixed $value Raw error.
+	 * @return string
+	 */
+	public static function sanitize_public_error( $value ) {
+		$value = self::sanitize_error( $value );
+
+		foreach ( array( 'gemini', 'vertex', 'pdf_generator', 'call_gemini', 'generator_v2', 'aiplatform', 'openrouter', 'traceback', 'stack trace', 'requests.', 'httpx.', '.py:' ) as $internal_term ) {
+			if ( false !== stripos( $value, $internal_term ) ) {
+				return __( 'FileToWeb could not finish processing this PDF. Please try again.', 'filetoweb-integration' );
+			}
+		}
+
+		return $value;
+	}
+
+	/**
 	 * Normalize a public URL for map lookup.
 	 *
 	 * @param string $url URL.

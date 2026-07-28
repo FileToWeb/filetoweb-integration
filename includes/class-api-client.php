@@ -42,6 +42,16 @@ class Api_Client {
 	}
 
 	/**
+	 * Explicitly retry a failed FileToWeb document.
+	 *
+	 * @param string $document_id FileToWeb document ID.
+	 * @return array
+	 */
+	public static function reprocess_document( $document_id ) {
+		return self::request( 'POST', '/documents/' . rawurlencode( $document_id ) . '/reprocess', array() );
+	}
+
+	/**
 	 * Finalize a signed upload and queue conversion.
 	 *
 	 * @param string $document_id FileToWeb document ID.
@@ -157,7 +167,21 @@ class Api_Client {
 		$decoded  = json_decode( $raw_body, true );
 
 		if ( $code < 200 || $code >= 300 ) {
-			return self::error( self::extract_error_message( $decoded, $raw_body, $code ) );
+			$api_error = self::extract_api_error( $decoded, $raw_body, $code );
+
+			if ( $code >= 500 ) {
+				$api_error['message']   = __( 'FileToWeb could not complete this request. Please try again later.', 'filetoweb-integration' );
+				$api_error['code']      = $api_error['code'] ? $api_error['code'] : 'service_unavailable';
+				$api_error['retryable'] = true;
+			}
+
+			return self::error(
+				$api_error['message'],
+				$api_error['code'],
+				$api_error['reference'],
+				$api_error['retryable'],
+				$code
+			);
 		}
 
 		return array(
@@ -228,11 +252,15 @@ class Api_Client {
 	 * @param string $message Message.
 	 * @return array
 	 */
-	private static function error( $message ) {
+	private static function error( $message, $code = '', $reference = '', $retryable = false, $status_code = 0 ) {
 		return array(
-			'ok'    => false,
-			'error' => Security::sanitize_error( $message ),
-			'body'  => array(),
+			'ok'         => false,
+			'error'      => Security::sanitize_public_error( $message ),
+			'error_code' => sanitize_key( $code ),
+			'reference'  => preg_match( '/^FTW-[A-F0-9]{12}$/', (string) $reference ) ? (string) $reference : '',
+			'retryable'  => (bool) $retryable,
+			'status'     => absint( $status_code ),
+			'body'       => array(),
 		);
 	}
 
@@ -256,5 +284,26 @@ class Api_Client {
 		}
 
 		return sprintf( __( 'FileToWeb API returned HTTP %d.', 'filetoweb-integration' ), absint( $status_code ) );
+	}
+
+	/**
+	 * Extract the structured API error contract with legacy fallbacks.
+	 *
+	 * @param mixed  $decoded Decoded JSON.
+	 * @param string $raw_body Raw body.
+	 * @param int    $status_code HTTP status code.
+	 * @return array
+	 */
+	private static function extract_api_error( $decoded, $raw_body, $status_code ) {
+		$error = is_array( $decoded ) && isset( $decoded['error'] ) && is_array( $decoded['error'] )
+			? $decoded['error']
+			: array();
+
+		return array(
+			'message'   => self::extract_error_message( $decoded, $raw_body, $status_code ),
+			'code'      => isset( $error['code'] ) ? sanitize_key( $error['code'] ) : '',
+			'reference' => isset( $error['reference'] ) ? sanitize_text_field( $error['reference'] ) : '',
+			'retryable' => ! empty( $error['retryable'] ),
+		);
 	}
 }

@@ -136,6 +136,60 @@ class SyncTest extends TestCase {
 		$this->assertSame( array( $attachment_id, 'attachment', 'attachment_save' ), $scheduled_args );
 	}
 
+	public function test_retryable_poll_failure_stays_pending_with_support_reference(): void {
+		$stored  = array();
+		$post_id = 321;
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $requested_post_id, $key ) use ( $post_id ) {
+				if ( $post_id === $requested_post_id && Document_State::META_DOCUMENT_ID === $key ) {
+					return 'doc-321';
+				}
+
+				return '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $requested_post_id, $key, $value ) use ( &$stored, $post_id ) {
+				$this->assertSame( $post_id, $requested_post_id );
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_request' )->justReturn(
+			array(
+				'code' => 503,
+				'body' => json_encode(
+					array(
+						'error' => array(
+							'code'      => 'service_unavailable',
+							'message'   => 'FileToWeb could not complete this request. Please try again later.',
+							'reference' => 'FTW-123456789ABC',
+							'retryable' => true,
+						),
+					)
+				),
+			)
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_body' )->alias(
+			function ( $response ) {
+				return $response['body'];
+			}
+		);
+
+		$this->assertSame( 'updated', Sync::poll_post( $post_id ) );
+		$this->assertSame( 'pending', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'service_unavailable', $stored[ Document_State::META_ERROR_CODE ] );
+		$this->assertSame( 'FTW-123456789ABC', $stored[ Document_State::META_ERROR_REFERENCE ] );
+		$this->assertSame( '1', $stored[ Document_State::META_ERROR_RETRYABLE ] );
+	}
+
 	private function meta_query_contains_compare( $query, $compare ) {
 		foreach ( (array) $query as $item ) {
 			if ( is_array( $item ) ) {

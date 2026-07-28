@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.33
+
+- Store customer-safe processing errors with a searchable support reference while hiding provider and pipeline details.
+- Add a Retry processing action for failed documents using FileToWeb's explicit reprocess endpoint.
+- Preserve structured failure status during polling and clear prior failure details after a successful retry.
+
 ## 0.1.32
 
 - Publishes sanitized, fingerprinted HTML preview bundles and provider-neutral `_proud_html_preview` records with complete artifact manifests for ProudCity Documents and Meeting materials.
