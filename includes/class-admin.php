@@ -261,18 +261,28 @@ class Admin {
 		}
 
 		if ( Settings::configured() && self::can_sync_post( $post->ID ) ) {
-			echo '<p>';
-			if ( 'failed' === $status && $document_id ) {
-				echo '<a class="button button-primary" href="' . esc_url( self::admin_action_url( 'retry_processing', $post->ID ) ) . '">' . esc_html__( 'Retry processing', 'filetoweb-integration' ) . '</a> ';
-			} else {
-				echo '<a class="button" href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync PDF now', 'filetoweb-integration' ) . '</a> ';
+			$state  = self::status_state( $status );
+			$action = '';
+
+			if ( 'failed' === $state ) {
+				if ( $document_id ) {
+					$action = '<a class="button button-primary" href="' . esc_url( self::admin_action_url( 'retry_processing', $post->ID ) ) . '">' . esc_html__( 'Retry processing', 'filetoweb-integration' ) . '</a>';
+				} else {
+					$action = '<a class="button button-primary" href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Retry sync', 'filetoweb-integration' ) . '</a>';
+				}
+			} elseif ( 'processing' === $state ) {
+				if ( $document_id ) {
+					$action = '<a class="button" href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Check conversion progress', 'filetoweb-integration' ) . '</a>';
+				} else {
+					$action = '<a class="button" href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Submit PDF now', 'filetoweb-integration' ) . '</a>';
+				}
+			} elseif ( 'not_synced' === $state ) {
+				$action = '<a class="button" href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync PDF now', 'filetoweb-integration' ) . '</a>';
 			}
 
-			if ( $document_id ) {
-				echo '<a class="button" href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Check now', 'filetoweb-integration' ) . '</a>';
+			if ( $action ) {
+				echo '<p>' . $action . '</p>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
-
-			echo '</p>';
 		}
 
 		Native_Page::render_admin_panel( $post );
@@ -649,13 +659,20 @@ class Admin {
 			return $actions;
 		}
 
-		$actions['filetoweb_sync'] = '<a href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync with FileToWeb', 'filetoweb-integration' ) . '</a>';
+		$status      = get_post_meta( $post->ID, Document_State::META_STATUS, true );
+		$state       = self::status_state( $status );
+		$document_id = get_post_meta( $post->ID, Document_State::META_DOCUMENT_ID, true );
 
-		if ( get_post_meta( $post->ID, Document_State::META_DOCUMENT_ID, true ) ) {
-			$actions['filetoweb_poll'] = '<a href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Check FileToWeb progress', 'filetoweb-integration' ) . '</a>';
-			if ( 'failed' === get_post_meta( $post->ID, Document_State::META_STATUS, true ) ) {
-				$actions['filetoweb_retry'] = '<a href="' . esc_url( self::admin_action_url( 'retry_processing', $post->ID ) ) . '">' . esc_html__( 'Retry FileToWeb processing', 'filetoweb-integration' ) . '</a>';
-			}
+		if ( 'not_synced' === $state ) {
+			$actions['filetoweb_sync'] = '<a href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync with FileToWeb', 'filetoweb-integration' ) . '</a>';
+		} elseif ( 'processing' === $state ) {
+			$actions[ $document_id ? 'filetoweb_poll' : 'filetoweb_sync' ] = $document_id
+				? '<a href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Check conversion progress', 'filetoweb-integration' ) . '</a>'
+				: '<a href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Submit PDF now', 'filetoweb-integration' ) . '</a>';
+		} elseif ( 'failed' === $state ) {
+			$actions[ $document_id ? 'filetoweb_retry' : 'filetoweb_sync' ] = $document_id
+				? '<a href="' . esc_url( self::admin_action_url( 'retry_processing', $post->ID ) ) . '">' . esc_html__( 'Retry FileToWeb processing', 'filetoweb-integration' ) . '</a>'
+				: '<a href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Retry FileToWeb sync', 'filetoweb-integration' ) . '</a>';
 		}
 
 		return $actions;

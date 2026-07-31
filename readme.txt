@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.35
+Stable tag: 0.1.36
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.36 =
+
+* Makes document and Meeting actions state-specific: Sync PDF now before submission, Check conversion progress while processing, no redundant action when ready, and Retry processing after failure.
+* Keeps manual recovery available when a submission fails before FileToWeb assigns a document ID.
 
 = 0.1.35 =
 

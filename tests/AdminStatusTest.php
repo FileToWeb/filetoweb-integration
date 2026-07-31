@@ -113,6 +113,11 @@ class AdminStatusTest extends TestCase {
 	}
 
 	public function test_ready_status_renders_prominent_admin_summary(): void {
+		$this->can_sync = true;
+		$this->meta     = array(
+			Document_State::META_DOCUMENT_ID => 'doc-123',
+		);
+
 		$post            = new stdClass();
 		$post->ID        = 123;
 		$post->post_type = 'page';
@@ -126,6 +131,26 @@ class AdminStatusTest extends TestCase {
 		$this->assertStringContainsString( 'Generated HTML is ready for public replacement.', $html );
 		$this->assertStringNotContainsString( 'filetoweb-processing-help', $html );
 		$this->assertStringNotContainsString( 'up to 10 minutes', $html );
+		$this->assertStringNotContainsString( 'Sync PDF now', $html );
+		$this->assertStringNotContainsString( 'Check conversion progress', $html );
+		$this->assertStringNotContainsString( 'Retry processing', $html );
+	}
+
+	public function test_not_synced_status_only_renders_sync_action(): void {
+		$this->status   = '';
+		$this->can_sync = true;
+
+		$post            = new stdClass();
+		$post->ID        = 123;
+		$post->post_type = 'page';
+
+		ob_start();
+		Admin::render_status_meta_box( $post );
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'Sync PDF now', $html );
+		$this->assertStringNotContainsString( 'Check conversion progress', $html );
+		$this->assertStringNotContainsString( 'Retry processing', $html );
 	}
 
 	public function test_processing_status_renders_processing_time_help(): void {
@@ -148,8 +173,27 @@ class AdminStatusTest extends TestCase {
 		$this->assertStringContainsString( 'About FileToWeb processing time', $html );
 		$this->assertStringContainsString( 'up to 10 minutes', $html );
 		$this->assertStringContainsString( 'public links keep using the original PDF', $html );
-		$this->assertStringContainsString( 'Check now', $html );
+		$this->assertStringContainsString( 'Check conversion progress', $html );
+		$this->assertStringNotContainsString( 'Sync PDF now', $html );
+		$this->assertStringNotContainsString( 'Retry processing', $html );
 		$this->assertStringNotContainsString( 'Poll status', $html );
+	}
+
+	public function test_processing_without_document_id_offers_submission(): void {
+		$this->status   = 'pending';
+		$this->can_sync = true;
+
+		$post            = new stdClass();
+		$post->ID        = 123;
+		$post->post_type = 'page';
+
+		ob_start();
+		Admin::render_status_meta_box( $post );
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'Submit PDF now', $html );
+		$this->assertStringNotContainsString( 'Check conversion progress', $html );
+		$this->assertStringNotContainsString( 'Retry processing', $html );
 	}
 
 	public function test_status_badge_processing_help_only_for_processing_state(): void {
@@ -185,9 +229,68 @@ class AdminStatusTest extends TestCase {
 		$this->assertStringContainsString( 'Retry processing', $html );
 		$this->assertStringContainsString( 'FTW-A31C82F4D019', $html );
 		$this->assertStringContainsString( 'filetoweb_integration_retry_processing', $html );
+		$this->assertStringNotContainsString( 'Sync PDF now', $html );
+		$this->assertStringNotContainsString( 'Check conversion progress', $html );
 		$this->assertStringNotContainsString( 'pdf_generator', $html );
 		$this->assertStringNotContainsString( 'Vertex', $html );
 		$this->assertStringNotContainsString( 'Gemini', $html );
+	}
+
+	public function test_failed_document_without_document_id_offers_sync_retry(): void {
+		$this->status   = 'failed';
+		$this->can_sync = true;
+
+		$post            = new stdClass();
+		$post->ID        = 123;
+		$post->post_type = 'page';
+
+		ob_start();
+		Admin::render_status_meta_box( $post );
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'Retry sync', $html );
+		$this->assertStringContainsString( 'filetoweb_integration_sync_now', $html );
+		$this->assertStringNotContainsString( 'filetoweb_integration_retry_processing', $html );
+	}
+
+	public function test_document_row_actions_follow_conversion_state(): void {
+		$this->can_sync = true;
+		$this->meta     = array(
+			Document_State::META_DOCUMENT_ID => 'doc-123',
+		);
+
+		Functions\when( 'get_post_type' )->justReturn( 'document' );
+
+		$post            = new stdClass();
+		$post->ID        = 123;
+		$post->post_type = 'document';
+
+		$this->status = '';
+		$not_synced   = Admin::add_document_row_actions( array(), $post );
+		$this->assertStringContainsString( 'Sync with FileToWeb', implode( ' ', $not_synced ) );
+
+		$this->status = 'processing';
+		$processing   = Admin::add_document_row_actions( array(), $post );
+		$this->assertStringContainsString( 'Check conversion progress', implode( ' ', $processing ) );
+		$this->assertStringNotContainsString( 'Sync with FileToWeb', implode( ' ', $processing ) );
+
+		$this->status = 'ready';
+		$ready        = Admin::add_document_row_actions( array(), $post );
+		$this->assertSame( array(), $ready );
+
+		$this->status = 'failed';
+		$failed       = Admin::add_document_row_actions( array(), $post );
+		$this->assertStringContainsString( 'Retry FileToWeb processing', implode( ' ', $failed ) );
+		$this->assertStringNotContainsString( 'Check conversion progress', implode( ' ', $failed ) );
+
+		$this->meta   = array();
+		$this->status = 'pending';
+		$pending      = Admin::add_document_row_actions( array(), $post );
+		$this->assertStringContainsString( 'Submit PDF now', implode( ' ', $pending ) );
+
+		$this->status = 'failed';
+		$failed       = Admin::add_document_row_actions( array(), $post );
+		$this->assertStringContainsString( 'Retry FileToWeb sync', implode( ' ', $failed ) );
 	}
 
 	public function test_connection_notice_names_the_workspace_and_folder(): void {

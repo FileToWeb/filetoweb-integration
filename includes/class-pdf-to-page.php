@@ -784,14 +784,14 @@ class PDF_To_Page {
 		}
 
 		if (
-			'failed' === Security::sanitize_status( $row['status'] ) &&
+			'failed' === Admin::status_state( $row['status'] ) &&
 			! empty( $row['id'] ) &&
 			! empty( $row['document_id'] ) &&
 			! empty( $row['error_retryable'] )
 		) {
 			$actions[] = '<a class="button button-small button-primary" href="' . esc_url( self::retry_job_url( $row['id'] ) ) . '">' . esc_html__( 'Retry processing', 'filetoweb-integration' ) . '</a>';
-		} elseif ( ! $page_id && 'job' === $row['type'] && ! empty( $row['id'] ) ) {
-			$actions[] = '<a class="button button-small" href="' . esc_url( self::poll_job_url( $row['id'] ) ) . '">' . esc_html__( 'Check now', 'filetoweb-integration' ) . '</a>';
+		} elseif ( ! $page_id && 'job' === $row['type'] && ! empty( $row['id'] ) && 'processing' === Admin::status_state( $row['status'] ) ) {
+			$actions[] = '<a class="button button-small" href="' . esc_url( self::poll_job_url( $row['id'] ) ) . '">' . esc_html__( 'Check conversion progress', 'filetoweb-integration' ) . '</a>';
 		}
 
 		if ( ! empty( $row['error'] ) ) {

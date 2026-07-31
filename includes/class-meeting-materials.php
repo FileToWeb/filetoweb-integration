@@ -358,17 +358,25 @@ class Meeting_Materials {
 		$html_url    = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_HTML_URL, true ) );
 		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_EDITOR_URL, true ) );
 		$local_url   = Local_HTML::local_url( $attachment_id );
+		$state       = Admin::status_state( $status );
 		?>
 		<div class="filetoweb-integration-inline-meeting-sync" style="clear:both;display:block;margin:6px 0 0 150px;">
-			<?php if ( 'failed' === Security::sanitize_status( $status ) && $document_id ) : ?>
+			<?php if ( 'failed' === $state ) : ?>
 				<?php if ( self::can_retry_attachment( $attachment_id ) ) : ?>
-					<a class="button button-small button-primary" href="<?php echo esc_url( self::retry_processing_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Retry processing', 'filetoweb-integration' ); ?></a>
+					<?php if ( $document_id ) : ?>
+						<a class="button button-small button-primary" href="<?php echo esc_url( self::retry_processing_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Retry processing', 'filetoweb-integration' ); ?></a>
+					<?php else : ?>
+						<a class="button button-small button-primary" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Retry sync', 'filetoweb-integration' ); ?></a>
+					<?php endif; ?>
 				<?php endif; ?>
-			<?php else : ?>
+			<?php elseif ( 'processing' === $state ) : ?>
+				<?php if ( $document_id ) : ?>
+					<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Check conversion progress', 'filetoweb-integration' ); ?></a>
+				<?php else : ?>
+					<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Submit PDF now', 'filetoweb-integration' ); ?></a>
+				<?php endif; ?>
+			<?php elseif ( 'not_synced' === $state ) : ?>
 				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
-			<?php endif; ?>
-			<?php if ( $document_id && 'failed' !== Security::sanitize_status( $status ) ) : ?>
-				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Check now', 'filetoweb-integration' ); ?></a>
 			<?php endif; ?>
 			<span style="display:inline-block;margin-left:6px;vertical-align:middle;"><?php echo self::status_badge( $status ); ?></span>
 			<div style="font-size:12px;line-height:1.5;margin-top:4px;">
@@ -436,6 +444,7 @@ class Meeting_Materials {
 		$html_url      = $attachment_id ? Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_HTML_URL, true ) ) : '';
 		$editor_url    = $attachment_id ? Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_EDITOR_URL, true ) ) : '';
 		$filename      = $attachment_id ? self::attachment_filename( $attachment_id, $source_url ) : '';
+		$state         = Admin::status_state( $status );
 		?>
 		<tr>
 			<td><strong><?php echo esc_html( $field['label'] ); ?></strong></td>
@@ -468,15 +477,22 @@ class Meeting_Materials {
 			</td>
 			<td>
 				<?php if ( Settings::configured() && self::can_manage_meeting( $meeting_id ) && $attachment_id && $is_pdf ) : ?>
-					<?php if ( 'failed' === Security::sanitize_status( $status ) && $document_id ) : ?>
-						<?php if ( self::can_retry_attachment( $attachment_id ) ) : ?>
+					<?php if ( 'failed' === $state && self::can_retry_attachment( $attachment_id ) ) : ?>
+						<?php if ( $document_id ) : ?>
 							<a class="button button-primary" href="<?php echo esc_url( self::retry_processing_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Retry processing', 'filetoweb-integration' ); ?></a>
+						<?php else : ?>
+							<a class="button button-primary" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Retry sync', 'filetoweb-integration' ); ?></a>
 						<?php endif; ?>
-					<?php else : ?>
+					<?php elseif ( 'processing' === $state ) : ?>
+						<?php if ( $document_id ) : ?>
+							<a class="button" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Check conversion progress', 'filetoweb-integration' ); ?></a>
+						<?php else : ?>
+							<a class="button" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Submit PDF now', 'filetoweb-integration' ); ?></a>
+						<?php endif; ?>
+					<?php elseif ( 'not_synced' === $state ) : ?>
 						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
-					<?php endif; ?>
-					<?php if ( $document_id && 'failed' !== Security::sanitize_status( $status ) ) : ?>
-						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Check now', 'filetoweb-integration' ); ?></a>
+					<?php else : ?>
+						<span aria-hidden="true">&mdash;</span>
 					<?php endif; ?>
 				<?php else : ?>
 					<span aria-hidden="true">&mdash;</span>

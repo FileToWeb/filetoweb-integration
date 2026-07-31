@@ -357,10 +357,10 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringContainsString( 'clear:both;display:block;margin:6px 0 0 150px;', $output );
 		$this->assertStringContainsString( 'Ready', $output );
 		$this->assertStringNotContainsString( 'filetoweb-processing-help', $output );
-		$this->assertStringContainsString( 'Sync this PDF', $output );
-		$this->assertStringContainsString( 'Check now', $output );
-		$this->assertLessThan( strpos( $output, 'Ready' ), strpos( $output, 'Sync this PDF' ) );
-		$this->assertStringContainsString( 'slot=agenda', $output );
+		$this->assertStringNotContainsString( 'Sync this PDF', $output );
+		$this->assertStringNotContainsString( 'Check conversion progress', $output );
+		$this->assertStringNotContainsString( 'Retry processing', $output );
+		$this->assertStringNotContainsString( 'slot=agenda', $output );
 		$this->assertStringContainsString( 'Original PDF', $output );
 		$this->assertStringContainsString( 'Generated HTML', $output );
 		$this->assertStringContainsString( 'Edit in FileToWeb', $output );
@@ -400,6 +400,44 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringContainsString( 'Processing', $output );
 		$this->assertStringContainsString( 'filetoweb-processing-help', $output );
 		$this->assertStringContainsString( 'up to 10 minutes', $output );
+		$this->assertStringContainsString( 'Check conversion progress', $output );
+		$this->assertStringNotContainsString( 'Sync this PDF', $output );
+		$this->assertStringNotContainsString( 'Retry processing', $output );
+	}
+
+	public function test_inline_upload_control_offers_submission_before_document_id_exists(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment' => 101,
+		);
+
+		$this->meeting_meta[101] = array(
+			Document_State::META_STATUS => 'pending',
+		);
+
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__;
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'Submit PDF now', $output );
+		$this->assertStringContainsString( 'sync_material', $output );
+		$this->assertStringNotContainsString( 'Check conversion progress', $output );
 	}
 
 	public function test_failed_meeting_material_renders_explicit_retry_action(): void {
@@ -435,9 +473,44 @@ class MeetingMaterialsTest extends TestCase {
 
 		$this->assertStringContainsString( 'Retry processing', $output );
 		$this->assertStringContainsString( 'filetoweb_integration_retry_processing', $output );
-		$this->assertStringNotContainsString( 'Check now', $output );
+		$this->assertStringNotContainsString( 'Check conversion progress', $output );
 		$this->assertStringNotContainsString( 'Poll status', $output );
 		$this->assertStringNotContainsString( 'Sync this PDF', $output );
+	}
+
+	public function test_failed_meeting_material_without_document_id_offers_sync_retry(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment' => 101,
+		);
+
+		$this->meeting_meta[101] = array(
+			Document_State::META_STATUS => 'failed',
+		);
+
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__;
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'Retry sync', $output );
+		$this->assertStringContainsString( 'sync_material', $output );
+		$this->assertStringNotContainsString( 'retry_processing', $output );
 	}
 
 	public function test_failed_meeting_material_hides_retry_without_attachment_permission(): void {

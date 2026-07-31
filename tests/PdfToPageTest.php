@@ -529,11 +529,27 @@ class PdfToPageTest extends TestCase {
 
 		$this->assertStringContainsString( 'Retry processing', $html );
 		$this->assertStringContainsString( PDF_To_Page::ACTION_RETRY_JOB, $html );
-		$this->assertStringNotContainsString( 'Check now', $html );
+		$this->assertStringNotContainsString( 'Check conversion progress', $html );
 		$this->assertStringNotContainsString( 'Poll status', $html );
 		$this->assertStringContainsString( 'Support reference: FTW-A31C82F4D019', $html );
 		$this->assertStringNotContainsString( 'pdf_generator', $html );
 		$this->assertStringNotContainsString( 'Vertex', $html );
+
+		$legacy_error_html = $method->invoke(
+			null,
+			array(
+				'type'            => 'job',
+				'id'              => 'job-legacy-error',
+				'page_id'         => 0,
+				'status'          => 'error',
+				'document_id'     => 'doc-legacy-error',
+				'error_retryable' => true,
+				'error'           => 'FileToWeb could not finish processing this PDF.',
+				'error_reference' => '',
+			)
+		);
+
+		$this->assertStringContainsString( 'Retry processing', $legacy_error_html );
 	}
 
 	public function test_processing_pdf_to_page_job_uses_clear_status_action(): void {
@@ -553,7 +569,7 @@ class PdfToPageTest extends TestCase {
 			)
 		);
 
-		$this->assertStringContainsString( 'Check now', $html );
+		$this->assertStringContainsString( 'Check conversion progress', $html );
 		$this->assertStringNotContainsString( 'Poll status', $html );
 	}
 
