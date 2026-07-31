@@ -529,10 +529,32 @@ class PdfToPageTest extends TestCase {
 
 		$this->assertStringContainsString( 'Retry processing', $html );
 		$this->assertStringContainsString( PDF_To_Page::ACTION_RETRY_JOB, $html );
+		$this->assertStringNotContainsString( 'Check now', $html );
 		$this->assertStringNotContainsString( 'Poll status', $html );
 		$this->assertStringContainsString( 'Support reference: FTW-A31C82F4D019', $html );
 		$this->assertStringNotContainsString( 'pdf_generator', $html );
 		$this->assertStringNotContainsString( 'Vertex', $html );
+	}
+
+	public function test_processing_pdf_to_page_job_uses_clear_status_action(): void {
+		$method = new \ReflectionMethod( PDF_To_Page::class, 'actions_cell' );
+
+		$html = $method->invoke(
+			null,
+			array(
+				'type'            => 'job',
+				'id'              => 'job-processing',
+				'page_id'         => 0,
+				'status'          => 'processing',
+				'document_id'     => 'doc-processing',
+				'error_retryable' => false,
+				'error'           => '',
+				'error_reference' => '',
+			)
+		);
+
+		$this->assertStringContainsString( 'Check now', $html );
+		$this->assertStringNotContainsString( 'Poll status', $html );
 	}
 
 	public function test_failed_pdf_to_page_job_preserves_safe_failure_details(): void {

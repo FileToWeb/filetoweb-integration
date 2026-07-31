@@ -791,7 +791,7 @@ class PDF_To_Page {
 		) {
 			$actions[] = '<a class="button button-small button-primary" href="' . esc_url( self::retry_job_url( $row['id'] ) ) . '">' . esc_html__( 'Retry processing', 'filetoweb-integration' ) . '</a>';
 		} elseif ( ! $page_id && 'job' === $row['type'] && ! empty( $row['id'] ) ) {
-			$actions[] = '<a class="button button-small" href="' . esc_url( self::poll_job_url( $row['id'] ) ) . '">' . esc_html__( 'Poll status', 'filetoweb-integration' ) . '</a>';
+			$actions[] = '<a class="button button-small" href="' . esc_url( self::poll_job_url( $row['id'] ) ) . '">' . esc_html__( 'Check now', 'filetoweb-integration' ) . '</a>';
 		}
 
 		if ( ! empty( $row['error'] ) ) {

@@ -134,7 +134,7 @@ class Native_Page {
 		if ( $local_url ) {
 			echo '<p><a href="' . esc_url( $local_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'View local HTML copy', 'filetoweb-integration' ) . '</a></p>';
 		} else {
-			echo '<p><em>' . esc_html__( 'No local HTML copy yet. Processing can take several minutes for larger PDFs. Poll after FileToWeb is ready.', 'filetoweb-integration' ) . '</em></p>';
+			echo '<p><em>' . esc_html__( 'No local HTML copy yet. Processing can take several minutes for larger PDFs. WordPress checks for updates automatically.', 'filetoweb-integration' ) . '</em></p>';
 		}
 	}
 

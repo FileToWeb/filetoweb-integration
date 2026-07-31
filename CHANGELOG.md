@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.35
+
+- Replace polling terminology in WordPress admin actions with clear labels such as Check now, Check FileToWeb progress, and Check pending conversions.
+- Update processing help and completion notices to use the same user-focused status-check language.
+
+## 0.1.34
+
+- Add explicit retry controls for failed Meeting materials and PDF-to-Page conversions.
+- Preserve customer-safe failure codes, support references, and retryability across every upload step.
+
 ## 0.1.33
 
 - Store customer-safe processing errors with a searchable support reference while hiding provider and pipeline details.

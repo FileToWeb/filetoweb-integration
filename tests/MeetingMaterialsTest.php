@@ -358,7 +358,7 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringContainsString( 'Ready', $output );
 		$this->assertStringNotContainsString( 'filetoweb-processing-help', $output );
 		$this->assertStringContainsString( 'Sync this PDF', $output );
-		$this->assertStringContainsString( 'Poll status', $output );
+		$this->assertStringContainsString( 'Check now', $output );
 		$this->assertLessThan( strpos( $output, 'Ready' ), strpos( $output, 'Sync this PDF' ) );
 		$this->assertStringContainsString( 'slot=agenda', $output );
 		$this->assertStringContainsString( 'Original PDF', $output );
@@ -435,6 +435,7 @@ class MeetingMaterialsTest extends TestCase {
 
 		$this->assertStringContainsString( 'Retry processing', $output );
 		$this->assertStringContainsString( 'filetoweb_integration_retry_processing', $output );
+		$this->assertStringNotContainsString( 'Check now', $output );
 		$this->assertStringNotContainsString( 'Poll status', $output );
 		$this->assertStringNotContainsString( 'Sync this PDF', $output );
 	}

@@ -83,7 +83,7 @@ class Admin {
 			<h1><?php esc_html_e( 'FileToWeb', 'filetoweb-integration' ); ?></h1>
 
 			<?php if ( ! Settings::enabled() ) : ?>
-				<div class="notice notice-warning"><p><?php esc_html_e( 'FileToWeb is disabled. PDF sync, polling, and public link replacement are inactive.', 'filetoweb-integration' ); ?></p></div>
+				<div class="notice notice-warning"><p><?php esc_html_e( 'FileToWeb is disabled. PDF sync, automatic status checks, and public link replacement are inactive.', 'filetoweb-integration' ); ?></p></div>
 			<?php endif; ?>
 
 			<form method="post" action="options.php">
@@ -146,7 +146,7 @@ class Admin {
 						<th scope="row"><label for="<?php echo esc_attr( Settings::field_id( Settings::KEY_BATCH_SIZE ) ); ?>"><?php esc_html_e( 'Batch size', 'filetoweb-integration' ); ?></label></th>
 						<td>
 							<input type="number" min="1" max="100" id="<?php echo esc_attr( Settings::field_id( Settings::KEY_BATCH_SIZE ) ); ?>" name="<?php echo esc_attr( Settings::field_name( Settings::KEY_BATCH_SIZE ) ); ?>" value="<?php echo esc_attr( Settings::batch_size() ); ?>" />
-							<p class="description"><?php esc_html_e( 'Manual backfill and polling batches are bounded to protect site performance and customer credit usage.', 'filetoweb-integration' ); ?></p>
+							<p class="description"><?php esc_html_e( 'Manual backfill and status-check batches are bounded to protect site performance and customer credit usage.', 'filetoweb-integration' ); ?></p>
 						</td>
 					</tr>
 				</table>
@@ -173,7 +173,7 @@ class Admin {
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-block;">
 				<?php wp_nonce_field( 'filetoweb_integration_poll_pending' ); ?>
 				<input type="hidden" name="action" value="filetoweb_integration_poll_pending" />
-				<?php submit_button( __( 'Poll pending', 'filetoweb-integration' ), 'secondary', 'submit', false ); ?>
+				<?php submit_button( __( 'Check pending conversions', 'filetoweb-integration' ), 'secondary', 'submit', false ); ?>
 			</form>
 
 			<hr />
@@ -269,7 +269,7 @@ class Admin {
 			}
 
 			if ( $document_id ) {
-				echo '<a class="button" href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Poll status', 'filetoweb-integration' ) . '</a>';
+				echo '<a class="button" href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Check now', 'filetoweb-integration' ) . '</a>';
 			}
 
 			echo '</p>';
@@ -289,7 +289,7 @@ class Admin {
 
 		$styles = array(
 			'not_synced' => array( '#646970', '#f6f7f7', __( 'Not synced', 'filetoweb-integration' ), __( 'This PDF has not been submitted to FileToWeb yet.', 'filetoweb-integration' ) ),
-			'processing' => array( '#2271b1', '#f0f6fc', __( 'Processing', 'filetoweb-integration' ), __( 'FileToWeb is processing this PDF. Poll status to check for updates.', 'filetoweb-integration' ) ),
+			'processing' => array( '#2271b1', '#f0f6fc', __( 'Processing', 'filetoweb-integration' ), __( 'FileToWeb is processing this PDF. WordPress checks for updates automatically.', 'filetoweb-integration' ) ),
 			'ready'      => array( '#008a20', '#edfaef', __( 'Ready', 'filetoweb-integration' ), __( 'Generated HTML is ready for public replacement.', 'filetoweb-integration' ) ),
 			'failed'     => array( '#b32d2e', '#fcf0f1', __( 'Failed', 'filetoweb-integration' ), __( 'Processing needs attention. Retry sync after reviewing the error.', 'filetoweb-integration' ) ),
 		);
@@ -363,7 +363,7 @@ class Admin {
 		 * @return string
 		 */
 		public static function processing_help_icon() {
-			$text = __( 'Most PDFs finish within a few minutes. Larger or more complex PDFs can take up to 10 minutes. You can leave this screen; public links keep using the original PDF until the HTML version is ready. Use Poll status to refresh.', 'filetoweb-integration' );
+			$text = __( 'Most PDFs finish within a few minutes. Larger or more complex PDFs can take up to 10 minutes. You can leave this screen; WordPress checks automatically and public links keep using the original PDF until the HTML version is ready.', 'filetoweb-integration' );
 
 			return '<details class="filetoweb-processing-help" style="display:inline-block;position:relative;margin-left:4px;vertical-align:middle;">'
 				. '<summary aria-label="' . esc_attr( __( 'About FileToWeb processing time', 'filetoweb-integration' ) ) . '" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1px solid #8c8f94;border-radius:50%;color:#2271b1;background:#fff;font-size:12px;font-weight:700;line-height:1;cursor:pointer;list-style:none;">'
@@ -425,7 +425,7 @@ class Admin {
 
 		$counts = Sync::poll_pending( Settings::batch_size() );
 
-		self::set_notice( self::format_counts( __( 'Poll', 'filetoweb-integration' ), $counts ) );
+		self::set_notice( self::format_counts( __( 'Status check', 'filetoweb-integration' ), $counts ) );
 		wp_safe_redirect( admin_url( 'options-general.php?page=' . self::PAGE_SLUG ) );
 		exit;
 	}
@@ -549,7 +549,7 @@ class Admin {
 			}
 		} else {
 			$result  = Sync::poll_post( $post_id );
-			$message = sprintf( __( 'FileToWeb poll %s.', 'filetoweb-integration' ), $result );
+			$message = sprintf( __( 'FileToWeb status check %s.', 'filetoweb-integration' ), $result );
 		}
 
 		self::set_notice( $message );
@@ -652,7 +652,7 @@ class Admin {
 		$actions['filetoweb_sync'] = '<a href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync with FileToWeb', 'filetoweb-integration' ) . '</a>';
 
 		if ( get_post_meta( $post->ID, Document_State::META_DOCUMENT_ID, true ) ) {
-			$actions['filetoweb_poll'] = '<a href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Poll FileToWeb', 'filetoweb-integration' ) . '</a>';
+			$actions['filetoweb_poll'] = '<a href="' . esc_url( self::admin_action_url( 'poll_now', $post->ID ) ) . '">' . esc_html__( 'Check FileToWeb progress', 'filetoweb-integration' ) . '</a>';
 			if ( 'failed' === get_post_meta( $post->ID, Document_State::META_STATUS, true ) ) {
 				$actions['filetoweb_retry'] = '<a href="' . esc_url( self::admin_action_url( 'retry_processing', $post->ID ) ) . '">' . esc_html__( 'Retry FileToWeb processing', 'filetoweb-integration' ) . '</a>';
 			}

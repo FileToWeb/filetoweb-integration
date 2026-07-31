@@ -368,7 +368,7 @@ class Meeting_Materials {
 				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
 			<?php endif; ?>
 			<?php if ( $document_id && 'failed' !== Security::sanitize_status( $status ) ) : ?>
-				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Poll status', 'filetoweb-integration' ); ?></a>
+				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Check now', 'filetoweb-integration' ); ?></a>
 			<?php endif; ?>
 			<span style="display:inline-block;margin-left:6px;vertical-align:middle;"><?php echo self::status_badge( $status ); ?></span>
 			<div style="font-size:12px;line-height:1.5;margin-top:4px;">
@@ -476,7 +476,7 @@ class Meeting_Materials {
 						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
 					<?php endif; ?>
 					<?php if ( $document_id && 'failed' !== Security::sanitize_status( $status ) ) : ?>
-						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Poll status', 'filetoweb-integration' ); ?></a>
+						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Check now', 'filetoweb-integration' ); ?></a>
 					<?php endif; ?>
 				<?php else : ?>
 					<span aria-hidden="true">&mdash;</span>
@@ -506,7 +506,7 @@ class Meeting_Materials {
 			$message = sprintf( __( 'Meeting PDF sync %s.', 'filetoweb-integration' ), isset( $result['status'] ) ? $result['status'] : 'complete' );
 		} else {
 			$result  = self::poll_material_now( $meeting_id, $slot );
-			$message = sprintf( __( 'Meeting PDF poll %s.', 'filetoweb-integration' ), $result );
+			$message = sprintf( __( 'Meeting PDF status check %s.', 'filetoweb-integration' ), $result );
 		}
 
 		Admin::set_notice( $message );

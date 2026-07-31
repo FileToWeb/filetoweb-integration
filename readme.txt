@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.34
+Stable tag: 0.1.35
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.35 =
+
+* Replaces polling terminology in WordPress admin actions with clear labels such as Check now, Check FileToWeb progress, and Check pending conversions.
+* Updates processing help and completion notices to use the same user-focused status-check language.
 
 = 0.1.34 =
 

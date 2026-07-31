@@ -129,7 +129,11 @@ class AdminStatusTest extends TestCase {
 	}
 
 	public function test_processing_status_renders_processing_time_help(): void {
-		$this->status = 'processing';
+		$this->status   = 'processing';
+		$this->can_sync = true;
+		$this->meta     = array(
+			Document_State::META_DOCUMENT_ID => 'doc-123',
+		);
 
 		$post            = new stdClass();
 		$post->ID        = 123;
@@ -144,6 +148,8 @@ class AdminStatusTest extends TestCase {
 		$this->assertStringContainsString( 'About FileToWeb processing time', $html );
 		$this->assertStringContainsString( 'up to 10 minutes', $html );
 		$this->assertStringContainsString( 'public links keep using the original PDF', $html );
+		$this->assertStringContainsString( 'Check now', $html );
+		$this->assertStringNotContainsString( 'Poll status', $html );
 	}
 
 	public function test_status_badge_processing_help_only_for_processing_state(): void {
