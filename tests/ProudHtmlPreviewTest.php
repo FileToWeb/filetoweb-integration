@@ -174,6 +174,108 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertContains( 'filetoweb-integration/previews/45/fingerprint456/index.html', $synced );
 	}
 
+	public function test_stateless_sync_preserves_nested_gcs_object_name(): void {
+		$filter_callback = null;
+		$resolved_name   = '';
+		$sync_args       = array();
+		$filter_removed  = false;
+
+		Functions\when( 'add_filter' )->alias(
+			function ( $hook, $callback, $priority, $accepted_args ) use ( &$filter_callback ) {
+				$this->assertSame( 'wp_stateless_file_name', $hook );
+				$this->assertSame( PHP_INT_MAX, $priority );
+				$this->assertSame( 2, $accepted_args );
+				$filter_callback = $callback;
+				return true;
+			}
+		);
+		Functions\when( 'remove_filter' )->alias(
+			function ( $hook, $callback, $priority ) use ( &$filter_callback, &$filter_removed ) {
+				$this->assertSame( 'wp_stateless_file_name', $hook );
+				$this->assertSame( $filter_callback, $callback );
+				$this->assertSame( PHP_INT_MAX, $priority );
+				$filter_removed = true;
+				return true;
+			}
+		);
+		Functions\when( 'do_action' )->alias(
+			function ( $hook, $name, $path, $forced, $args ) use ( &$filter_callback, &$resolved_name, &$sync_args ) {
+				$this->assertSame( 'sm:sync::syncFile', $hook );
+				$this->assertSame( '/tmp/index.html', $path );
+				$this->assertSame( 2, $forced );
+				$this->assertIsCallable( $filter_callback );
+
+				$sync_args     = $args;
+				$default_name  = 'delawarecountyin/2026/08/' . basename( $name );
+				$resolved_name = $filter_callback( $default_name, $args['name_with_root'] );
+			}
+		);
+
+		$method = new ReflectionMethod( Proud_HTML_Preview::class, 'sync_file_with_stateless' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$method->setAccessible( true );
+		}
+		$method->invoke(
+			null,
+			'filetoweb-integration/previews/10154/fingerprint/index.html',
+			'/tmp/index.html',
+			'gs://proudcity/delawarecountyin/2026/08'
+		);
+
+		$this->assertSame(
+			'delawarecountyin/2026/08/filetoweb-integration/previews/10154/fingerprint/index.html',
+			$resolved_name
+		);
+		$this->assertSame( 'filetoweb-preserve-object-name', $sync_args['name_with_root'] );
+		$this->assertFalse( $sync_args['ephemeral'] );
+		$this->assertTrue( $filter_removed );
+	}
+
+	public function test_stateless_sync_removes_object_name_filter_after_exception(): void {
+		$filter_callback = null;
+		$filter_removed  = false;
+
+		Functions\when( 'add_filter' )->alias(
+			function ( $hook, $callback ) use ( &$filter_callback ) {
+				$this->assertSame( 'wp_stateless_file_name', $hook );
+				$filter_callback = $callback;
+				return true;
+			}
+		);
+		Functions\when( 'remove_filter' )->alias(
+			function ( $hook, $callback ) use ( &$filter_callback, &$filter_removed ) {
+				$this->assertSame( 'wp_stateless_file_name', $hook );
+				$this->assertSame( $filter_callback, $callback );
+				$filter_removed = true;
+				return true;
+			}
+		);
+		Functions\when( 'do_action' )->alias(
+			function () {
+				throw new RuntimeException( 'Stateless sync failed.' );
+			}
+		);
+
+		$method = new ReflectionMethod( Proud_HTML_Preview::class, 'sync_file_with_stateless' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$method->setAccessible( true );
+		}
+
+		try {
+			$method->invoke(
+				null,
+				'filetoweb-integration/previews/10154/fingerprint/index.html',
+				'/tmp/index.html',
+				'gs://proudcity/delawarecountyin/2026/08'
+			);
+			$this->fail( 'Expected the WP Stateless exception to be rethrown.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'Stateless sync failed.', $exception->getMessage() );
+		}
+
+		$this->assertTrue( $filter_removed );
+	}
+
 	public function test_publish_fails_when_a_required_asset_cannot_be_mirrored(): void {
 		$record = Proud_HTML_Preview::publish(
 			48,

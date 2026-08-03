@@ -11,6 +11,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - ProudCity Document EPUB downloads are available as an opt-in setting and are off by default.
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
 - Ready FileToWeb output is published as a sanitized, fingerprinted bundle under WordPress uploads during sync/poll/admin actions, not during citizen page loads.
+- True WP Stateless installations preserve the bundle's complete nested Google Cloud Storage object paths when making preview artifacts public.
 - Each completed bundle publishes a provider-neutral `_proud_html_preview` record with a complete artifact manifest that updated ProudCity core/theme releases can serve after this plugin is deactivated and clean up after uninstall.
 - Public front-end PDF links are replaced with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.
 - ProudCity Meeting preview iframes can show the WordPress-local HTML copy while keeping Download buttons and literal material links pointed at the original PDF.

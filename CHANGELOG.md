@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.37
+
+- Preserve complete nested preview paths when publishing HTML bundles through WP Stateless in true Stateless mode.
+- Ensure the public-read update targets the same Google Cloud Storage object that WordPress created before verifying the preview URL.
+
+## 0.1.36
+
+- Make document and Meeting actions state-specific: Sync PDF now before submission, Check conversion progress while processing, no redundant action when ready, and Retry processing after failure.
+- Keep manual recovery available when a submission fails before FileToWeb assigns a document ID.
+
 ## 0.1.35
 
 - Replace polling terminology in WordPress admin actions with clear labels such as Check now, Check FileToWeb progress, and Check pending conversions.
