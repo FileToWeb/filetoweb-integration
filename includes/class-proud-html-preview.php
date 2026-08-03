@@ -732,17 +732,7 @@ class Proud_HTML_Preview {
 
 		foreach ( $files as $path ) {
 			$name = ltrim( str_replace( wp_normalize_path( $uploads_basedir ), '', wp_normalize_path( $path ) ), '/' );
-			do_action(
-				'sm:sync::syncFile',
-				$name,
-				$path,
-				2,
-				array(
-					'ephemeral'     => false,
-					'source'        => 'filetoweb-integration',
-					'source_version' => defined( 'FILETOWEB_INTEGRATION_VERSION' ) ? FILETOWEB_INTEGRATION_VERSION : '',
-				)
-			);
+			self::sync_file_with_stateless( $name, $path, $uploads_basedir );
 		}
 
 		foreach ( $files as $path ) {
@@ -768,6 +758,68 @@ class Proud_HTML_Preview {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Synchronize one artifact while preserving its complete GCS object name.
+	 *
+	 * WP Stateless 4.4.1 reduces non-media names to basename() in true
+	 * Stateless mode. Preview bundles contain nested, relative asset paths, so
+	 * allowing that behavior updates the ACL for a different object and leaves
+	 * the actual preview private. A scoped final filter restores the exact object
+	 * name for this synchronous sync call without affecting other uploads.
+	 *
+	 * @param string $name Relative artifact name below the uploads directory.
+	 * @param string $path Absolute artifact path.
+	 * @param string $uploads_basedir WordPress uploads base directory.
+	 */
+	private static function sync_file_with_stateless( $name, $path, $uploads_basedir ) {
+		$args = array(
+			'ephemeral'      => false,
+			'source'         => 'filetoweb-integration',
+			'source_version' => defined( 'FILETOWEB_INTEGRATION_VERSION' ) ? FILETOWEB_INTEGRATION_VERSION : '',
+		);
+
+		$object_name = self::stateless_object_name( $uploads_basedir, $name );
+
+		if ( ! $object_name ) {
+			do_action( 'sm:sync::syncFile', $name, $path, 2, $args );
+			return;
+		}
+
+		$marker = 'filetoweb-preserve-object-name';
+		$filter = function ( $filtered_name, $name_with_root ) use ( $marker, $object_name ) {
+			return $marker === $name_with_root ? $object_name : $filtered_name;
+		};
+
+		$args['name_with_root'] = $marker;
+		add_filter( 'wp_stateless_file_name', $filter, PHP_INT_MAX, 2 );
+
+		try {
+			do_action( 'sm:sync::syncFile', $name, $path, 2, $args );
+		} finally {
+			remove_filter( 'wp_stateless_file_name', $filter, PHP_INT_MAX );
+		}
+	}
+
+	/**
+	 * Build the exact bucket-relative object name for a gs:// uploads directory.
+	 *
+	 * @param string $uploads_basedir WordPress uploads base directory.
+	 * @param string $name Relative artifact name below the uploads directory.
+	 * @return string Empty outside true WP Stateless mode.
+	 */
+	private static function stateless_object_name( $uploads_basedir, $name ) {
+		$uploads_basedir = wp_normalize_path( (string) $uploads_basedir );
+		$parts           = parse_url( $uploads_basedir );
+
+		if ( ! is_array( $parts ) || ! isset( $parts['scheme'] ) || 'gs' !== strtolower( $parts['scheme'] ) ) {
+			return '';
+		}
+
+		$root = isset( $parts['path'] ) ? trim( $parts['path'], '/' ) : '';
+
+		return ltrim( ( $root ? $root . '/' : '' ) . ltrim( (string) $name, '/' ), '/' );
 	}
 
 	/**

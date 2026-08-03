@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.36
+Stable tag: 0.1.37
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.37 =
+
+* Preserves complete nested preview paths when publishing HTML bundles through WP Stateless in true Stateless mode.
+* Ensures the public-read update targets the same Google Cloud Storage object that WordPress created before verifying the preview URL.
 
 = 0.1.36 =
 
