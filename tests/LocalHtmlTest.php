@@ -226,4 +226,33 @@ class LocalHtmlTest extends TestCase {
 
 		$this->assertSame( 'updated', Local_HTML::poll_refresh_result( 123 ) );
 	}
+
+	public function test_refresh_preserves_the_preview_publication_stage_error(): void {
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) {
+				if ( 'https://filetoweb.com/d/demo/continuous?chrome=0' === $url ) {
+					return array(
+						'code' => 200,
+						'body' => '<html><body><img src="/d/demo/assets/missing.png"></body></html>',
+					);
+				}
+
+				return array(
+					'code' => 404,
+					'body' => '',
+				);
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+
+		$this->assertSame( 'failed', Local_HTML::refresh_for_post( 123 ) );
+		$this->assertSame(
+			'One or more FileToWeb preview assets could not be written to WordPress storage.',
+			$this->meta[123][ Document_State::META_LAST_ERROR ]
+		);
+	}
 }

@@ -133,7 +133,8 @@ class Local_HTML {
 			$record = Proud_HTML_Preview::publish( $post_id, $html, $viewer_url, $source_url, $fingerprint );
 
 			if ( ! $record ) {
-				update_post_meta( $post_id, Document_State::META_LAST_ERROR, __( 'FileToWeb local HTML cache could not be written.', 'filetoweb-integration' ) );
+				$error = Proud_HTML_Preview::last_publish_error();
+				update_post_meta( $post_id, Document_State::META_LAST_ERROR, $error ? $error : __( 'FileToWeb local HTML cache could not be written.', 'filetoweb-integration' ) );
 				return 'failed';
 			}
 		} else {
