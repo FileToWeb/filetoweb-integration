@@ -10,11 +10,120 @@ use FileToWeb\Integration\Proud_HTML_Preview;
 use FileToWeb\Integration\Settings;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * Minimal directory stream wrapper that proxies a cloud-style URL to disk.
+ */
+class FtwGsDirectoryStreamWrapper {
+	public $context;
+	public static $root = '';
+	private $directory_handle;
+	private $stream_handle;
+
+	public function dir_opendir( $path, $options ) {
+		unset( $options );
+		$this->directory_handle = @opendir( self::local_path( $path ) );
+
+		return (bool) $this->directory_handle;
+	}
+
+	public function dir_readdir() {
+		return readdir( $this->directory_handle );
+	}
+
+	public function dir_rewinddir() {
+		return rewinddir( $this->directory_handle );
+	}
+
+	public function dir_closedir() {
+		closedir( $this->directory_handle );
+		return true;
+	}
+
+	public function url_stat( $path, $flags ) {
+		unset( $flags );
+		$stat = @stat( self::local_path( $path ) );
+
+		return $stat ? $stat : false;
+	}
+
+	public function stream_open( $path, $mode, $options, &$opened_path ) {
+		unset( $options );
+		$local_path = self::local_path( $path );
+
+		if ( preg_match( '/[waxc+]/', $mode ) && ! is_dir( dirname( $local_path ) ) ) {
+			mkdir( dirname( $local_path ), 0777, true );
+		}
+
+		$this->stream_handle = fopen( $local_path, $mode );
+		$opened_path         = $path;
+
+		return (bool) $this->stream_handle;
+	}
+
+	public function stream_read( $count ) {
+		return fread( $this->stream_handle, $count );
+	}
+
+	public function stream_write( $data ) {
+		return fwrite( $this->stream_handle, $data );
+	}
+
+	public function stream_tell() {
+		return ftell( $this->stream_handle );
+	}
+
+	public function stream_eof() {
+		return feof( $this->stream_handle );
+	}
+
+	public function stream_seek( $offset, $whence = SEEK_SET ) {
+		return 0 === fseek( $this->stream_handle, $offset, $whence );
+	}
+
+	public function stream_flush() {
+		return fflush( $this->stream_handle );
+	}
+
+	public function stream_close() {
+		fclose( $this->stream_handle );
+	}
+
+	public function stream_stat() {
+		return fstat( $this->stream_handle );
+	}
+
+	public function mkdir( $path, $mode, $options ) {
+		return mkdir( self::local_path( $path ), $mode, (bool) ( $options & STREAM_MKDIR_RECURSIVE ) );
+	}
+
+	public function rename( $from, $to ) {
+		return rename( self::local_path( $from ), self::local_path( $to ) );
+	}
+
+	public function unlink( $path ) {
+		return unlink( self::local_path( $path ) );
+	}
+
+	public function rmdir( $path, $options ) {
+		unset( $options );
+		return rmdir( self::local_path( $path ) );
+	}
+
+	private static function local_path( $path ) {
+		$parts = parse_url( $path );
+		$host  = isset( $parts['host'] ) ? $parts['host'] : '';
+		$path  = isset( $parts['path'] ) ? $parts['path'] : '';
+
+		return rtrim( self::$root, '/' ) . '/' . $host . '/' . ltrim( $path, '/' );
+	}
+}
+
 class ProudHtmlPreviewTest extends TestCase {
 	private $uploads_dir = '';
 	private $meta        = array();
 	private $options     = array();
 	private $requests    = array();
+	private $use_stream_uploads = false;
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -23,6 +132,7 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->uploads_dir = sys_get_temp_dir() . '/ftw-proud-preview-' . uniqid();
 		$this->meta        = array();
 		$this->requests    = array();
+		$this->use_stream_uploads = false;
 		$this->options     = array(
 			Settings::OPTION_SETTINGS => array(
 				Settings::KEY_ENABLED       => '1',
@@ -47,6 +157,13 @@ class ProudHtmlPreviewTest extends TestCase {
 		Functions\when( 'wp_normalize_path' )->alias( function ( $value ) { return str_replace( '\\', '/', (string) $value ); } );
 		Functions\when( 'wp_upload_dir' )->alias(
 			function () {
+				if ( $this->use_stream_uploads ) {
+					return array(
+						'basedir' => 'ftwgs://proudcity/delawarecountyin',
+						'baseurl' => 'https://storage.googleapis.com/proudcity/delawarecountyin',
+					);
+				}
+
 				return array(
 					'basedir' => $this->uploads_dir,
 					'baseurl' => 'https://city.example/wp-content/uploads',
@@ -174,6 +291,77 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertContains( 'filetoweb-integration/previews/45/fingerprint456/index.html', $synced );
 	}
 
+	public function test_manifest_and_cleanup_support_stateless_stream_directories(): void {
+		if ( ! in_array( 'ftwgs', stream_get_wrappers(), true ) ) {
+			$this->assertTrue( stream_wrapper_register( 'ftwgs', FtwGsDirectoryStreamWrapper::class ) );
+		}
+
+		FtwGsDirectoryStreamWrapper::$root = $this->uploads_dir;
+
+		$relative_bundle = 'filetoweb-integration/previews/72/fingerprint72';
+		$local_bundle    = $this->uploads_dir . '/proudcity/delawarecountyin/' . $relative_bundle;
+		$remote_bundle   = 'ftwgs://proudcity/delawarecountyin/' . $relative_bundle;
+
+		mkdir( $local_bundle . '/assets', 0777, true );
+		file_put_contents( $local_bundle . '/index.html', '<html><body>Preview</body></html>' );
+		file_put_contents( $local_bundle . '/assets/layout.css', 'body { color: black; }' );
+
+		// PHP glob does not enumerate custom stream-wrapper directories.
+		$this->assertSame( array(), glob( $remote_bundle . '/*' ) );
+
+		$manifest_method = new ReflectionMethod( Proud_HTML_Preview::class, 'artifact_manifest' );
+		$cleanup_method  = new ReflectionMethod( Proud_HTML_Preview::class, 'remove_directory' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$manifest_method->setAccessible( true );
+			$cleanup_method->setAccessible( true );
+		}
+
+		$manifest = $manifest_method->invoke(
+			null,
+			$remote_bundle,
+			'ftwgs://proudcity/delawarecountyin',
+			'https://storage.googleapis.com/proudcity/delawarecountyin'
+		);
+
+		$this->assertSame(
+			array(
+				$relative_bundle . '/assets/layout.css',
+				$relative_bundle . '/index.html',
+			),
+			array_column( $manifest, 'artifact_key' )
+		);
+
+		$cleanup_method->invoke( null, $remote_bundle );
+		$this->assertDirectoryDoesNotExist( $local_bundle );
+	}
+
+	public function test_publish_completes_on_stateless_stream_directory(): void {
+		if ( ! in_array( 'ftwgs', stream_get_wrappers(), true ) ) {
+			$this->assertTrue( stream_wrapper_register( 'ftwgs', FtwGsDirectoryStreamWrapper::class ) );
+		}
+
+		FtwGsDirectoryStreamWrapper::$root = $this->uploads_dir;
+		$this->use_stream_uploads           = true;
+
+		$record = Proud_HTML_Preview::publish(
+			73,
+			'<html><body>Stateless preview</body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://storage.googleapis.com/proudcity/delawarecountyin/document.pdf',
+			'stateless-fingerprint'
+		);
+
+		$this->assertIsArray( $record, Proud_HTML_Preview::last_publish_error() );
+		$this->assertSame(
+			'filetoweb-integration/previews/73/statelessfingerprint/index.html',
+			$record['artifact_key']
+		);
+		$this->assertSame( $record['artifact_key'], $record['artifacts'][0]['artifact_key'] );
+		$this->assertFileExists(
+			$this->uploads_dir . '/proudcity/delawarecountyin/' . $record['artifact_key']
+		);
+	}
+
 	public function test_stateless_sync_preserves_nested_gcs_object_name(): void {
 		$filter_callback = null;
 		$resolved_name   = '';
@@ -286,6 +474,7 @@ class ProudHtmlPreviewTest extends TestCase {
 		);
 
 		$this->assertFalse( $record );
+		$this->assertSame( 'One or more FileToWeb preview assets could not be written to WordPress storage.', Proud_HTML_Preview::last_publish_error() );
 		$this->assertArrayNotHasKey( 48, $this->meta );
 		$this->assertFileDoesNotExist( $this->uploads_dir . '/filetoweb-integration/previews/48/missingassetfingerprint/index.html' );
 	}
@@ -304,6 +493,7 @@ class ProudHtmlPreviewTest extends TestCase {
 		);
 
 		$this->assertFalse( $record );
+		$this->assertSame( 'FileToWeb preview files could not be verified in WordPress storage.', Proud_HTML_Preview::last_publish_error() );
 		$this->assertArrayNotHasKey( 49, $this->meta );
 	}
 

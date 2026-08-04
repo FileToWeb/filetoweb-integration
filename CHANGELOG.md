@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.39
+
+- Enumerate and clean preview bundles through stream-wrapper-compatible directory reads so true WP Stateless `gs://` storage can produce a complete artifact manifest.
+- Preserve customer-safe publication-stage errors so a later storage or verification failure is distinguishable from bundle creation.
+
 ## 0.1.38
 
 - Add a Refresh embedded preview action for ready Proud Documents in the editor and document list.

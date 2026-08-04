@@ -22,6 +22,13 @@ class Proud_HTML_Preview {
 	const BUNDLE_ROOT              = 'filetoweb-integration/previews';
 
 	/**
+	 * Customer-safe reason the latest publication attempt failed.
+	 *
+	 * @var string
+	 */
+	private static $last_publish_error = '';
+
+	/**
 	 * Register preview publication lifecycle hooks.
 	 */
 	public static function init() {
@@ -89,6 +96,8 @@ class Proud_HTML_Preview {
 	 * @return array|false Preview record or false.
 	 */
 	public static function publish( $post_id, $html, $viewer_url, $source_url, $fingerprint ) {
+		self::$last_publish_error = '';
+
 		$post_id     = absint( $post_id );
 		$html        = is_string( $html ) ? trim( $html ) : '';
 		$viewer_url  = Security::sanitize_filetoweb_url( $viewer_url );
@@ -96,7 +105,7 @@ class Proud_HTML_Preview {
 		$fingerprint = self::sanitize_fingerprint( $fingerprint );
 
 		if ( ! $post_id || ! $html || ! $viewer_url || ! $source_url || ! $fingerprint ) {
-			return false;
+			return self::publish_failure( __( 'FileToWeb preview publication data was incomplete.', 'filetoweb-integration' ) );
 		}
 
 		$uploads = wp_upload_dir();
@@ -104,7 +113,7 @@ class Proud_HTML_Preview {
 		$baseurl = isset( $uploads['baseurl'] ) ? untrailingslashit( $uploads['baseurl'] ) : '';
 
 		if ( ! $basedir || ! $baseurl ) {
-			return false;
+			return self::publish_failure( __( 'WordPress storage is unavailable for the FileToWeb preview.', 'filetoweb-integration' ) );
 		}
 
 		$hash         = self::fingerprint_slug( $fingerprint );
@@ -118,12 +127,12 @@ class Proud_HTML_Preview {
 			$manifest  = self::artifact_manifest( $bundle_dir, $basedir, $baseurl );
 			$algorithm = sanitize_key( get_post_meta( $post_id, Document_State::META_SOURCE_FINGERPRINT_ALGORITHM, true ) );
 			if ( empty( $manifest ) ) {
-				return false;
+				return self::publish_failure( __( 'FileToWeb preview files could not be enumerated in WordPress storage.', 'filetoweb-integration' ) );
 			}
 
 			if ( empty( $current['artifacts'] ) || $manifest !== $current['artifacts'] || $algorithm !== ( isset( $current['source_fingerprint_algorithm'] ) ? $current['source_fingerprint_algorithm'] : '' ) ) {
 				if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl ) ) {
-					return false;
+					return self::publish_failure( __( 'FileToWeb preview files could not be verified in WordPress storage.', 'filetoweb-integration' ) );
 				}
 
 				$current['artifacts']                    = $manifest;
@@ -137,12 +146,12 @@ class Proud_HTML_Preview {
 
 		$parent_dir = dirname( $bundle_dir );
 		if ( ! wp_mkdir_p( $parent_dir ) ) {
-			return false;
+			return self::publish_failure( __( 'WordPress storage could not create the FileToWeb preview directory.', 'filetoweb-integration' ) );
 		}
 
 		$temp_dir = $bundle_dir . '.tmp-' . strtolower( wp_generate_password( 10, false, false ) );
 		if ( ! wp_mkdir_p( $temp_dir ) ) {
-			return false;
+			return self::publish_failure( __( 'WordPress storage could not create the temporary FileToWeb preview directory.', 'filetoweb-integration' ) );
 		}
 
 		$bundle_url = dirname( $artifact_url );
@@ -152,14 +161,14 @@ class Proud_HTML_Preview {
 
 		if ( ! $complete ) {
 			self::remove_directory( $temp_dir );
-			return false;
+			return self::publish_failure( __( 'One or more FileToWeb preview assets could not be written to WordPress storage.', 'filetoweb-integration' ) );
 		}
 
 		$html       = self::sanitize_html( $html );
 
 		if ( ! $html || self::contains_filetoweb_asset_reference( $html, $viewer_url ) || false === file_put_contents( trailingslashit( $temp_dir ) . 'index.html', $html ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_file_put_contents
 			self::remove_directory( $temp_dir );
-			return false;
+			return self::publish_failure( __( 'FileToWeb preview HTML could not be written to WordPress storage.', 'filetoweb-integration' ) );
 		}
 
 		if ( is_dir( $bundle_dir ) && is_readable( $index_path ) ) {
@@ -169,19 +178,19 @@ class Proud_HTML_Preview {
 
 			if ( ! rename( $bundle_dir, $stale_dir ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
 				self::remove_directory( $temp_dir );
-				return false;
+				return self::publish_failure( __( 'The existing FileToWeb preview bundle could not be prepared for replacement.', 'filetoweb-integration' ) );
 			}
 
 			if ( ! rename( $temp_dir, $bundle_dir ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
 				rename( $stale_dir, $bundle_dir ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
 				self::remove_directory( $temp_dir );
-				return false;
+				return self::publish_failure( __( 'The FileToWeb preview bundle could not be finalized in WordPress storage.', 'filetoweb-integration' ) );
 			}
 
 			self::remove_directory( $stale_dir );
 		} elseif ( ! rename( $temp_dir, $bundle_dir ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
 			self::remove_directory( $temp_dir );
-			return false;
+			return self::publish_failure( __( 'The FileToWeb preview bundle could not be finalized in WordPress storage.', 'filetoweb-integration' ) );
 		}
 
 		$token        = wp_generate_password( 40, false, false );
@@ -190,7 +199,7 @@ class Proud_HTML_Preview {
 		$manifest     = self::artifact_manifest( $bundle_dir, $basedir, $baseurl );
 
 		if ( empty( $manifest ) ) {
-			return false;
+			return self::publish_failure( __( 'FileToWeb preview files could not be enumerated in WordPress storage.', 'filetoweb-integration' ) );
 		}
 
 		$record       = array(
@@ -207,7 +216,7 @@ class Proud_HTML_Preview {
 		);
 
 		if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl ) ) {
-			return false;
+			return self::publish_failure( __( 'FileToWeb preview files could not be verified in WordPress storage.', 'filetoweb-integration' ) );
 		}
 
 		update_post_meta( $post_id, self::META_KEY, $record );
@@ -215,6 +224,27 @@ class Proud_HTML_Preview {
 		self::ensure_provider_state();
 
 		return $record;
+	}
+
+	/**
+	 * Return the customer-safe reason the latest publication attempt failed.
+	 *
+	 * @return string
+	 */
+	public static function last_publish_error() {
+		return self::$last_publish_error;
+	}
+
+	/**
+	 * Store a customer-safe publication failure.
+	 *
+	 * @param string $message Failure message.
+	 * @return false
+	 */
+	private static function publish_failure( $message ) {
+		self::$last_publish_error = sanitize_text_field( $message );
+
+		return false;
 	}
 
 	/**
@@ -823,22 +853,34 @@ class Proud_HTML_Preview {
 	}
 
 	/**
-	 * Return files recursively without relying on WordPress filesystem APIs.
+	 * Return files recursively through local or stream-wrapper directories.
 	 *
 	 * @param string $dir Directory.
 	 * @return array
 	 */
 	private static function files_in_directory( $dir ) {
-		$files = array();
-		$items = glob( trailingslashit( $dir ) . '*' );
+		$files  = array();
+		$handle = @opendir( $dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 
-		foreach ( is_array( $items ) ? $items : array() as $item ) {
-			if ( is_dir( $item ) ) {
-				$files = array_merge( $files, self::files_in_directory( $item ) );
-			} elseif ( is_file( $item ) ) {
-				$files[] = $item;
+		if ( false === $handle ) {
+			return $files;
+		}
+
+		while ( false !== ( $name = readdir( $handle ) ) ) { // phpcs:ignore WordPress.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition
+			if ( '.' === $name || '..' === $name ) {
+				continue;
+			}
+
+			$path = trailingslashit( $dir ) . $name;
+
+			if ( is_dir( $path ) ) {
+				$files = array_merge( $files, self::files_in_directory( $path ) );
+			} elseif ( is_file( $path ) ) {
+				$files[] = $path;
 			}
 		}
+
+		closedir( $handle );
 
 		return $files;
 	}
@@ -849,13 +891,24 @@ class Proud_HTML_Preview {
 	 * @param string $dir Directory.
 	 */
 	private static function remove_directory( $dir ) {
-		foreach ( self::files_in_directory( $dir ) as $file ) {
-			unlink( $file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
-		}
+		$handle = @opendir( $dir ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 
-		$dirs = glob( trailingslashit( $dir ) . '*', GLOB_ONLYDIR );
-		foreach ( is_array( $dirs ) ? array_reverse( $dirs ) : array() as $child ) {
-			self::remove_directory( $child );
+		if ( false !== $handle ) {
+			while ( false !== ( $name = readdir( $handle ) ) ) { // phpcs:ignore WordPress.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition
+				if ( '.' === $name || '..' === $name ) {
+					continue;
+				}
+
+				$path = trailingslashit( $dir ) . $name;
+
+				if ( is_dir( $path ) ) {
+					self::remove_directory( $path );
+				} elseif ( is_file( $path ) ) {
+					unlink( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
+				}
+			}
+
+			closedir( $handle );
 		}
 
 		if ( is_dir( $dir ) ) {
