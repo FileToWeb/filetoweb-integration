@@ -153,6 +153,8 @@ class LocalHtmlTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
+		Local_HTML::clear_poll_refresh_result( 123 );
+
 		if ( $this->uploads_dir && is_dir( $this->uploads_dir ) ) {
 			$this->remove_dir( $this->uploads_dir );
 		}
@@ -209,5 +211,19 @@ class LocalHtmlTest extends TestCase {
 			'https://example.test/?filetoweb_local_html=123&ftw_token=token-123',
 			Local_HTML::local_url( 123 )
 		);
+	}
+
+	public function test_poll_refresh_result_tracks_preview_publication(): void {
+		Local_HTML::clear_poll_refresh_result( 123 );
+		$this->assertSame( '', Local_HTML::poll_refresh_result( 123 ) );
+
+		Local_HTML::refresh_after_poll(
+			123,
+			array(
+				'continuous_url' => 'https://filetoweb.com/d/demo/continuous',
+			)
+		);
+
+		$this->assertSame( 'updated', Local_HTML::poll_refresh_result( 123 ) );
 	}
 }

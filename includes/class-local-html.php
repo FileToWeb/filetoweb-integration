@@ -16,6 +16,13 @@ class Local_HTML {
 	const QUERY_VAR_TOKEN   = 'ftw_token';
 
 	/**
+	 * Per-request publication results produced by status polling.
+	 *
+	 * @var array
+	 */
+	private static $poll_refresh_results = array();
+
+	/**
 	 * Register hooks.
 	 */
 	public static function init() {
@@ -43,7 +50,30 @@ class Local_HTML {
 	 * @param array $document API document.
 	 */
 	public static function refresh_after_poll( $post_id, $document ) {
-		self::refresh_for_post( $post_id, $document );
+		$post_id = absint( $post_id );
+
+		self::$poll_refresh_results[ $post_id ] = self::refresh_for_post( $post_id, $document );
+	}
+
+	/**
+	 * Return the publication result produced by the latest poll in this request.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return string Result, or an empty string when polling did not reach publication.
+	 */
+	public static function poll_refresh_result( $post_id ) {
+		$post_id = absint( $post_id );
+
+		return isset( self::$poll_refresh_results[ $post_id ] ) ? self::$poll_refresh_results[ $post_id ] : '';
+	}
+
+	/**
+	 * Clear a prior per-request poll publication result.
+	 *
+	 * @param int $post_id Post ID.
+	 */
+	public static function clear_poll_refresh_result( $post_id ) {
+		unset( self::$poll_refresh_results[ absint( $post_id ) ] );
 	}
 
 	/**

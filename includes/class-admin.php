@@ -23,6 +23,7 @@ class Admin {
 		add_action( 'add_meta_boxes', array( __CLASS__, 'add_meta_boxes' ) );
 		add_action( 'admin_post_filetoweb_integration_sync_now', array( __CLASS__, 'handle_sync_now' ) );
 		add_action( 'admin_post_filetoweb_integration_poll_now', array( __CLASS__, 'handle_poll_now' ) );
+		add_action( 'admin_post_filetoweb_integration_refresh_preview', array( __CLASS__, 'handle_refresh_preview' ) );
 		add_action( 'admin_post_filetoweb_integration_retry_processing', array( __CLASS__, 'handle_retry_processing' ) );
 		add_action( 'admin_post_filetoweb_integration_backfill', array( __CLASS__, 'handle_backfill' ) );
 		add_action( 'admin_post_filetoweb_integration_poll_pending', array( __CLASS__, 'handle_poll_pending' ) );
@@ -278,6 +279,8 @@ class Admin {
 				}
 			} elseif ( 'not_synced' === $state ) {
 				$action = '<a class="button" href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync PDF now', 'filetoweb-integration' ) . '</a>';
+			} elseif ( 'ready' === $state && $document_id ) {
+				$action = '<a class="button" href="' . esc_url( self::admin_action_url( 'refresh_preview', $post->ID ) ) . '">' . esc_html__( 'Refresh embedded preview', 'filetoweb-integration' ) . '</a>';
 			}
 
 			if ( $action ) {
@@ -400,6 +403,13 @@ class Admin {
 	}
 
 	/**
+	 * Handle an explicit ready-preview refresh.
+	 */
+	public static function handle_refresh_preview() {
+		self::handle_post_action( 'refresh_preview' );
+	}
+
+	/**
 	 * Handle an explicit failed-document retry.
 	 */
 	public static function handle_retry_processing() {
@@ -512,7 +522,8 @@ class Admin {
 		$notice = self::get_notice();
 
 		if ( $notice ) {
-			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html( $notice ) . '</p></div>';
+			$class = 'error' === $notice['type'] ? 'notice-error' : 'notice-success';
+			echo '<div class="notice ' . esc_attr( $class ) . ' is-dismissible"><p>' . esc_html( $notice['message'] ) . '</p></div>';
 		}
 
 		$connection_notice = self::get_connection_notice();
@@ -530,6 +541,7 @@ class Admin {
 	 */
 	private static function handle_post_action( $action ) {
 		$post_id = isset( $_GET['post_id'] ) ? absint( wp_unslash( $_GET['post_id'] ) ) : 0;
+		$notice_type = 'success';
 
 		if ( ! self::can_sync_post( $post_id ) ) {
 			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
@@ -557,12 +569,28 @@ class Admin {
 				);
 				$message = __( 'FileToWeb could not queue the retry. Review the error and try again.', 'filetoweb-integration' );
 			}
+		} elseif ( 'refresh_preview' === $action ) {
+			Local_HTML::clear_poll_refresh_result( $post_id );
+			$poll_result    = Sync::poll_post( $post_id );
+			$refresh_result = Local_HTML::poll_refresh_result( $post_id );
+			$source_url     = get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
+			$has_preview    = ! $source_url || (bool) Proud_HTML_Preview::record_for_post( $post_id );
+
+			if ( in_array( $refresh_result, array( 'updated', 'current' ), true ) && $has_preview ) {
+				$message = __( 'FileToWeb embedded preview refreshed.', 'filetoweb-integration' );
+			} else {
+				$error       = get_post_meta( $post_id, Document_State::META_LAST_ERROR, true );
+				$notice_type = 'error';
+				$message     = $error
+					? sprintf( __( 'FileToWeb could not refresh the embedded preview: %s', 'filetoweb-integration' ), $error )
+					: sprintf( __( 'FileToWeb could not refresh the embedded preview. Status check: %s.', 'filetoweb-integration' ), $poll_result );
+			}
 		} else {
 			$result  = Sync::poll_post( $post_id );
 			$message = sprintf( __( 'FileToWeb status check %s.', 'filetoweb-integration' ), $result );
 		}
 
-		self::set_notice( $message );
+		self::set_notice( $message, $notice_type );
 
 		$redirect = wp_get_referer();
 
@@ -673,6 +701,8 @@ class Admin {
 			$actions[ $document_id ? 'filetoweb_retry' : 'filetoweb_sync' ] = $document_id
 				? '<a href="' . esc_url( self::admin_action_url( 'retry_processing', $post->ID ) ) . '">' . esc_html__( 'Retry FileToWeb processing', 'filetoweb-integration' ) . '</a>'
 				: '<a href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Retry FileToWeb sync', 'filetoweb-integration' ) . '</a>';
+		} elseif ( 'ready' === $state && $document_id ) {
+			$actions['filetoweb_refresh_preview'] = '<a href="' . esc_url( self::admin_action_url( 'refresh_preview', $post->ID ) ) . '">' . esc_html__( 'Refresh embedded preview', 'filetoweb-integration' ) . '</a>';
 		}
 
 		return $actions;
@@ -728,15 +758,23 @@ class Admin {
 	 * Set a current-user transient notice.
 	 *
 	 * @param string $message Message.
+	 * @param string $type Notice type.
 	 */
-	public static function set_notice( $message ) {
-		set_transient( self::notice_key(), sanitize_text_field( $message ), 60 );
+	public static function set_notice( $message, $type = 'success' ) {
+		set_transient(
+			self::notice_key(),
+			array(
+				'type'    => 'error' === $type ? 'error' : 'success',
+				'message' => sanitize_text_field( $message ),
+			),
+			60
+		);
 	}
 
 	/**
 	 * Get and clear current-user transient notice.
 	 *
-	 * @return string
+	 * @return array|null
 	 */
 	private static function get_notice() {
 		$key    = self::notice_key();
@@ -746,7 +784,22 @@ class Admin {
 			delete_transient( $key );
 		}
 
-		return $notice ? sanitize_text_field( $notice ) : '';
+		if ( is_array( $notice ) ) {
+			return ! empty( $notice['message'] )
+				? array(
+					'type'    => isset( $notice['type'] ) && 'error' === $notice['type'] ? 'error' : 'success',
+					'message' => sanitize_text_field( $notice['message'] ),
+				)
+				: null;
+		}
+
+		// Preserve notices stored by plugin versions before typed notices.
+		return $notice
+			? array(
+				'type'    => 'success',
+				'message' => sanitize_text_field( $notice ),
+			)
+			: null;
 	}
 
 	/**

@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.37
+Stable tag: 0.1.38
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.38 =
+
+* Adds a Refresh embedded preview action for ready Proud Documents in the editor and document list.
+* Re-checks the existing FileToWeb document and republishes its WordPress preview without uploading or reconverting the PDF.
 
 = 0.1.37 =
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.38
+
+- Add a Refresh embedded preview action for ready Proud Documents in the editor and document list.
+- Re-check the existing FileToWeb document and republish its WordPress preview without uploading or reconverting the PDF.
+
 ## 0.1.37
 
 - Preserve complete nested preview paths when publishing HTML bundles through WP Stateless in true Stateless mode.
