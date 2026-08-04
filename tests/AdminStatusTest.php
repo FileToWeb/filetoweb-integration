@@ -134,6 +134,8 @@ class AdminStatusTest extends TestCase {
 		$this->assertStringNotContainsString( 'Sync PDF now', $html );
 		$this->assertStringNotContainsString( 'Check conversion progress', $html );
 		$this->assertStringNotContainsString( 'Retry processing', $html );
+		$this->assertStringContainsString( 'Refresh embedded preview', $html );
+		$this->assertStringContainsString( 'filetoweb_integration_refresh_preview', $html );
 	}
 
 	public function test_not_synced_status_only_renders_sync_action(): void {
@@ -276,7 +278,8 @@ class AdminStatusTest extends TestCase {
 
 		$this->status = 'ready';
 		$ready        = Admin::add_document_row_actions( array(), $post );
-		$this->assertSame( array(), $ready );
+		$this->assertStringContainsString( 'Refresh embedded preview', implode( ' ', $ready ) );
+		$this->assertStringContainsString( 'filetoweb_integration_refresh_preview', implode( ' ', $ready ) );
 
 		$this->status = 'failed';
 		$failed       = Admin::add_document_row_actions( array(), $post );
@@ -291,6 +294,39 @@ class AdminStatusTest extends TestCase {
 		$this->status = 'failed';
 		$failed       = Admin::add_document_row_actions( array(), $post );
 		$this->assertStringContainsString( 'Retry FileToWeb sync', implode( ' ', $failed ) );
+	}
+
+	public function test_error_notice_is_rendered_with_error_styling(): void {
+		$transients = array();
+
+		Functions\when( 'get_current_user_id' )->justReturn( 7 );
+		Functions\when( 'set_transient' )->alias(
+			function ( $key, $value ) use ( &$transients ) {
+				$transients[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'get_transient' )->alias(
+			function ( $key ) use ( &$transients ) {
+				return isset( $transients[ $key ] ) ? $transients[ $key ] : false;
+			}
+		);
+		Functions\when( 'delete_transient' )->alias(
+			function ( $key ) use ( &$transients ) {
+				unset( $transients[ $key ] );
+				return true;
+			}
+		);
+
+		Admin::set_notice( 'The embedded preview could not be refreshed.', 'error' );
+
+		ob_start();
+		Admin::render_admin_notice();
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'notice-error', $html );
+		$this->assertStringContainsString( 'The embedded preview could not be refreshed.', $html );
+		$this->assertStringNotContainsString( 'notice-success', $html );
 	}
 
 	public function test_connection_notice_names_the_workspace_and_folder(): void {
