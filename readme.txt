@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.39
+Stable tag: 0.1.40
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -76,6 +76,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.40 =
+
+* Refreshes ProudCity previews against the linked attachment that owns the public preview record, then copies the refreshed FileToWeb state back to the Document.
+* Keeps attachment-less Proud Documents and direct attachment refreshes on their existing source records.
 
 = 0.1.39 =
 

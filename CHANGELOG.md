@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.40
+
+- Refresh ProudCity previews against the linked attachment that owns the public preview record, then copy the refreshed FileToWeb state back to the Document.
+- Keep attachment-less Proud Documents and direct attachment refreshes on their existing source records.
+
 ## 0.1.39
 
 - Enumerate and clean preview bundles through stream-wrapper-compatible directory reads so true WP Stateless `gs://` storage can produce a complete artifact manifest.
