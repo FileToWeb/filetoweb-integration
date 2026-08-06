@@ -570,16 +570,27 @@ class Admin {
 				$message = __( 'FileToWeb could not queue the retry. Review the error and try again.', 'filetoweb-integration' );
 			}
 		} elseif ( 'refresh_preview' === $action ) {
-			Local_HTML::clear_poll_refresh_result( $post_id );
-			$poll_result    = Sync::poll_post( $post_id );
-			$refresh_result = Local_HTML::poll_refresh_result( $post_id );
-			$source_url     = get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
-			$has_preview    = ! $source_url || (bool) Proud_HTML_Preview::record_for_post( $post_id );
+			$refresh_post_id = Source_Resolver::preview_owner_post_id( $post_id );
+
+			if ( $refresh_post_id !== $post_id && ! get_post_meta( $refresh_post_id, Document_State::META_DOCUMENT_ID, true ) ) {
+				Document_State::copy_state( $post_id, $refresh_post_id );
+			}
+
+			Local_HTML::clear_poll_refresh_result( $refresh_post_id );
+			$poll_result    = Sync::poll_post( $refresh_post_id );
+			$refresh_result = Local_HTML::poll_refresh_result( $refresh_post_id );
+
+			if ( $refresh_post_id !== $post_id ) {
+				Document_State::copy_state( $refresh_post_id, $post_id );
+			}
+
+			$source_url  = get_post_meta( $refresh_post_id, Document_State::META_ORIGINAL_URL, true );
+			$has_preview = ! $source_url || (bool) Proud_HTML_Preview::record_for_post( $refresh_post_id );
 
 			if ( in_array( $refresh_result, array( 'updated', 'current' ), true ) && $has_preview ) {
 				$message = __( 'FileToWeb embedded preview refreshed.', 'filetoweb-integration' );
 			} else {
-				$error       = get_post_meta( $post_id, Document_State::META_LAST_ERROR, true );
+				$error       = get_post_meta( $refresh_post_id, Document_State::META_LAST_ERROR, true );
 				$notice_type = 'error';
 				$message     = $error
 					? sprintf( __( 'FileToWeb could not refresh the embedded preview: %s', 'filetoweb-integration' ), $error )

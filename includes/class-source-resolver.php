@@ -208,6 +208,29 @@ class Source_Resolver {
 	}
 
 	/**
+	 * Return the post that owns the public preview for a source post.
+	 *
+	 * ProudCity Document templates prefer the linked attachment ID from the
+	 * document metadata. Refresh actions must publish the preview against that
+	 * same attachment so the public template can resolve it.
+	 *
+	 * @param int $post_id Source post ID.
+	 * @return int
+	 */
+	public static function preview_owner_post_id( $post_id ) {
+		$post_id = absint( $post_id );
+
+		if ( ! $post_id || 'document' !== get_post_type( $post_id ) ) {
+			return $post_id;
+		}
+
+		$meta          = self::parse_document_meta( get_post_meta( $post_id, 'document_meta', true ) );
+		$attachment_id = is_array( $meta ) && ! empty( $meta['fid'] ) ? absint( $meta['fid'] ) : 0;
+
+		return $attachment_id && 'attachment' === get_post_type( $attachment_id ) ? $attachment_id : $post_id;
+	}
+
+	/**
 	 * Parse Proud Document metadata defensively.
 	 *
 	 * @param mixed $meta_raw Raw metadata.
