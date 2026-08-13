@@ -428,8 +428,9 @@ class Link_Rewriter {
 	 */
 	private static function ready_replacement_url( $html_url, $post_id, $context, $source_url = '' ) {
 		$html_url = Security::sanitize_filetoweb_url( $html_url );
+		$owner_id = Source_Resolver::preview_owner_post_id( $post_id );
 
-		if ( ! $html_url ) {
+		if ( ! $html_url || Proud_HTML_Preview::is_public_paused( $owner_id ) ) {
 			return '';
 		}
 
@@ -711,8 +712,14 @@ class Link_Rewriter {
 		);
 
 		foreach ( $posts as $post_id ) {
-				$html_url    = Document_State::ready_html_url( $post_id );
-				$preview_url = Local_HTML::local_url( $post_id );
+			$owner_id = Source_Resolver::preview_owner_post_id( $post_id );
+
+			if ( Proud_HTML_Preview::is_public_paused( $owner_id ) ) {
+				continue;
+			}
+
+			$html_url    = Document_State::ready_html_url( $post_id );
+			$preview_url = Local_HTML::local_url( $post_id );
 
 				if ( $html_url && $preview_url ) {
 					self::$preview_url_map[ Security::normalize_public_url_key( $html_url ) ] = $preview_url;

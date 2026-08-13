@@ -31,10 +31,12 @@ global $wpdb;
 if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) ) {
 	$preview_rows = $wpdb->get_results(
 		$wpdb->prepare(
-			"SELECT meta_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key = %s",
-			'_proud_html_preview'
+			"SELECT meta_id, meta_value FROM {$wpdb->postmeta} WHERE meta_key IN (%s, %s)",
+			'_proud_html_preview',
+			'_filetoweb_paused_html_preview'
 		)
 	);
+	$queued_artifacts = array();
 
 	foreach ( is_array( $preview_rows ) ? $preview_rows : array() as $row ) {
 		$value = isset( $row->meta_value ) ? maybe_unserialize( $row->meta_value ) : null;
@@ -53,7 +55,12 @@ if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) 
 
 		foreach ( $artifacts as $artifact ) {
 			if ( function_exists( '\\Proud\\Core\\proud_html_preview_queue_cleanup' ) && ! empty( $artifact['artifact_key'] ) && ! empty( $artifact['artifact_url'] ) ) {
-				call_user_func( '\\Proud\\Core\\proud_html_preview_queue_cleanup', 'filetoweb', $artifact['artifact_key'], $artifact['artifact_url'] );
+				$artifact_identity = (string) $artifact['artifact_key'] . '|' . (string) $artifact['artifact_url'];
+
+				if ( ! isset( $queued_artifacts[ $artifact_identity ] ) ) {
+					call_user_func( '\\Proud\\Core\\proud_html_preview_queue_cleanup', 'filetoweb', $artifact['artifact_key'], $artifact['artifact_url'] );
+					$queued_artifacts[ $artifact_identity ] = true;
+				}
 			}
 		}
 
@@ -105,6 +112,8 @@ $meta_keys = array(
 	'_filetoweb_pdf_to_page_notified_at',
 	'_filetoweb_pdf_to_page_completed_at',
 	'_filetoweb_source_post_id',
+	'_filetoweb_public_replacement_paused',
+	'_filetoweb_paused_html_preview',
 );
 
 foreach ( $meta_keys as $meta_key ) {

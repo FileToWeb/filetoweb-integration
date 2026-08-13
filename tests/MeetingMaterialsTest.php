@@ -553,6 +553,43 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringNotContainsString( 'Sync this PDF', $output );
 	}
 
+	public function test_pause_material_requires_permission_on_shared_attachment(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment' => 101,
+		);
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__ . '.pdf';
+
+		Functions\when( 'current_user_can' )->alias(
+			function ( $capability, $post_id = 0 ) {
+				if ( 'edit_post' === $capability ) {
+					return 55 === absint( $post_id );
+				}
+
+				return true;
+			}
+		);
+		Functions\when( 'check_admin_referer' )->justReturn( true );
+		Functions\when( 'wp_die' )->alias(
+			function ( $message ) {
+				throw new RuntimeException( $message );
+			}
+		);
+
+		$_GET['meeting_id'] = '55';
+		$_GET['slot']       = 'agenda';
+
+		try {
+			Meeting_Materials::handle_pause_material();
+			$this->fail( 'Expected attachment authorization to stop the request.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'Unauthorized', $exception->getMessage() );
+		} finally {
+			unset( $_GET['meeting_id'], $_GET['slot'] );
+		}
+	}
+
 	public function test_meeting_material_metabox_renders_processing_time_help(): void {
 		$this->meeting_meta[55] = array(
 			'agenda_attachment' => 101,

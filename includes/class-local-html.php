@@ -204,6 +204,12 @@ class Local_HTML {
 	 * @return string
 	 */
 	public static function public_url_for_post( $post_id ) {
+		$owner_post_id = Source_Resolver::preview_owner_post_id( $post_id );
+
+		if ( Proud_HTML_Preview::is_public_paused( $owner_post_id ) ) {
+			return '';
+		}
+
 		$page_url = Native_Page::approved_page_url( $post_id );
 
 		if ( $page_url ) {
@@ -297,7 +303,7 @@ class Local_HTML {
 		$html = preg_replace( '~<script\b[^>]*>.*?</script>~is', '', $html );
 		$html = preg_replace( '~<meta\b[^>]*name=(["\'])ftw-tabbar\1[^>]*>~is', '', $html );
 
-		$hide_shell = '<style data-filetoweb-local-viewer="v1">.ftw-tabbar,[data-ftw-tabbar],.ftw-page-filename,.ftw-static-bundle-heading{display:none!important}.ftw-page-body{margin:0}.ftw-shell{padding-top:0!important}</style>';
+		$hide_shell = '<style data-filetoweb-local-viewer="v1">.ftw-tabbar,[data-ftw-tabbar],.ftw-page-filename,.ftw-static-bundle-heading{display:none!important}.ftw-page-body{margin:0}.ftw-shell{padding-top:0!important}.ftw-generated-root{box-sizing:border-box!important;max-width:100%!important;min-width:0!important}</style>';
 
 		if ( false !== stripos( $html, '</head>' ) ) {
 			$html = preg_replace( '~</head>~i', $hide_shell . '</head>', $html, 1 );

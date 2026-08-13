@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.41
+
+- Add a per-PDF **Show original PDF publicly** control for Proud Documents, Media PDFs, and individual Meeting materials.
+- Keep conversion, editing, and local preview updates running while a source is paused, without republishing it automatically.
+- Require an explicit **Restore HTML preview** action and verify that the local HTML matches the current PDF before restoring it.
+- Apply a paused attachment everywhere it is reused and remove the new pause records and preserved preview bundles during uninstall.
+- Keep generated page roots inside their visible page boundaries when the source layout uses padding and full-width content.
+- Preserve sanitized CSS raw text exactly so Unicode symbols, localized text, and generated-content icons render correctly in WordPress previews.
+
 ## 0.1.40
 
 - Refresh ProudCity previews against the linked attachment that owns the public preview record, then copy the refreshed FileToWeb state back to the Document.

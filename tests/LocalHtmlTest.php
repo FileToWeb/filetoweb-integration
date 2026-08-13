@@ -190,6 +190,7 @@ class LocalHtmlTest extends TestCase {
 		$html = file_get_contents( $path );
 		$this->assertStringNotContainsString( '<script', $html );
 		$this->assertStringContainsString( 'data-filetoweb-local-viewer', $html );
+		$this->assertStringContainsString( '.ftw-generated-root{box-sizing:border-box!important;max-width:100%!important;min-width:0!important}', $html );
 		$this->assertStringContainsString( 'Converted content', $html );
 		$this->assertStringNotContainsString( 'src="/d/demo/assets/page-1/logo.png"', $html );
 		$this->assertStringContainsString( 'src="https://example.test/wp-content/uploads/filetoweb-integration/previews/123/fingerprint123/assets/', $html );

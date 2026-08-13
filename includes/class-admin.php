@@ -25,6 +25,8 @@ class Admin {
 		add_action( 'admin_post_filetoweb_integration_poll_now', array( __CLASS__, 'handle_poll_now' ) );
 		add_action( 'admin_post_filetoweb_integration_refresh_preview', array( __CLASS__, 'handle_refresh_preview' ) );
 		add_action( 'admin_post_filetoweb_integration_retry_processing', array( __CLASS__, 'handle_retry_processing' ) );
+		add_action( 'admin_post_filetoweb_integration_pause_public', array( __CLASS__, 'handle_pause_public' ) );
+		add_action( 'admin_post_filetoweb_integration_restore_public', array( __CLASS__, 'handle_restore_public' ) );
 		add_action( 'admin_post_filetoweb_integration_backfill', array( __CLASS__, 'handle_backfill' ) );
 		add_action( 'admin_post_filetoweb_integration_poll_pending', array( __CLASS__, 'handle_poll_pending' ) );
 		add_action( 'admin_post_filetoweb_integration_test_connection', array( __CLASS__, 'handle_test_connection' ) );
@@ -288,7 +290,70 @@ class Admin {
 			}
 		}
 
+		$owner_post_id = Source_Resolver::preview_owner_post_id( $post->ID );
+
+		if ( self::can_sync_post( $post->ID ) && self::can_sync_post( $owner_post_id ) ) {
+			self::render_public_replacement_controls(
+				$owner_post_id,
+				self::admin_action_url( 'pause_public', $post->ID ),
+				self::admin_action_url( 'restore_public', $post->ID )
+			);
+		}
+
 		Native_Page::render_admin_panel( $post );
+	}
+
+	/**
+	 * Render the per-source public PDF/HTML switch.
+	 *
+	 * @param int    $source_id Source post that owns the public preview.
+	 * @param string $pause_url Nonce-protected pause URL.
+	 * @param string $restore_url Nonce-protected restore URL.
+	 * @param bool   $compact Whether to use compact meeting-row styling.
+	 */
+	public static function render_public_replacement_controls( $source_id, $pause_url, $restore_url, $compact = false ) {
+		$source_id = absint( $source_id );
+
+		if ( ! $source_id ) {
+			return;
+		}
+
+		$paused = Proud_HTML_Preview::is_public_paused( $source_id );
+		$style  = $compact
+			? 'margin:6px 0 0;padding:7px 8px;border-left:3px solid #dba617;background:#fcf9e8;font-size:12px;line-height:1.4;'
+			: 'margin:12px 0;padding:10px 12px;border-left:4px solid #dba617;background:#fcf9e8;';
+
+		if ( $paused ) {
+			echo '<div class="filetoweb-public-replacement-status is-paused" style="' . esc_attr( $style ) . '">';
+			echo '<strong>' . esc_html__( 'Public view: Original PDF', 'filetoweb-integration' ) . '</strong>';
+			echo '<p style="margin:4px 0 8px;">' . esc_html__( 'FileToWeb can keep syncing in the background, but this PDF will stay public until you restore its HTML preview.', 'filetoweb-integration' ) . '</p>';
+			echo '<a class="button' . ( $compact ? ' button-small' : '' ) . '" href="' . esc_url( $restore_url ) . '">' . esc_html__( 'Restore HTML preview', 'filetoweb-integration' ) . '</a>';
+
+			if ( ! Settings::replace_links_enabled() ) {
+				echo '<p style="margin:8px 0 0;"><em>' . esc_html__( 'Public replacement is also turned off for the whole site.', 'filetoweb-integration' ) . '</em></p>';
+			}
+
+			echo '</div>';
+			return;
+		}
+
+		if ( ! Settings::replace_links_enabled() ) {
+			if ( ! $compact ) {
+				echo '<p><em>' . esc_html__( 'Public replacement is off for the whole site, so visitors receive the original PDF.', 'filetoweb-integration' ) . '</em></p>';
+			}
+			return;
+		}
+
+		if ( ! Proud_HTML_Preview::has_current_local_preview( $source_id ) ) {
+			return;
+		}
+
+		echo '<div class="filetoweb-public-replacement-status" style="margin:' . ( $compact ? '6px 0 0' : '12px 0' ) . ';">';
+		echo '<a class="button' . ( $compact ? ' button-small' : '' ) . '" href="' . esc_url( $pause_url ) . '">' . esc_html__( 'Show original PDF publicly', 'filetoweb-integration' ) . '</a>';
+		if ( ! $compact ) {
+			echo '<p class="description">' . esc_html__( 'Use this while the HTML version needs more work. Syncing and editing continue without republishing it.', 'filetoweb-integration' ) . '</p>';
+		}
+		echo '</div>';
 	}
 
 	/**
@@ -414,6 +479,20 @@ class Admin {
 	 */
 	public static function handle_retry_processing() {
 		self::handle_post_action( 'retry_processing' );
+	}
+
+	/**
+	 * Handle an explicit switch back to the original public PDF.
+	 */
+	public static function handle_pause_public() {
+		self::handle_post_action( 'pause_public' );
+	}
+
+	/**
+	 * Handle an explicit restoration of the current HTML preview.
+	 */
+	public static function handle_restore_public() {
+		self::handle_post_action( 'restore_public' );
 	}
 
 	/**
@@ -549,7 +628,27 @@ class Admin {
 
 		check_admin_referer( 'filetoweb_integration_' . $action . '_' . $post_id );
 
-		if ( 'sync_now' === $action ) {
+		if ( 'pause_public' === $action ) {
+			$owner_post_id = Source_Resolver::preview_owner_post_id( $post_id );
+			if ( ! self::can_sync_post( $owner_post_id ) ) {
+				wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
+			}
+			$paused        = Proud_HTML_Preview::pause_public( $owner_post_id );
+			$message       = $paused
+				? __( 'The original PDF is now public. FileToWeb syncing can continue in the background.', 'filetoweb-integration' )
+				: __( 'FileToWeb could not switch this item to its original PDF.', 'filetoweb-integration' );
+			$notice_type   = $paused ? 'success' : 'error';
+		} elseif ( 'restore_public' === $action ) {
+			$owner_post_id = Source_Resolver::preview_owner_post_id( $post_id );
+			if ( ! self::can_sync_post( $owner_post_id ) ) {
+				wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
+			}
+			$restored      = Proud_HTML_Preview::restore_public( $owner_post_id );
+			$message       = $restored
+				? __( 'The current FileToWeb HTML preview is public again.', 'filetoweb-integration' )
+				: __( 'The HTML preview is not current, so the original PDF remains public. Sync or refresh the preview, then restore it again.', 'filetoweb-integration' );
+			$notice_type   = $restored ? 'success' : 'error';
+		} elseif ( 'sync_now' === $action ) {
 			$result  = 'attachment' === get_post_type( $post_id ) ? Sync::sync_attachment_now( $post_id, 'manual_sync' ) : Sync::sync_document_now( $post_id, 'manual_sync' );
 			$message = sprintf( __( 'FileToWeb sync %s.', 'filetoweb-integration' ), isset( $result['status'] ) ? $result['status'] : 'complete' );
 		} elseif ( 'retry_processing' === $action ) {
@@ -674,11 +773,16 @@ class Admin {
 		$status     = get_post_meta( $post_id, Document_State::META_STATUS, true );
 		$page_count = absint( get_post_meta( $post_id, Document_State::META_PAGE_COUNT, true ) );
 		$local_url  = Local_HTML::local_url( $post_id );
+		$owner_id   = Source_Resolver::preview_owner_post_id( $post_id );
 
 		echo self::status_badge( $status ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 
 		if ( $page_count ) {
 			echo '<br />' . esc_html( sprintf( _n( '%d page', '%d pages', $page_count, 'filetoweb-integration' ), $page_count ) );
+		}
+
+		if ( Proud_HTML_Preview::is_public_paused( $owner_id ) ) {
+			echo '<br /><strong style="color:#996800;">' . esc_html__( 'Public: Original PDF', 'filetoweb-integration' ) . '</strong>';
 		}
 
 		if ( $local_url ) {

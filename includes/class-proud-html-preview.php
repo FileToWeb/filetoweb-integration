@@ -13,6 +13,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class Proud_HTML_Preview {
 	const META_KEY                 = '_proud_html_preview';
+	const META_PUBLIC_PAUSED       = '_filetoweb_public_replacement_paused';
+	const META_PAUSED_RECORD       = '_filetoweb_paused_html_preview';
 	const OPTION_PROVIDERS         = 'proud_html_preview_providers';
 	const OPTION_MIGRATION_VERSION = 'filetoweb_integration_preview_migration_version';
 	const PROVIDER                 = 'filetoweb';
@@ -137,7 +139,7 @@ class Proud_HTML_Preview {
 
 				$current['artifacts']                    = $manifest;
 				$current['source_fingerprint_algorithm'] = $algorithm;
-				update_post_meta( $post_id, self::META_KEY, $current );
+				self::store_record( $post_id, $current );
 			}
 
 			self::write_legacy_pointer( $post_id, $index_path, $current['token'], $viewer_url, $fingerprint, $current['published_at'] );
@@ -219,7 +221,7 @@ class Proud_HTML_Preview {
 			return self::publish_failure( __( 'FileToWeb preview files could not be verified in WordPress storage.', 'filetoweb-integration' ) );
 		}
 
-		update_post_meta( $post_id, self::META_KEY, $record );
+		self::store_record( $post_id, $record );
 		self::write_legacy_pointer( $post_id, $index_path, $token, $viewer_url, $fingerprint, $published_at );
 		self::ensure_provider_state();
 
@@ -254,13 +256,162 @@ class Proud_HTML_Preview {
 	 * @return array
 	 */
 	public static function record_for_post( $post_id ) {
-		$record = get_post_meta( absint( $post_id ), self::META_KEY, true );
+		$post_id = absint( $post_id );
+		$record  = get_post_meta( $post_id, self::META_KEY, true );
+
+		if ( self::is_public_paused( $post_id ) ) {
+			$record = get_post_meta( $post_id, self::META_PAUSED_RECORD, true );
+		}
 
 		if ( ! is_array( $record ) || self::PROVIDER !== ( isset( $record['provider'] ) ? $record['provider'] : '' ) ) {
 			return array();
 		}
 
 		return $record;
+	}
+
+	/**
+	 * Is one source explicitly using its original PDF on the public site?
+	 *
+	 * @param int $post_id Source post ID.
+	 * @return bool
+	 */
+	public static function is_public_paused( $post_id ) {
+		return '1' === (string) get_post_meta( absint( $post_id ), self::META_PUBLIC_PAUSED, true );
+	}
+
+	/**
+	 * Temporarily withdraw one public HTML preview without deleting its bundle.
+	 *
+	 * @param int $post_id Source post ID.
+	 * @return bool
+	 */
+	public static function pause_public( $post_id ) {
+		$post_id = absint( $post_id );
+
+		if ( ! $post_id ) {
+			return false;
+		}
+
+		$record   = get_post_meta( $post_id, self::META_KEY, true );
+		$provider = is_array( $record ) && isset( $record['provider'] ) ? (string) $record['provider'] : '';
+
+		if ( $provider && self::PROVIDER !== $provider ) {
+			return false;
+		}
+
+		if ( ! self::is_filetoweb_record( $record ) ) {
+			self::migrate_existing_post( $post_id );
+			$record = get_post_meta( $post_id, self::META_KEY, true );
+		}
+
+		if ( ! self::is_filetoweb_record( $record ) ) {
+			return false;
+		}
+
+		update_post_meta( $post_id, self::META_PUBLIC_PAUSED, '1' );
+		update_post_meta( $post_id, self::META_PAUSED_RECORD, $record );
+		delete_post_meta( $post_id, self::META_KEY );
+		self::clean_public_cache( $post_id );
+
+		return true;
+	}
+
+	/**
+	 * Restore the latest current local HTML preview for one source.
+	 *
+	 * @param int $post_id Source post ID.
+	 * @return bool
+	 */
+	public static function restore_public( $post_id ) {
+		$post_id = absint( $post_id );
+
+		if ( ! $post_id || ! self::is_public_paused( $post_id ) || ! self::has_current_local_preview( $post_id ) ) {
+			return false;
+		}
+
+		$record = get_post_meta( $post_id, self::META_PAUSED_RECORD, true );
+		$active = get_post_meta( $post_id, self::META_KEY, true );
+
+		if ( ! self::is_filetoweb_record( $record ) || ( is_array( $active ) && ! empty( $active['provider'] ) && self::PROVIDER !== (string) $active['provider'] ) ) {
+			return false;
+		}
+
+		$current_fingerprint = (string) get_post_meta( $post_id, Document_State::META_SOURCE_FINGERPRINT, true );
+		$current_source_url  = (string) get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
+
+		if ( $current_fingerprint !== (string) $record['source_fingerprint'] || $current_source_url !== (string) $record['source_url'] ) {
+			return false;
+		}
+
+		update_post_meta( $post_id, self::META_KEY, $record );
+
+		delete_post_meta( $post_id, self::META_PAUSED_RECORD );
+		delete_post_meta( $post_id, self::META_PUBLIC_PAUSED );
+
+		self::clean_public_cache( $post_id );
+
+		return true;
+	}
+
+	/**
+	 * Persist a preview either publicly or in the paused holding record.
+	 *
+	 * @param int   $post_id Source post ID.
+	 * @param array $record Preview record.
+	 */
+	private static function store_record( $post_id, $record ) {
+		if ( self::is_public_paused( $post_id ) ) {
+			update_post_meta( $post_id, self::META_PAUSED_RECORD, $record );
+
+			$active = get_post_meta( $post_id, self::META_KEY, true );
+			if ( is_array( $active ) && self::PROVIDER === ( isset( $active['provider'] ) ? $active['provider'] : '' ) ) {
+				delete_post_meta( $post_id, self::META_KEY );
+			}
+			return;
+		}
+
+		update_post_meta( $post_id, self::META_KEY, $record );
+	}
+
+	/**
+	 * Does a value contain a FileToWeb-owned durable preview record?
+	 *
+	 * @param mixed $record Raw record.
+	 * @return bool
+	 */
+	private static function is_filetoweb_record( $record ) {
+		return is_array( $record )
+			&& self::PROVIDER === ( isset( $record['provider'] ) ? $record['provider'] : '' )
+			&& ! empty( $record['source_url'] )
+			&& ! empty( $record['source_fingerprint'] );
+	}
+
+	/**
+	 * Is the local preview complete and matched to the current PDF source?
+	 *
+	 * @param int $post_id Source post ID.
+	 * @return bool
+	 */
+	public static function has_current_local_preview( $post_id ) {
+		$current_fingerprint = (string) get_post_meta( $post_id, Document_State::META_SOURCE_FINGERPRINT, true );
+		$local_fingerprint   = (string) get_post_meta( $post_id, Document_State::META_LOCAL_HTML_SOURCE_FP, true );
+
+		return 'ready' === get_post_meta( $post_id, Document_State::META_STATUS, true )
+			&& $current_fingerprint
+			&& hash_equals( $current_fingerprint, $local_fingerprint )
+			&& Local_HTML::has_local_html( $post_id );
+	}
+
+	/**
+	 * Clear WordPress's cached view of a changed source record.
+	 *
+	 * @param int $post_id Source post ID.
+	 */
+	private static function clean_public_cache( $post_id ) {
+		if ( function_exists( 'clean_post_cache' ) ) {
+			clean_post_cache( $post_id );
+		}
 	}
 
 	/**
@@ -417,9 +568,13 @@ class Proud_HTML_Preview {
 		}
 
 		$styles = $xpath->query( '//style' );
+		$raw_styles = array();
 		if ( $styles ) {
-			foreach ( $styles as $style ) {
-				$style->nodeValue = self::sanitize_css( $style->nodeValue );
+			foreach ( $styles as $index => $style ) {
+				$css                  = self::sanitize_css( $style->nodeValue );
+				$marker               = self::raw_style_marker( $html, $raw_styles, $index );
+				$raw_styles[ $marker ] = $css;
+				$style->nodeValue      = $marker;
 			}
 		}
 
@@ -435,13 +590,63 @@ class Proud_HTML_Preview {
 			}
 		}
 
-		$output = $dom->saveHTML();
+		$output = self::restore_raw_styles( $dom->saveHTML(), $raw_styles );
 		$output = preg_replace( '/^<\?xml[^>]+>\s*/i', '', (string) $output );
 
 		libxml_clear_errors();
 		libxml_use_internal_errors( $previous );
 
 		return trim( $output );
+	}
+
+	/**
+	 * Build an ASCII-only placeholder that cannot collide with source content.
+	 *
+	 * DOMDocument serializes Unicode inside style elements as HTML entities,
+	 * even though style is a raw-text element and browsers do not decode those
+	 * entities as CSS. Placeholders let the surrounding HTML be serialized while
+	 * the already-sanitized CSS is restored byte-for-byte afterward.
+	 *
+	 * @param string $html Source HTML.
+	 * @param array  $markers Existing marker map.
+	 * @param int    $index Style position.
+	 * @return string
+	 */
+	private static function raw_style_marker( $html, $markers, $index ) {
+		$attempt = 0;
+
+		do {
+			$marker = 'FTW_STYLE_RAW_' . md5( $html . '|' . absint( $index ) . '|' . $attempt ) . '_END';
+			++$attempt;
+		} while ( false !== strpos( $html, $marker ) || isset( $markers[ $marker ] ) );
+
+		return $marker;
+	}
+
+	/**
+	 * Restore sanitized CSS after DOMDocument has serialized the HTML document.
+	 *
+	 * @param string $html Serialized HTML.
+	 * @param array  $raw_styles Marker-to-CSS map.
+	 * @return string Empty when a marker cannot be restored safely.
+	 */
+	private static function restore_raw_styles( $html, $raw_styles ) {
+		$html = is_string( $html ) ? $html : '';
+
+		foreach ( $raw_styles as $marker => $css ) {
+			if ( false !== stripos( $css, '</style' ) ) {
+				return '';
+			}
+
+			$count = 0;
+			$html  = str_replace( $marker, $css, $html, $count );
+
+			if ( 1 !== $count ) {
+				return '';
+			}
+		}
+
+		return $html;
 	}
 
 	/**

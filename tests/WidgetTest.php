@@ -4,6 +4,7 @@ use Brain\Monkey;
 use Brain\Monkey\Functions;
 use FileToWeb\Integration\Document_State;
 use FileToWeb\Integration\Document_Widget;
+use FileToWeb\Integration\Proud_HTML_Preview;
 use FileToWeb\Integration\Settings;
 use PHPUnit\Framework\TestCase;
 
@@ -73,6 +74,7 @@ class WidgetTest extends TestCase {
 				return $value;
 			}
 		);
+		Functions\when( 'get_post_type' )->justReturn( 'attachment' );
 		Functions\when( 'get_option' )->alias(
 			function ( $name, $default = false ) {
 				if ( Settings::OPTION_SETTINGS === $name ) {
@@ -230,6 +232,46 @@ class WidgetTest extends TestCase {
 
 		$this->assertStringContainsString( 'href="https://example.test/wp-content/uploads/file.pdf"', $html );
 		$this->assertStringContainsString( 'Original PDF', $html );
+	}
+
+	public function test_widget_falls_back_to_original_pdf_when_public_preview_is_paused(): void {
+		$local_path = $this->local_html_file( 123 );
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $local_path ) {
+				$values = array(
+					Document_State::META_STATUS            => 'ready',
+					Document_State::META_HTML_URL          => 'https://filetoweb.com/d/demo/1',
+					Document_State::META_LOCAL_HTML_PATH   => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN  => 'token-123',
+					Proud_HTML_Preview::META_PUBLIC_PAUSED => '1',
+				);
+
+				return 123 === $post_id && isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://example.test/wp-content/uploads/file.pdf' );
+
+		$widget = new Document_Widget();
+
+		ob_start();
+		$widget->widget(
+			array(
+				'before_widget' => '',
+				'after_widget'  => '',
+				'before_title'  => '',
+				'after_title'   => '',
+			),
+			array(
+				'item_ref'     => 'attachment:123',
+				'title'        => 'Agenda',
+				'display_mode' => 'embed',
+			)
+		);
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'href="https://example.test/wp-content/uploads/file.pdf"', $html );
+		$this->assertStringNotContainsString( '<iframe', $html );
 	}
 
 	private function local_html_file( $post_id ): string {

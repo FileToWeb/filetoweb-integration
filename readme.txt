@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.0
-Stable tag: 0.1.40
+Stable tag: 0.1.41
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -34,6 +34,7 @@ Features:
 * Pages > Convert PDF to Page workflow for intentionally creating editable draft WordPress Pages after uploaded PDFs finish converting.
 * Render-time FileToWeb attribution on public accessibility statement pages when the integration is enabled.
 * Original PDF links are preserved in admin screens.
+* Per-PDF controls can temporarily show the original PDF publicly while FileToWeb syncing and editing continue in the background.
 
 == Installation ==
 
@@ -54,6 +55,10 @@ No. Original WordPress media files remain in place. The plugin stores FileToWeb 
 = Can existing PDFs be migrated? =
 
 Yes. The settings page includes a bounded Backfill batch action. Administrators control the batch size so migration can be paced against site performance and FileToWeb credit usage.
+
+= Can I temporarily switch one published HTML preview back to its PDF? =
+
+Yes. Use **Show original PDF publicly** in the FileToWeb panel for a Proud Document or Media PDF, or beside an individual Meeting material. FileToWeb can continue syncing while the PDF stays public. When the HTML is ready, use **Restore HTML preview**. Restoration is manual and only succeeds when the local HTML matches the current PDF. A reused Media attachment is paused everywhere it appears.
 
 = What happens if the plugin is deactivated, disabled, or uninstalled? =
 
@@ -76,6 +81,14 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.41 =
+
+* Adds per-PDF controls to show the original PDF publicly and manually restore a current HTML preview.
+* Keeps paused previews private while sync and editing continue, including for individual Meeting materials and reused attachments.
+* Cleans paused preview state and preserved FileToWeb artifacts during uninstall.
+* Keeps generated page content inside its visible page boundaries across WordPress preview widths.
+* Preserves Unicode symbols and other raw CSS text when publishing sanitized WordPress preview bundles.
 
 = 0.1.40 =
 

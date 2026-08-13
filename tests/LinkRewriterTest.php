@@ -4,6 +4,7 @@ use Brain\Monkey;
 use Brain\Monkey\Functions;
 use FileToWeb\Integration\Document_State;
 use FileToWeb\Integration\Link_Rewriter;
+use FileToWeb\Integration\Proud_HTML_Preview;
 use FileToWeb\Integration\Settings;
 use PHPUnit\Framework\TestCase;
 
@@ -455,6 +456,30 @@ class LinkRewriterTest extends TestCase {
 		$this->assertSame( $content, Link_Rewriter::filter_content_pdf_links( $content ) );
 	}
 
+	public function test_paused_ready_pdf_link_stays_original(): void {
+		$local_path = $this->local_html_file( 123 );
+
+		Functions\when( 'attachment_url_to_postid' )->justReturn( 123 );
+		Functions\when( 'get_posts' )->justReturn( array() );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $local_path ) {
+				$values = array(
+					Document_State::META_STATUS            => 'ready',
+					Document_State::META_HTML_URL          => 'https://filetoweb.com/d/demo/1',
+					Document_State::META_LOCAL_HTML_PATH   => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN  => 'token-123',
+					Proud_HTML_Preview::META_PUBLIC_PAUSED => '1',
+				);
+
+				return 123 === $post_id && isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$content = '<p><a href="https://example.test/wp-content/uploads/file.pdf">PDF</a></p>';
+
+		$this->assertSame( $content, Link_Rewriter::filter_content_pdf_links( $content ) );
+	}
+
 		public function test_rewrites_ready_proud_document_viewer_and_preserves_download(): void {
 		$this->post_types[456]        = 'document';
 		$this->queried_object_id      = 456;
@@ -689,6 +714,42 @@ class LinkRewriterTest extends TestCase {
 			$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=101&ftw_token=token-101"', $rewritten );
 		$this->assertStringNotContainsString( 'src="' . $continuous_url . '"', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
+	}
+
+	public function test_paused_meeting_viewer_stays_on_original_pdf(): void {
+		$this->post_types[789]     = 'meeting';
+		$this->queried_object_id   = 789;
+		$this->is_meeting_singular = true;
+		$source_url                = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$local_path                = $this->local_html_file( 101 );
+
+		Functions\when( 'wp_get_attachment_url' )->alias(
+			function ( $attachment_id ) use ( $source_url ) {
+				return 101 === $attachment_id ? $source_url : '';
+			}
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $local_path ) {
+				if ( 789 === $post_id && 'agenda_attachment' === $key ) {
+					return 101;
+				}
+
+				$values = array(
+					Document_State::META_STATUS            => 'ready',
+					Document_State::META_HTML_URL          => 'https://filetoweb.com/d/meeting-demo/1',
+					Document_State::META_CONTINUOUS_URL    => 'https://filetoweb.com/d/meeting-demo',
+					Document_State::META_LOCAL_HTML_PATH   => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN  => 'token-101',
+					Proud_HTML_Preview::META_PUBLIC_PAUSED => '1',
+				);
+
+				return 101 === $post_id && isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$html = '<iframe src="//docs.google.com/gview?url=' . rawurlencode( $source_url ) . '&amp;embedded=true" title="Agenda"></iframe>';
+
+		$this->assertSame( $html, Link_Rewriter::filter_meeting_viewer_output( $html ) );
 	}
 
 	public function test_pending_meeting_viewer_stays_original(): void {

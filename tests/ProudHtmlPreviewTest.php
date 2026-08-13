@@ -195,6 +195,13 @@ class ProudHtmlPreviewTest extends TestCase {
 				return true;
 			}
 		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) {
+				unset( $this->meta[ $post_id ][ $key ] );
+				return true;
+			}
+		);
+		Functions\when( 'clean_post_cache' )->justReturn( null );
 		Functions\when( 'apply_filters' )->alias( function ( $tag, $value ) { return $value; } );
 		Functions\when( 'has_action' )->justReturn( false );
 		Functions\when( 'is_wp_error' )->justReturn( false );
@@ -265,6 +272,118 @@ class ProudHtmlPreviewTest extends TestCase {
 
 		$this->assertSame( $record, $second );
 		$this->assertSame( $requests, $this->requests );
+	}
+
+	public function test_sanitize_html_preserves_raw_style_text_without_decoding_literal_entities(): void {
+		$html = '<!doctype html><html><head><style>.symbols::before{content:"• → — © ✓ ★ é 中 🔒"}.literal::before{content:"&bull;"}@import "bad.css";.bad{background:url("javascript:bad()")}</style></head><body><main>Training</main></body></html>';
+
+		$sanitized = Proud_HTML_Preview::sanitize_html( $html );
+
+		$this->assertStringContainsString( 'content:"• → — © ✓ ★ é 中 🔒"', $sanitized );
+		$this->assertStringContainsString( 'content:"&bull;"', $sanitized );
+		$this->assertStringNotContainsString( 'content:"&rarr;', $sanitized );
+		$this->assertStringNotContainsString( '&#10003;', $sanitized );
+		$this->assertStringNotContainsString( '@import', $sanitized );
+		$this->assertStringNotContainsString( 'javascript:', $sanitized );
+	}
+
+	public function test_public_preview_can_pause_and_restore_without_losing_bundle(): void {
+		$record = Proud_HTML_Preview::publish(
+			91,
+			'<html><body><main>Minutes</main></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/minutes.pdf',
+			'fingerprint-91'
+		);
+
+		$this->meta[91][ Document_State::META_STATUS ]             = 'ready';
+		$this->meta[91][ Document_State::META_SOURCE_FINGERPRINT ] = 'fingerprint-91';
+		$this->meta[91][ Document_State::META_ORIGINAL_URL ]       = 'https://city.example/wp-content/uploads/minutes.pdf';
+
+		$this->assertTrue( Proud_HTML_Preview::pause_public( 91 ) );
+		$this->assertSame( '1', $this->meta[91][ Proud_HTML_Preview::META_PUBLIC_PAUSED ] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_KEY, $this->meta[91] );
+		$this->assertSame( $record, $this->meta[91][ Proud_HTML_Preview::META_PAUSED_RECORD ] );
+		$this->assertSame( $record, Proud_HTML_Preview::record_for_post( 91 ) );
+
+		$this->assertTrue( Proud_HTML_Preview::restore_public( 91 ) );
+		$this->assertSame( $record, $this->meta[91][ Proud_HTML_Preview::META_KEY ] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_PUBLIC_PAUSED, $this->meta[91] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_PAUSED_RECORD, $this->meta[91] );
+	}
+
+	public function test_publish_while_paused_refreshes_private_record_only(): void {
+		Proud_HTML_Preview::publish(
+			92,
+			'<html><body><main>Agenda v1</main></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/agenda.pdf',
+			'fingerprint-v1'
+		);
+
+		Proud_HTML_Preview::pause_public( 92 );
+
+		$updated = Proud_HTML_Preview::publish(
+			92,
+			'<html><body><main>Agenda v2</main></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/agenda.pdf',
+			'fingerprint-v2'
+		);
+
+		$this->assertSame( 'fingerprint-v2', $updated['source_fingerprint'] );
+		$this->assertSame( $updated, $this->meta[92][ Proud_HTML_Preview::META_PAUSED_RECORD ] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_KEY, $this->meta[92] );
+		$this->assertSame( '1', $this->meta[92][ Proud_HTML_Preview::META_PUBLIC_PAUSED ] );
+	}
+
+	public function test_restore_fails_closed_when_pdf_fingerprint_changed(): void {
+		Proud_HTML_Preview::publish(
+			93,
+			'<html><body><main>Budget</main></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/budget.pdf',
+			'fingerprint-old'
+		);
+
+		Proud_HTML_Preview::pause_public( 93 );
+		$this->meta[93][ Document_State::META_STATUS ]             = 'ready';
+		$this->meta[93][ Document_State::META_SOURCE_FINGERPRINT ] = 'fingerprint-new';
+
+		$this->assertFalse( Proud_HTML_Preview::restore_public( 93 ) );
+		$this->assertSame( '1', $this->meta[93][ Proud_HTML_Preview::META_PUBLIC_PAUSED ] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_KEY, $this->meta[93] );
+	}
+
+	public function test_restore_fails_closed_when_paused_record_is_missing(): void {
+		$local_path = $this->uploads_dir . '/filetoweb-integration/95-local.html';
+		mkdir( dirname( $local_path ), 0777, true );
+		file_put_contents( $local_path, '<html><body>Local</body></html>' );
+
+		$this->meta[95] = array(
+			Proud_HTML_Preview::META_PUBLIC_PAUSED       => '1',
+			Document_State::META_STATUS                  => 'ready',
+			Document_State::META_SOURCE_FINGERPRINT      => 'fingerprint-95',
+			Document_State::META_LOCAL_HTML_SOURCE_FP    => 'fingerprint-95',
+			Document_State::META_LOCAL_HTML_PATH         => $local_path,
+		);
+
+		$this->assertFalse( Proud_HTML_Preview::restore_public( 95 ) );
+		$this->assertSame( '1', $this->meta[95][ Proud_HTML_Preview::META_PUBLIC_PAUSED ] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_KEY, $this->meta[95] );
+	}
+
+	public function test_pause_does_not_overwrite_another_preview_provider(): void {
+		$other_record = array(
+			'provider'           => 'another-provider',
+			'source_url'         => 'https://city.example/wp-content/uploads/shared.pdf',
+			'source_fingerprint' => 'other-fingerprint',
+		);
+		$this->meta[94][ Proud_HTML_Preview::META_KEY ] = $other_record;
+
+		$this->assertFalse( Proud_HTML_Preview::pause_public( 94 ) );
+		$this->assertSame( $other_record, $this->meta[94][ Proud_HTML_Preview::META_KEY ] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_PUBLIC_PAUSED, $this->meta[94] );
 	}
 
 	public function test_stateless_sync_runs_only_when_hook_is_available(): void {

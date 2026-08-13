@@ -14,6 +14,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Meeting_Materials {
 	const ACTION_SYNC_MATERIAL = 'filetoweb_integration_sync_meeting_material';
 	const ACTION_POLL_MATERIAL = 'filetoweb_integration_poll_meeting_material';
+	const ACTION_PAUSE_MATERIAL = 'filetoweb_integration_pause_meeting_material';
+	const ACTION_RESTORE_MATERIAL = 'filetoweb_integration_restore_meeting_material';
 	const ACTION_SYNC_ALL      = 'filetoweb_integration_sync_meeting_all';
 
 	/**
@@ -35,6 +37,8 @@ class Meeting_Materials {
 		add_action( 'save_post_meeting', array( __CLASS__, 'schedule_meeting_material_sync' ), 40, 3 );
 		add_action( 'admin_post_' . self::ACTION_SYNC_MATERIAL, array( __CLASS__, 'handle_sync_material' ) );
 		add_action( 'admin_post_' . self::ACTION_POLL_MATERIAL, array( __CLASS__, 'handle_poll_material' ) );
+		add_action( 'admin_post_' . self::ACTION_PAUSE_MATERIAL, array( __CLASS__, 'handle_pause_material' ) );
+		add_action( 'admin_post_' . self::ACTION_RESTORE_MATERIAL, array( __CLASS__, 'handle_restore_material' ) );
 		add_action( 'admin_post_' . self::ACTION_SYNC_ALL, array( __CLASS__, 'handle_sync_all' ) );
 		add_action( 'proud_form_after_file_upload', array( __CLASS__, 'render_inline_upload_control' ), 10, 3 );
 	}
@@ -284,7 +288,7 @@ class Meeting_Materials {
 		}
 
 		$html_url   = Document_State::ready_html_url( $attachment_id );
-		$local_url  = Local_HTML::local_url( $attachment_id );
+		$local_url  = Local_HTML::public_url_for_post( $attachment_id );
 
 		if ( ! $html_url || ! $local_url ) {
 			return '';
@@ -323,7 +327,7 @@ class Meeting_Materials {
 	 * @param array  $field ProudCity field configuration.
 	 */
 	public static function render_inline_upload_control( $media_id, $url, $field ) {
-		if ( ! Settings::configured() || ! function_exists( 'get_post' ) ) {
+		if ( ! function_exists( 'get_post' ) ) {
 			return;
 		}
 
@@ -359,9 +363,10 @@ class Meeting_Materials {
 		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_EDITOR_URL, true ) );
 		$local_url   = Local_HTML::local_url( $attachment_id );
 		$state       = Admin::status_state( $status );
+		$can_manage_attachment = Capabilities::current_user_can_sync( $attachment_id );
 		?>
 		<div class="filetoweb-integration-inline-meeting-sync" style="clear:both;display:block;margin:6px 0 0 150px;">
-			<?php if ( 'failed' === $state ) : ?>
+			<?php if ( $can_manage_attachment && Settings::configured() && 'failed' === $state ) : ?>
 				<?php if ( self::can_retry_attachment( $attachment_id ) ) : ?>
 					<?php if ( $document_id ) : ?>
 						<a class="button button-small button-primary" href="<?php echo esc_url( self::retry_processing_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Retry processing', 'filetoweb-integration' ); ?></a>
@@ -369,16 +374,26 @@ class Meeting_Materials {
 						<a class="button button-small button-primary" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Retry sync', 'filetoweb-integration' ); ?></a>
 					<?php endif; ?>
 				<?php endif; ?>
-			<?php elseif ( 'processing' === $state ) : ?>
+			<?php elseif ( $can_manage_attachment && Settings::configured() && 'processing' === $state ) : ?>
 				<?php if ( $document_id ) : ?>
 					<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Check conversion progress', 'filetoweb-integration' ); ?></a>
 				<?php else : ?>
 					<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Submit PDF now', 'filetoweb-integration' ); ?></a>
 				<?php endif; ?>
-			<?php elseif ( 'not_synced' === $state ) : ?>
+			<?php elseif ( $can_manage_attachment && Settings::configured() && 'not_synced' === $state ) : ?>
 				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
 			<?php endif; ?>
 			<span style="display:inline-block;margin-left:6px;vertical-align:middle;"><?php echo self::status_badge( $status ); ?></span>
+			<?php
+			if ( $can_manage_attachment ) {
+				Admin::render_public_replacement_controls(
+					$attachment_id,
+					self::admin_action_url( 'pause_material', $meeting_id, $slot ),
+					self::admin_action_url( 'restore_material', $meeting_id, $slot ),
+					true
+				);
+			}
+			?>
 			<div style="font-size:12px;line-height:1.5;margin-top:4px;">
 				<a href="<?php echo esc_url( $url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'Original PDF', 'filetoweb-integration' ); ?></a>
 				<?php if ( $local_url ) : ?>
@@ -407,6 +422,20 @@ class Meeting_Materials {
 	 */
 	public static function handle_poll_material() {
 		self::handle_material_action( 'poll_material' );
+	}
+
+	/**
+	 * Temporarily show the original PDF for one meeting material.
+	 */
+	public static function handle_pause_material() {
+		self::handle_material_action( 'pause_material' );
+	}
+
+	/**
+	 * Restore the current HTML preview for one meeting material.
+	 */
+	public static function handle_restore_material() {
+		self::handle_material_action( 'restore_material' );
 	}
 
 	/**
@@ -476,24 +505,30 @@ class Meeting_Materials {
 				<?php endif; ?>
 			</td>
 			<td>
-				<?php if ( Settings::configured() && self::can_manage_meeting( $meeting_id ) && $attachment_id && $is_pdf ) : ?>
-					<?php if ( 'failed' === $state && self::can_retry_attachment( $attachment_id ) ) : ?>
+				<?php if ( self::can_manage_meeting( $meeting_id ) && $attachment_id && $is_pdf && Capabilities::current_user_can_sync( $attachment_id ) ) : ?>
+					<?php if ( Settings::configured() && 'failed' === $state && self::can_retry_attachment( $attachment_id ) ) : ?>
 						<?php if ( $document_id ) : ?>
 							<a class="button button-primary" href="<?php echo esc_url( self::retry_processing_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Retry processing', 'filetoweb-integration' ); ?></a>
 						<?php else : ?>
 							<a class="button button-primary" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Retry sync', 'filetoweb-integration' ); ?></a>
 						<?php endif; ?>
-					<?php elseif ( 'processing' === $state ) : ?>
+					<?php elseif ( Settings::configured() && 'processing' === $state ) : ?>
 						<?php if ( $document_id ) : ?>
 							<a class="button" href="<?php echo esc_url( self::admin_action_url( 'poll_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Check conversion progress', 'filetoweb-integration' ); ?></a>
 						<?php else : ?>
 							<a class="button" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Submit PDF now', 'filetoweb-integration' ); ?></a>
 						<?php endif; ?>
-					<?php elseif ( 'not_synced' === $state ) : ?>
+					<?php elseif ( Settings::configured() && 'not_synced' === $state ) : ?>
 						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
-					<?php else : ?>
-						<span aria-hidden="true">&mdash;</span>
 					<?php endif; ?>
+					<?php
+					Admin::render_public_replacement_controls(
+						$attachment_id,
+						self::admin_action_url( 'pause_material', $meeting_id, $slot ),
+						self::admin_action_url( 'restore_material', $meeting_id, $slot ),
+						true
+					);
+					?>
 				<?php else : ?>
 					<span aria-hidden="true">&mdash;</span>
 				<?php endif; ?>
@@ -517,7 +552,30 @@ class Meeting_Materials {
 
 		check_admin_referer( 'filetoweb_integration_' . $action . '_' . $meeting_id . '_' . $slot );
 
-		if ( 'sync_material' === $action ) {
+		$attachment_id = self::attachment_id_for_slot( $meeting_id, $slot );
+		$notice_type   = 'success';
+
+		if ( ! $attachment_id || ! self::is_pdf_attachment( $attachment_id ) ) {
+			wp_die( esc_html__( 'This meeting material is not a PDF attachment.', 'filetoweb-integration' ) );
+		}
+
+		if ( ! Capabilities::current_user_can_sync( $attachment_id ) ) {
+			wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
+		}
+
+		if ( 'pause_material' === $action ) {
+			$paused      = Proud_HTML_Preview::pause_public( $attachment_id );
+			$message     = $paused
+				? __( 'The original meeting PDF is now public. FileToWeb syncing can continue in the background.', 'filetoweb-integration' )
+				: __( 'FileToWeb could not switch this meeting material to its original PDF.', 'filetoweb-integration' );
+			$notice_type = $paused ? 'success' : 'error';
+		} elseif ( 'restore_material' === $action ) {
+			$restored    = Proud_HTML_Preview::restore_public( $attachment_id );
+			$message     = $restored
+				? __( 'The current FileToWeb HTML preview is public again for this meeting material.', 'filetoweb-integration' )
+				: __( 'The HTML preview is not current, so the original meeting PDF remains public. Sync or refresh it, then restore it again.', 'filetoweb-integration' );
+			$notice_type = $restored ? 'success' : 'error';
+		} elseif ( 'sync_material' === $action ) {
 			$result  = self::sync_material_now( $meeting_id, $slot );
 			$message = sprintf( __( 'Meeting PDF sync %s.', 'filetoweb-integration' ), isset( $result['status'] ) ? $result['status'] : 'complete' );
 		} else {
@@ -525,7 +583,7 @@ class Meeting_Materials {
 			$message = sprintf( __( 'Meeting PDF status check %s.', 'filetoweb-integration' ), $result );
 		}
 
-		Admin::set_notice( $message );
+		Admin::set_notice( $message, $notice_type );
 		self::redirect_to_meeting( $meeting_id );
 	}
 
@@ -571,8 +629,17 @@ class Meeting_Materials {
 			);
 		}
 
-		$slot         = sanitize_key( $slot );
-		$admin_action = 'poll_material' === $action ? self::ACTION_POLL_MATERIAL : self::ACTION_SYNC_MATERIAL;
+		$slot = sanitize_key( $slot );
+
+		if ( 'poll_material' === $action ) {
+			$admin_action = self::ACTION_POLL_MATERIAL;
+		} elseif ( 'pause_material' === $action ) {
+			$admin_action = self::ACTION_PAUSE_MATERIAL;
+		} elseif ( 'restore_material' === $action ) {
+			$admin_action = self::ACTION_RESTORE_MATERIAL;
+		} else {
+			$admin_action = self::ACTION_SYNC_MATERIAL;
+		}
 
 		return wp_nonce_url(
 			admin_url( 'admin-post.php?action=' . $admin_action . '&meeting_id=' . $meeting_id . '&slot=' . rawurlencode( $slot ) ),

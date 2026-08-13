@@ -217,6 +217,12 @@ class Document_Widget extends \WP_Widget {
 	 * @return string
 	 */
 	private function ready_replacement_url( $html_url, $post_id, $context ) {
+		$owner_id = Source_Resolver::preview_owner_post_id( $post_id );
+
+		if ( Proud_HTML_Preview::is_public_paused( $owner_id ) ) {
+			return '';
+		}
+
 		$local_url   = Local_HTML::public_url_for_post( $post_id );
 		$replacement = apply_filters( 'filetoweb_integration_ready_replacement_url', $local_url, absint( $post_id ), $context, '' );
 

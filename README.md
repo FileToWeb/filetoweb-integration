@@ -19,6 +19,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - Sites can disable the bundled FileToWeb widget with `filetoweb_integration_enable_widget`.
 - ProudCity sites can disable meeting material support with `filetoweb_integration_enable_meeting_materials` or disable only meeting preview rewrites with `filetoweb_integration_rewrite_meeting_viewer`.
 - Admin screens keep the original PDF link and show FileToWeb status, generated HTML, editor link, manual sync, and poll actions.
+- Proud Documents, Media PDFs, and individual Meeting materials can temporarily show the original PDF publicly while conversion and editing continue; restoring HTML is an explicit action and requires a preview that matches the current PDF.
 - Pages > Convert PDF to Page creates an editable draft WordPress Page from an uploaded PDF without adding that PDF to the Media Library.
 - PDF-to-Page drafts update in place when FileToWeb conversion is ready, and the uploading admin receives a one-time email with the edit link.
 - Manual backfill is available from **Settings > FileToWeb** and is bounded by the configured batch size.
@@ -51,6 +52,8 @@ The plugin rewrites:
 - ProudCity single Meeting Google Docs preview iframes for ready Agenda, Agenda Packet, and Minutes PDFs
 
 The original WordPress file remains intact. Public rendering does not make a live request to FileToWeb; if the WordPress-local copy is unavailable, the original PDF URL is left in place.
+
+For one-item recovery, use **Show original PDF publicly** in that source's FileToWeb panel. The active public preview record is retained privately and refreshed by later syncs, but WordPress keeps using the PDF until an editor chooses **Restore HTML preview**. Restoration fails closed if the local HTML does not match the current source fingerprint. Because the pause belongs to the source attachment, reusing the same Media PDF in Documents or Meetings pauses it everywhere.
 
 On ProudCity releases that support `_proud_html_preview`, completed Proud Document and Meeting preview bundles remain available after plugin deactivation. Turning off **Replace public PDF links with generated HTML** explicitly disables the FileToWeb preview provider and restores PDF previews. Uninstalling removes FileToWeb preview records and artifacts; supported ProudCity core releases retain a provider-neutral queue until remote WP Stateless deletion is verified. Generic links in arbitrary page/widget content still require the active plugin because those replacements are performed at render time.
 

@@ -76,11 +76,12 @@ class AdminStatusTest extends TestCase {
 					return 'https://example.com/wp-admin/' . ltrim( (string) $path, '/' );
 				}
 			);
-			Functions\when( 'wp_nonce_url' )->alias(
+		Functions\when( 'wp_nonce_url' )->alias(
 				function ( $url ) {
 					return $url . '&_wpnonce=test';
 				}
 			);
+		Functions\when( 'get_post_type' )->justReturn( 'page' );
 		Functions\when( 'get_option' )->alias(
 			function ( $name, $default = false ) {
 				if ( Settings::OPTION_SETTINGS === $name ) {
