@@ -3,8 +3,8 @@ Contributors: filetoweb
 Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
-Requires PHP: 7.0
-Stable tag: 0.1.41
+Requires PHP: 7.4
+Stable tag: 0.1.42
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -22,7 +22,7 @@ Features:
 * Automatic sync for new PDF attachments and Proud Document saves.
 * Manual bounded backfill for existing PDF attachments and Proud Document posts.
 * Bulk queue controls for all Proud Documents or all ProudCity Meeting PDFs.
-* WP-Cron polling for pending conversions and intentionally scheduled upload retries.
+* Fair WP-Cron polling for pending conversions and PDF-to-Page jobs, with oldest-due-first selection, bounded backoff, recovery, and intentionally scheduled upload retries.
 * Admin processing-time help on pending conversion statuses so users know larger PDFs can take several minutes.
 * Front-end link replacement for attachment URLs, rendered content, text widgets, and Proud Document metadata, using WordPress-local HTML instead of public FileToWeb URLs.
 * Durable provider-neutral preview records with complete artifact manifests for supported ProudCity Document and Meeting templates, with sanitized fingerprinted bundles under WordPress uploads.
@@ -81,6 +81,14 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.42 =
+
+* Polls pending conversions every minute in oldest-due-first order so large syncs cannot indefinitely block completed files.
+* Moves checked processing files to a bounded 1, 2, 5, then 10 minute backoff window with small deterministic jitter.
+* Recovers pre-upgrade pending items that do not yet have queue metadata by processing them oldest-first.
+* Shares one configured batch limit across upload retries, regular conversions, and PDF-to-Page jobs.
+* Prevents overlapping WordPress cron workers from polling the same batch with a connection-scoped database lock.
 
 = 0.1.41 =
 

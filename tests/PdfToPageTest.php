@@ -11,14 +11,28 @@ class PdfToPageTest extends TestCase {
 	private $meta        = array();
 	private $options     = array();
 	private $uploads_dir = '';
+	private $previous_wpdb = null;
 
 	protected function setUp(): void {
 		parent::setUp();
 		Monkey\setUp();
 
-		$this->meta        = array();
-		$this->options     = array();
-		$this->uploads_dir = sys_get_temp_dir() . '/ftw-pdf-to-page-' . uniqid();
+		$this->meta          = array();
+		$this->options       = array();
+		$this->uploads_dir   = sys_get_temp_dir() . '/ftw-pdf-to-page-' . uniqid();
+		$this->previous_wpdb = isset( $GLOBALS['wpdb'] ) ? $GLOBALS['wpdb'] : null;
+		$GLOBALS['wpdb']     = new class() {
+			public $queries = array();
+
+			public function prepare( $query, $value ) {
+				return str_replace( '%s', "'" . addslashes( $value ) . "'", $query );
+			}
+
+			public function get_var( $query ) {
+				$this->queries[] = $query;
+				return '1';
+			}
+		};
 
 		Functions\when( '__' )->returnArg();
 		Functions\when( 'esc_html__' )->returnArg();
@@ -122,6 +136,7 @@ class PdfToPageTest extends TestCase {
 			$this->remove_dir( $this->uploads_dir );
 		}
 
+		$GLOBALS['wpdb'] = $this->previous_wpdb;
 		Monkey\tearDown();
 		parent::tearDown();
 	}
@@ -319,6 +334,8 @@ class PdfToPageTest extends TestCase {
 		$this->assertSame( 'doc-501', $this->options[ PDF_To_Page::OPTION_JOBS ]['job-501']['document_id'] );
 		$this->assertSame( 'processing', $this->options[ PDF_To_Page::OPTION_JOBS ]['job-501']['status'] );
 		$this->assertSame( 'admin@example.test', $this->options[ PDF_To_Page::OPTION_JOBS ]['job-501']['notify_email'] );
+		$this->assertSame( 0, $this->options[ PDF_To_Page::OPTION_JOBS ]['job-501']['poll_attempts'] );
+		$this->assertGreaterThan( time(), $this->options[ PDF_To_Page::OPTION_JOBS ]['job-501']['next_poll_at'] );
 		$this->assertCount( 3, $requests );
 		$this->assertFileDoesNotExist( $tmp );
 	}
@@ -456,6 +473,8 @@ class PdfToPageTest extends TestCase {
 		$this->assertCount( 1, $updated_posts );
 		$this->assertSame( $page_id, $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ]['page_id'] );
 		$this->assertSame( 'ready', $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ]['status'] );
+		$this->assertSame( 1, $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ]['poll_attempts'] );
+		$this->assertSame( 0, $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ]['next_poll_at'] );
 		$this->assertStringContainsString( 'Ready job content', $updated_posts[0]['post_content'] );
 		$this->assertSame( '1', $this->meta[ $page_id ][ Document_State::META_PDF_TO_PAGE ] );
 		$this->assertSame( 'doc-ready', $this->meta[ $page_id ][ Document_State::META_DOCUMENT_ID ] );
@@ -508,6 +527,71 @@ class PdfToPageTest extends TestCase {
 		$this->assertSame( 'service_unavailable', $job['error_code'] );
 		$this->assertSame( 'FTW-ABCDEF123456', $job['error_reference'] );
 		$this->assertTrue( $job['error_retryable'] );
+		$this->assertSame( 1, $job['poll_attempts'] );
+		$this->assertGreaterThanOrEqual( time() + 120, $job['next_poll_at'] );
+		$this->assertLessThanOrEqual( time() + 140, $job['next_poll_at'] );
+	}
+
+	public function test_pending_job_queue_polls_oldest_due_job_and_skips_future_work(): void {
+		$now = time();
+
+		$this->options[ PDF_To_Page::OPTION_JOBS ] = array(
+			'job-future' => $this->pollable_job( 'job-future', 'doc-future', $now + 600 ),
+			'job-newer'  => $this->pollable_job( 'job-newer', 'doc-newer', $now - 5 ),
+			'job-oldest' => $this->pollable_job( 'job-oldest', 'doc-oldest', $now - 100 ),
+		);
+
+		$requested = array();
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_request' )->alias(
+			function ( $url ) use ( &$requested ) {
+				$requested[] = $url;
+				$document_id = basename( $url );
+
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'     => $document_id,
+								'status' => 'processing',
+							),
+						)
+					),
+				);
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_body' )->alias(
+			function ( $response ) {
+				return $response['body'];
+			}
+		);
+
+		$this->assertSame(
+			array( 'updated' => 1, 'failed' => 0, 'skipped' => 0 ),
+			PDF_To_Page::poll_pending_jobs( 1 )
+		);
+		$this->assertSame( array( 'https://filetoweb.com/v1/documents/doc-oldest' ), $requested );
+		$this->assertGreaterThan( $now, $this->options[ PDF_To_Page::OPTION_JOBS ]['job-oldest']['next_poll_at'] );
+		$this->assertSame( $now - 5, $this->options[ PDF_To_Page::OPTION_JOBS ]['job-newer']['next_poll_at'] );
+		$this->assertSame( $now + 600, $this->options[ PDF_To_Page::OPTION_JOBS ]['job-future']['next_poll_at'] );
+	}
+
+	public function test_one_item_job_recovery_batches_alternate_with_scheduled_work(): void {
+		$method    = new \ReflectionMethod( PDF_To_Page::class, 'merge_recovery_and_scheduled_jobs' );
+		$recovery  = array( 'job-recovery' => $this->pollable_job( 'job-recovery', 'doc-recovery', 0 ) );
+		$scheduled = array( 'job-scheduled' => $this->pollable_job( 'job-scheduled', 'doc-scheduled', time() - 10 ) );
+		$first     = $method->invoke( null, $recovery, $scheduled, 1 );
+		$second    = $method->invoke( null, $recovery, $scheduled, 1 );
+
+		$this->assertSame( array( 'job-recovery' ), array_keys( $first ) );
+		$this->assertSame( array( 'job-scheduled' ), array_keys( $second ) );
+		$this->assertSame( 0, $this->options[ PDF_To_Page::OPTION_RECOVERY_CURSOR ] );
 	}
 
 	public function test_failed_pdf_to_page_job_renders_explicit_retry_action(): void {
@@ -756,6 +840,25 @@ class PdfToPageTest extends TestCase {
 		$this->assertStringContainsString( 'Edit draft', $json_payload['html'] );
 		$this->assertSame( $page_id, $this->options[ PDF_To_Page::OPTION_JOBS ][ $job_id ]['page_id'] );
 		$this->assertStringContainsString( 'Auto-polled content', $current_content );
+		$this->assertStringContainsString( 'GET_LOCK', $GLOBALS['wpdb']->queries[0] );
+		$this->assertStringContainsString( 'RELEASE_LOCK', $GLOBALS['wpdb']->queries[1] );
+	}
+
+	private function pollable_job( $job_id, $document_id, $next_poll_at ) {
+		return array(
+			'id'                    => $job_id,
+			'filename'              => $job_id . '.pdf',
+			'fingerprint'           => 'fp-' . $job_id,
+			'fingerprint_algorithm' => 'sha256',
+			'external_id'           => 'wordpress:test:pdf-to-page:' . $job_id,
+			'document_id'           => $document_id,
+			'status'                => 'processing',
+			'created_at'            => '2026-06-09 11:00:00',
+			'updated_at'            => '2026-06-09 11:00:00',
+			'next_poll_at'          => $next_poll_at,
+			'last_polled_at'        => 0,
+			'poll_attempts'         => 0,
+		);
 	}
 
 	public function test_ready_poll_updates_same_draft_page_and_sends_one_email(): void {

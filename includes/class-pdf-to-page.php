@@ -12,14 +12,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class PDF_To_Page {
-	const PAGE_SLUG             = 'filetoweb-pdf-to-page';
-	const ACTION_UPLOAD         = 'filetoweb_integration_pdf_to_page_upload';
-	const ACTION_POLL_JOB       = 'filetoweb_integration_pdf_to_page_poll_job';
-	const ACTION_RETRY_JOB      = 'filetoweb_integration_pdf_to_page_retry_job';
-	const ACTION_AJAX_POLL_JOBS = 'filetoweb_integration_pdf_to_page_poll_jobs';
-	const OPTION_JOBS           = 'filetoweb_integration_pdf_to_page_jobs';
-	const MAX_BYTES             = 104857600; // 100 MB.
-	const AUTO_POLL_INTERVAL_MS = 10000;
+	const POLL_DELAYS            = array( 60, 120, 300, 600 );
+	const PAGE_SLUG               = 'filetoweb-pdf-to-page';
+	const ACTION_UPLOAD           = 'filetoweb_integration_pdf_to_page_upload';
+	const ACTION_POLL_JOB         = 'filetoweb_integration_pdf_to_page_poll_job';
+	const ACTION_RETRY_JOB        = 'filetoweb_integration_pdf_to_page_retry_job';
+	const ACTION_AJAX_POLL_JOBS   = 'filetoweb_integration_pdf_to_page_poll_jobs';
+	const OPTION_JOBS             = 'filetoweb_integration_pdf_to_page_jobs';
+	const OPTION_RECOVERY_CURSOR = 'filetoweb_integration_pdf_to_page_recovery_cursor';
+	const MAX_BYTES               = 104857600; // 100 MB.
+	const AUTO_POLL_INTERVAL_MS   = 10000;
 
 	/**
 	 * Register hooks.
@@ -203,7 +205,12 @@ class PDF_To_Page {
 
 		check_ajax_referer( self::ACTION_AJAX_POLL_JOBS );
 
-		$counts = self::poll_pending_jobs( Settings::batch_size() );
+		$counts = Cron::with_poll_lock(
+			function () {
+				return self::poll_pending_jobs( Settings::batch_size() );
+			},
+			array( 'updated' => 0, 'failed' => 0, 'skipped' => 0 )
+		);
 		$rows   = self::recent_rows();
 
 		ob_start();
@@ -246,6 +253,9 @@ class PDF_To_Page {
 			'created_at'            => current_time( 'mysql', true ),
 			'updated_at'            => current_time( 'mysql', true ),
 			'completed_at'          => '',
+			'next_poll_at'          => 0,
+			'last_polled_at'        => 0,
+			'poll_attempts'         => 0,
 		);
 
 		self::save_job( $job );
@@ -351,14 +361,32 @@ class PDF_To_Page {
 			return $counts;
 		}
 
+		$now            = time();
+		$recovery_jobs  = array();
+		$scheduled_jobs = array();
+
 		foreach ( self::jobs() as $job_id => $job ) {
-			if ( $limit <= 0 ) {
-				break;
+			$status       = isset( $job['status'] ) ? Security::sanitize_status( $job['status'] ) : '';
+			$next_poll_at = isset( $job['next_poll_at'] ) ? absint( $job['next_poll_at'] ) : 0;
+
+			if ( ! self::is_pending_status( $status ) || $next_poll_at > $now ) {
+				continue;
 			}
 
-			$status = isset( $job['status'] ) ? Security::sanitize_status( $job['status'] ) : '';
-			if ( ! self::is_pending_status( $status ) ) {
-				continue;
+			if ( $next_poll_at > 0 ) {
+				$scheduled_jobs[ $job_id ] = $job;
+			} else {
+				$recovery_jobs[ $job_id ] = $job;
+			}
+		}
+
+		self::sort_jobs_by_due( $recovery_jobs );
+		self::sort_jobs_by_due( $scheduled_jobs );
+		$due_jobs = self::merge_recovery_and_scheduled_jobs( $recovery_jobs, $scheduled_jobs, $limit );
+
+		foreach ( $due_jobs as $job_id => $job ) {
+			if ( $limit <= 0 ) {
+				break;
 			}
 
 			$result = self::poll_job( $job_id );
@@ -375,6 +403,74 @@ class PDF_To_Page {
 	}
 
 	/**
+	 * Sort jobs by due time, creation time, then stable ID.
+	 *
+	 * @param array $jobs Jobs keyed by ID.
+	 */
+	private static function sort_jobs_by_due( &$jobs ) {
+		uasort(
+			$jobs,
+			function ( $left, $right ) {
+				$left_due  = isset( $left['next_poll_at'] ) ? absint( $left['next_poll_at'] ) : 0;
+				$right_due = isset( $right['next_poll_at'] ) ? absint( $right['next_poll_at'] ) : 0;
+
+				if ( $left_due !== $right_due ) {
+					return $left_due < $right_due ? -1 : 1;
+				}
+
+				$left_created  = isset( $left['created_at'] ) ? (string) $left['created_at'] : '';
+				$right_created = isset( $right['created_at'] ) ? (string) $right['created_at'] : '';
+
+				if ( $left_created !== $right_created ) {
+					return strcmp( $left_created, $right_created );
+				}
+
+				return strcmp( isset( $left['id'] ) ? (string) $left['id'] : '', isset( $right['id'] ) ? (string) $right['id'] : '' );
+			}
+		);
+	}
+
+	/**
+	 * Reserve recovery capacity without allowing legacy jobs to starve due work.
+	 *
+	 * @param array $recovery_jobs Jobs created before queue metadata existed.
+	 * @param array $scheduled_jobs Normally scheduled jobs that are due.
+	 * @param int   $limit Maximum selected jobs.
+	 * @return array
+	 */
+	private static function merge_recovery_and_scheduled_jobs( $recovery_jobs, $scheduled_jobs, $limit ) {
+		if ( empty( $recovery_jobs ) ) {
+			return array_slice( $scheduled_jobs, 0, $limit, true );
+		}
+
+		if ( empty( $scheduled_jobs ) ) {
+			return array_slice( $recovery_jobs, 0, $limit, true );
+		}
+
+		if ( 1 === $limit ) {
+			$cursor          = absint( get_option( self::OPTION_RECOVERY_CURSOR, 0 ) ) % 2;
+			$recovery_quota  = 0 === $cursor ? 1 : 0;
+			update_option( self::OPTION_RECOVERY_CURSOR, ( $cursor + 1 ) % 2, false );
+		} else {
+			$recovery_quota = min( count( $recovery_jobs ), max( 1, (int) floor( $limit / 5 ) ), $limit - 1 );
+		}
+
+		$selected       = array_slice( $recovery_jobs, 0, $recovery_quota, true );
+		$scheduled_used = min( count( $scheduled_jobs ), $limit - count( $selected ) );
+		$selected      += array_slice( $scheduled_jobs, 0, $scheduled_used, true );
+
+		if ( count( $selected ) < $limit ) {
+			$selected += array_slice( $recovery_jobs, $recovery_quota, $limit - count( $selected ), true );
+		}
+
+		if ( count( $selected ) < $limit ) {
+			$selected += array_slice( $scheduled_jobs, $scheduled_used, $limit - count( $selected ), true );
+		}
+
+		return $selected;
+	}
+
+	/**
 	 * Poll one PDF-to-Page job.
 	 *
 	 * @param string $job_id Job ID.
@@ -387,24 +483,34 @@ class PDF_To_Page {
 
 		$job = self::job( $job_id );
 
-		if ( empty( $job['document_id'] ) ) {
+		if ( empty( $job ) ) {
 			return 'skipped';
 		}
 
-			$response = Api_Client::get_document( $job['document_id'] );
+		$job['poll_attempts']  = absint( $job['poll_attempts'] ) + 1;
+		$job['last_polled_at'] = time();
+		self::save_job( $job );
 
-			if ( ! $response['ok'] ) {
-				$retryable = ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $response['error'] );
-				if ( $retryable ) {
-					self::mark_job_pending_retry( $job_id, $response );
-					return 'updated';
-				}
+		if ( empty( $job['document_id'] ) ) {
+			self::schedule_job_next_poll( $job_id );
+			return 'skipped';
+		}
 
-				self::mark_job_failed( $job_id, $response );
-				return 'failed';
+		$response = Api_Client::get_document( $job['document_id'] );
+
+		if ( ! $response['ok'] ) {
+			$retryable = ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $response['error'] );
+			if ( $retryable ) {
+				self::mark_job_pending_retry( $job_id, $response );
+				return 'updated';
 			}
 
+			self::mark_job_failed( $job_id, $response );
+			return 'failed';
+		}
+
 		if ( empty( $response['body']['document'] ) || ! is_array( $response['body']['document'] ) ) {
+			self::schedule_job_next_poll( $job_id );
 			return 'skipped';
 		}
 
@@ -1178,6 +1284,9 @@ class PDF_To_Page {
 			'created_at'            => isset( $job['created_at'] ) ? sanitize_text_field( $job['created_at'] ) : '',
 			'updated_at'            => isset( $job['updated_at'] ) ? sanitize_text_field( $job['updated_at'] ) : '',
 			'completed_at'          => isset( $job['completed_at'] ) ? sanitize_text_field( $job['completed_at'] ) : '',
+			'next_poll_at'          => isset( $job['next_poll_at'] ) ? absint( $job['next_poll_at'] ) : 0,
+			'last_polled_at'        => isset( $job['last_polled_at'] ) ? absint( $job['last_polled_at'] ) : 0,
+			'poll_attempts'         => isset( $job['poll_attempts'] ) ? absint( $job['poll_attempts'] ) : 0,
 		);
 	}
 
@@ -1212,6 +1321,12 @@ class PDF_To_Page {
 		$job['error_retryable']       = ! empty( $failure['retryable'] );
 		$job['updated_at']            = current_time( 'mysql', true );
 
+		if ( self::is_pending_status( Security::sanitize_status( $job['status'] ) ) ) {
+			$job['next_poll_at'] = self::job_next_poll_at( $job );
+		} else {
+			$job['next_poll_at'] = 0;
+		}
+
 		self::save_job( $job );
 
 		return self::job( $job_id );
@@ -1237,6 +1352,7 @@ class PDF_To_Page {
 		$job['error_reference'] = isset( $response['reference'] ) ? $response['reference'] : '';
 		$job['error_retryable'] = ! empty( $response['retryable'] );
 		$job['updated_at']      = current_time( 'mysql', true );
+		$job['next_poll_at']    = 0;
 
 		self::save_job( $job );
 	}
@@ -1260,8 +1376,43 @@ class PDF_To_Page {
 		$job['error_reference'] = isset( $response['reference'] ) ? $response['reference'] : '';
 		$job['error_retryable'] = true;
 		$job['updated_at']      = current_time( 'mysql', true );
+		$job['next_poll_at']    = self::job_next_poll_at( $job );
 
 		self::save_job( $job );
+	}
+
+	/**
+	 * Schedule another status check for a stored job.
+	 *
+	 * @param string $job_id Job ID.
+	 */
+	private static function schedule_job_next_poll( $job_id ) {
+		$job = self::job( $job_id );
+
+		if ( empty( $job ) ) {
+			return;
+		}
+
+		$job['next_poll_at'] = self::job_next_poll_at( $job );
+		self::save_job( $job );
+	}
+
+	/**
+	 * Calculate a fair, deterministic backoff time for a job.
+	 *
+	 * @param array $job Job.
+	 * @return int Unix timestamp.
+	 */
+	private static function job_next_poll_at( $job ) {
+		$attempts    = isset( $job['poll_attempts'] ) ? absint( $job['poll_attempts'] ) : 0;
+		$delay_index = min( $attempts, count( self::POLL_DELAYS ) - 1 );
+		$delay       = self::POLL_DELAYS[ $delay_index ];
+		$job_id      = isset( $job['id'] ) ? sanitize_key( $job['id'] ) : '';
+		$delay       = max( 30, absint( apply_filters( 'filetoweb_integration_pdf_to_page_poll_delay_seconds', $delay, $job_id, $attempts ) ) );
+		$hash        = sprintf( '%u', crc32( $job_id . ':' . $attempts ) );
+		$jitter      = absint( $hash ) % 21;
+
+		return time() + $delay + $jitter;
 	}
 
 	/**

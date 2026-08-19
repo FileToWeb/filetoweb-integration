@@ -20,6 +20,11 @@ $option_names = array(
 	'filetoweb_integration_pdf_to_page_jobs',
 	'filetoweb_integration_epub_default_off_migrated',
 	'filetoweb_integration_preview_migration_version',
+	'filetoweb_integration_poll_schedule_version',
+	'filetoweb_integration_poll_queue_cursor',
+	'filetoweb_integration_post_recovery_cursor',
+	'filetoweb_integration_retry_recovery_cursor',
+	'filetoweb_integration_pdf_to_page_recovery_cursor',
 );
 
 foreach ( $option_names as $option_name ) {
@@ -95,7 +100,13 @@ $meta_keys = array(
 	'_filetoweb_editor_url',
 	'_filetoweb_page_count',
 	'_filetoweb_last_error',
+	'_filetoweb_error_code',
+	'_filetoweb_error_reference',
+	'_filetoweb_error_retryable',
 	'_filetoweb_last_synced_at',
+	'_filetoweb_next_poll_at',
+	'_filetoweb_last_polled_at',
+	'_filetoweb_poll_attempts',
 	'_filetoweb_original_url',
 	'_filetoweb_local_html_path',
 	'_filetoweb_local_html_token',
@@ -111,6 +122,7 @@ $meta_keys = array(
 	'_filetoweb_pdf_to_page_notify_email',
 	'_filetoweb_pdf_to_page_notified_at',
 	'_filetoweb_pdf_to_page_completed_at',
+	'_filetoweb_last_trigger',
 	'_filetoweb_source_post_id',
 	'_filetoweb_public_replacement_paused',
 	'_filetoweb_paused_html_preview',

@@ -26,6 +26,9 @@ class Document_State {
 		const META_ERROR_REFERENCE              = '_filetoweb_error_reference';
 		const META_ERROR_RETRYABLE              = '_filetoweb_error_retryable';
 		const META_LAST_SYNCED_AT               = '_filetoweb_last_synced_at';
+		const META_NEXT_POLL_AT                 = '_filetoweb_next_poll_at';
+		const META_LAST_POLLED_AT               = '_filetoweb_last_polled_at';
+		const META_POLL_ATTEMPTS                = '_filetoweb_poll_attempts';
 		const META_ORIGINAL_URL                 = '_filetoweb_original_url';
 		const META_LOCAL_HTML_PATH              = '_filetoweb_local_html_path';
 		const META_LOCAL_HTML_TOKEN             = '_filetoweb_local_html_token';
@@ -64,6 +67,9 @@ class Document_State {
 				self::META_ERROR_REFERENCE,
 				self::META_ERROR_RETRYABLE,
 				self::META_LAST_SYNCED_AT,
+				self::META_NEXT_POLL_AT,
+				self::META_LAST_POLLED_AT,
+				self::META_POLL_ATTEMPTS,
 				self::META_ORIGINAL_URL,
 				self::META_LOCAL_HTML_PATH,
 				self::META_LOCAL_HTML_TOKEN,
@@ -200,6 +206,9 @@ class Document_State {
 		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, '' );
 		update_post_meta( $post_id, self::META_LAST_TRIGGER, sanitize_key( $trigger ) );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
+		update_post_meta( $post_id, self::META_NEXT_POLL_AT, time() + 60 );
+		update_post_meta( $post_id, self::META_LAST_POLLED_AT, 0 );
+		update_post_meta( $post_id, self::META_POLL_ATTEMPTS, 0 );
 	}
 
 	/**

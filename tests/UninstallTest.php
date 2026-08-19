@@ -133,6 +133,18 @@ class UninstallTest extends TestCase {
 			$this->assertContains( Document_State::META_HTML_URL, $GLOBALS['wpdb']->deleted_meta_keys );
 			$this->assertContains( Document_State::META_LOCAL_HTML_PATH, $GLOBALS['wpdb']->deleted_meta_keys );
 			$this->assertContains( Document_State::META_PDF_TO_PAGE, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Document_State::META_NEXT_POLL_AT, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Document_State::META_LAST_POLLED_AT, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Document_State::META_POLL_ATTEMPTS, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Document_State::META_ERROR_CODE, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Document_State::META_ERROR_REFERENCE, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Document_State::META_ERROR_RETRYABLE, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Document_State::META_LAST_TRIGGER, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( 'filetoweb_integration_poll_schedule_version', $deleted_options );
+			$this->assertContains( 'filetoweb_integration_poll_queue_cursor', $deleted_options );
+			$this->assertContains( 'filetoweb_integration_post_recovery_cursor', $deleted_options );
+			$this->assertContains( 'filetoweb_integration_retry_recovery_cursor', $deleted_options );
+			$this->assertContains( PDF_To_Page::OPTION_RECOVERY_CURSOR, $deleted_options );
 			$this->assertSame( array( 17 ), $GLOBALS['wpdb']->deleted_meta_ids );
 			$this->assertCount( 2, $GLOBALS['filetoweb_test_cleanup_queue'] );
 			$this->assertSame( 'filetoweb-integration/previews/1/fp/assets/image.png', $GLOBALS['filetoweb_test_cleanup_queue'][0][1] );

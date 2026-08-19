@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.42
+
+- Poll pending conversions every minute in oldest-due-first order so large syncs cannot indefinitely block completed files.
+- Move checked processing files to a bounded 1, 2, 5, then 10 minute backoff window with small deterministic jitter.
+- Recover pre-upgrade pending items that do not yet have queue metadata by processing them oldest-first.
+- Share one configured batch limit across upload retries, regular conversions, and PDF-to-Page jobs.
+- Prevent overlapping WordPress cron workers with a connection-scoped database lock that cannot expire during a healthy batch.
+
 ## 0.1.41
 
 - Add a per-PDF **Show original PDF publicly** control for Proud Documents, Media PDFs, and individual Meeting materials.

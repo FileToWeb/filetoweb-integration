@@ -6,6 +6,8 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 
 - Newly created or edited PDF attachments are submitted to FileToWeb.
 - Upload-triggered syncs nudge WP-Cron, and polling retries intentionally scheduled or transiently timed-out uploads.
+- Pending conversions and PDF-to-Page jobs share an oldest-due-first queue budget with bounded backoff and a one-minute worker so large migrations cannot indefinitely block completed files.
+- A connection-scoped database lock prevents overlapping workers without expiring during a healthy long-running batch.
 - Proud Document saves reuse the linked attachment when one is present; otherwise the plugin resolves the document URL back to a WordPress attachment with `attachment_url_to_postid()`.
 - ProudCity Meeting Agenda, Agenda Packet, and Minutes attachments sync independently when the Meeting is saved, and supported ProudCity builds can show inline sync controls below those upload fields.
 - ProudCity Document EPUB downloads are available as an opt-in setting and are off by default.

@@ -8,9 +8,12 @@ use FileToWeb\Integration\Sync;
 use PHPUnit\Framework\TestCase;
 
 class SyncTest extends TestCase {
+	private $options = array();
+
 	protected function setUp(): void {
 		parent::setUp();
 		Monkey\setUp();
+		$this->options = array();
 
 		Functions\when( '__' )->returnArg();
 		Functions\when( 'esc_url_raw' )->returnArg();
@@ -42,7 +45,17 @@ class SyncTest extends TestCase {
 					);
 				}
 
+				if ( array_key_exists( $name, $this->options ) ) {
+					return $this->options[ $name ];
+				}
+
 				return $default;
+			}
+		);
+		Functions\when( 'update_option' )->alias(
+			function ( $name, $value ) {
+				$this->options[ $name ] = $value;
+				return true;
 			}
 		);
 		Functions\when( 'apply_filters' )->alias(
@@ -61,10 +74,10 @@ class SyncTest extends TestCase {
 		$captured_args = array();
 
 		Functions\expect( 'get_posts' )
-			->once()
+			->twice()
 			->andReturnUsing(
 				function ( $args ) use ( &$captured_args ) {
-					$captured_args = $args;
+					$captured_args[] = $args;
 					return array();
 				}
 			);
@@ -72,16 +85,19 @@ class SyncTest extends TestCase {
 		$counts = Sync::retry_pending_syncs( 25 );
 
 		$this->assertSame( array( 'queued' => 0, 'skipped' => 0, 'failed' => 0, 'updated' => 0 ), $counts );
-		$this->assertArrayHasKey( 'meta_query', $captured_args );
-		$this->assertFalse( $this->meta_query_contains_compare( $captured_args['meta_query'], 'NOT EXISTS' ) );
-		$this->assertTrue( $this->meta_query_contains_value( $captured_args['meta_query'], 'pending' ) );
+		$this->assertArrayHasKey( 'meta_query', $captured_args[0] );
+		$this->assertTrue( $this->meta_query_contains_compare( $captured_args[0]['meta_query'], 'NOT EXISTS' ) );
+		$this->assertTrue( $this->meta_query_contains_value( $captured_args[0]['meta_query'], 'pending' ) );
+		$this->assertTrue( $this->meta_query_contains_key( $captured_args[0]['meta_query'], Document_State::META_DOCUMENT_ID ) );
+		$this->assertTrue( $this->meta_query_contains_key( $captured_args[0]['meta_query'], Document_State::META_STATUS ) );
+		$this->assertSame( Document_State::META_NEXT_POLL_AT, $captured_args[1]['meta_key'] );
 	}
 
 	public function test_poll_pending_includes_marked_pdf_to_page_drafts(): void {
 		$calls = array();
 
 		Functions\expect( 'get_posts' )
-			->times( 3 )
+			->times( 4 )
 			->andReturnUsing(
 				function ( $args ) use ( &$calls ) {
 					$calls[] = $args;
@@ -93,10 +109,58 @@ class SyncTest extends TestCase {
 
 		$this->assertSame( array( 'queued' => 0, 'skipped' => 0, 'failed' => 0, 'updated' => 0 ), $counts );
 		$this->assertSame( 'attachment', $calls[0]['post_type'] );
-		$this->assertSame( array( 'attachment', 'document' ), $calls[1]['post_type'] );
-		$this->assertSame( 'page', $calls[2]['post_type'] );
-		$this->assertTrue( $this->meta_query_contains_key( $calls[2]['meta_query'], Document_State::META_PDF_TO_PAGE ) );
-		$this->assertTrue( $this->meta_query_contains_value( $calls[2]['meta_query'], '1' ) );
+		$this->assertSame( 'ID', $calls[0]['orderby'] );
+		$this->assertTrue( $this->meta_query_contains_compare( $calls[0]['meta_query'], 'NOT EXISTS' ) );
+		$this->assertSame( 'attachment', $calls[1]['post_type'] );
+		$this->assertSame( Document_State::META_NEXT_POLL_AT, $calls[1]['meta_key'] );
+		$this->assertSame( 'meta_value_num', $calls[1]['orderby'] );
+		$this->assertSame( 'ASC', $calls[1]['order'] );
+		$this->assertTrue( $this->meta_query_contains_compare( $calls[1]['meta_query'], '<=' ) );
+		$this->assertSame( array( 'attachment', 'document', 'page' ), $calls[2]['post_type'] );
+		$this->assertSame( 'ID', $calls[2]['orderby'] );
+		$this->assertSame( 'ASC', $calls[2]['order'] );
+		$this->assertTrue( $this->meta_query_contains_compare( $calls[2]['meta_query'], 'NOT EXISTS' ) );
+		$this->assertSame( array( 'attachment', 'document', 'page' ), $calls[3]['post_type'] );
+		$this->assertSame( Document_State::META_NEXT_POLL_AT, $calls[3]['meta_key'] );
+		$this->assertSame( 'meta_value_num', $calls[3]['orderby'] );
+		$this->assertTrue( $this->meta_query_contains_compare( $calls[3]['meta_query'], '<=' ) );
+	}
+
+	public function test_retry_work_is_counted_against_the_shared_poll_batch(): void {
+		$calls = array();
+
+		Functions\expect( 'get_posts' )
+			->times( 4 )
+			->andReturnUsing(
+				function ( $args ) use ( &$calls ) {
+					$calls[] = $args;
+
+					return 1 === count( $calls ) ? array( 101 ) : array();
+				}
+			);
+		Functions\when( 'get_post_meta' )->justReturn( '' );
+		Functions\when( 'update_post_meta' )->justReturn( true );
+		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
+		Functions\when( 'wp_get_attachment_url' )->justReturn( false );
+		Functions\when( 'get_attached_file' )->justReturn( false );
+
+		$counts = Sync::poll_pending( 5 );
+
+		$this->assertSame( array( 'queued' => 0, 'skipped' => 1, 'failed' => 0, 'updated' => 0 ), $counts );
+		$this->assertSame( 3, $calls[0]['posts_per_page'] );
+		$this->assertSame( 3, $calls[1]['posts_per_page'] );
+		$this->assertSame( 4, $calls[2]['posts_per_page'] );
+		$this->assertSame( 4, $calls[3]['posts_per_page'] );
+	}
+
+	public function test_one_item_recovery_batches_alternate_with_scheduled_work(): void {
+		$method = new \ReflectionMethod( Sync::class, 'merge_recovery_and_due' );
+		$first  = $method->invoke( null, array( 101 ), array( 202 ), 1, 'test_recovery_cursor' );
+		$second = $method->invoke( null, array( 101 ), array( 202 ), 1, 'test_recovery_cursor' );
+
+		$this->assertSame( array( 101 ), $first );
+		$this->assertSame( array( 202 ), $second );
+		$this->assertSame( 0, $this->options['test_recovery_cursor'] );
 	}
 
 	public function test_new_pdf_attachment_is_marked_and_scheduled_for_intentional_retry(): void {
@@ -188,6 +252,113 @@ class SyncTest extends TestCase {
 		$this->assertSame( 'service_unavailable', $stored[ Document_State::META_ERROR_CODE ] );
 		$this->assertSame( 'FTW-123456789ABC', $stored[ Document_State::META_ERROR_REFERENCE ] );
 		$this->assertSame( '1', $stored[ Document_State::META_ERROR_RETRYABLE ] );
+		$this->assertSame( 1, $stored[ Document_State::META_POLL_ATTEMPTS ] );
+		$this->assertGreaterThanOrEqual( time() + 119, $stored[ Document_State::META_NEXT_POLL_AT ] );
+		$this->assertLessThanOrEqual( time() + 141, $stored[ Document_State::META_NEXT_POLL_AT ] );
+	}
+
+	public function test_processing_poll_moves_item_behind_other_due_work(): void {
+		$stored  = array();
+		$post_id = 654;
+		$before  = time();
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $requested_post_id, $key ) use ( $post_id ) {
+				if ( $post_id !== $requested_post_id ) {
+					return '';
+				}
+
+				if ( Document_State::META_DOCUMENT_ID === $key ) {
+					return 'doc-654';
+				}
+
+				if ( Document_State::META_POLL_ATTEMPTS === $key ) {
+					return 1;
+				}
+
+				return '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $requested_post_id, $key, $value ) use ( &$stored, $post_id ) {
+				$this->assertSame( $post_id, $requested_post_id );
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		$this->mock_successful_document_response( 'processing' );
+
+		$this->assertSame( 'updated', Sync::poll_post( $post_id ) );
+		$this->assertSame( 2, $stored[ Document_State::META_POLL_ATTEMPTS ] );
+		$this->assertSame( 'processing', $stored[ Document_State::META_STATUS ] );
+		$this->assertGreaterThanOrEqual( $before + 300, $stored[ Document_State::META_NEXT_POLL_AT ] );
+		$this->assertLessThanOrEqual( time() + 320, $stored[ Document_State::META_NEXT_POLL_AT ] );
+	}
+
+	public function test_ready_poll_removes_item_from_active_queue(): void {
+		$stored       = array();
+		$deleted_keys = array();
+		$post_id      = 987;
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $requested_post_id, $key ) use ( $post_id ) {
+				if ( $post_id === $requested_post_id && Document_State::META_DOCUMENT_ID === $key ) {
+					return 'doc-987';
+				}
+
+				return '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $requested_post_id, $key, $value ) use ( &$stored, $post_id ) {
+				$this->assertSame( $post_id, $requested_post_id );
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $requested_post_id, $key ) use ( &$deleted_keys, $post_id ) {
+				$this->assertSame( $post_id, $requested_post_id );
+				$deleted_keys[] = $key;
+				return true;
+			}
+		);
+		$this->mock_successful_document_response( 'ready' );
+
+		$this->assertSame( 'updated', Sync::poll_post( $post_id ) );
+		$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
+		$this->assertContains( Document_State::META_NEXT_POLL_AT, $deleted_keys );
+	}
+
+	private function mock_successful_document_response( $status ) {
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_request' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => json_encode(
+					array(
+						'document' => array(
+							'id'             => 'doc-test',
+							'status'         => $status,
+							'html_url'       => 'https://filetoweb.com/d/doc-test/1',
+							'continuous_url' => 'https://filetoweb.com/d/doc-test/continuous',
+							'editor_url'     => 'https://filetoweb.com/home/documents/doc-test',
+							'page_count'     => 3,
+						),
+					)
+				),
+			)
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_body' )->alias(
+			function ( $response ) {
+				return $response['body'];
+			}
+		);
 	}
 
 	private function meta_query_contains_compare( $query, $compare ) {

@@ -12,7 +12,20 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Sync {
-	const HOOK_SYNC_ITEM = 'filetoweb_integration_sync_item';
+	const HOOK_SYNC_ITEM               = 'filetoweb_integration_sync_item';
+	const OPTION_QUEUE_CURSOR          = 'filetoweb_integration_poll_queue_cursor';
+	const OPTION_POST_RECOVERY_CURSOR  = 'filetoweb_integration_post_recovery_cursor';
+	const OPTION_RETRY_RECOVERY_CURSOR = 'filetoweb_integration_retry_recovery_cursor';
+	const POLL_DELAYS                  = array( 60, 120, 300, 600 );
+
+	/**
+	 * FileToWeb states that still need status polling.
+	 *
+	 * @return array
+	 */
+	private static function pending_statuses() {
+		return array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' );
+	}
 
 	/**
 	 * Register hooks.
@@ -131,37 +144,51 @@ class Sync {
 			return 'skipped';
 		}
 
-			$response = Api_Client::get_document( $document_id );
+		$attempts = self::record_poll_attempt( $post_id );
+		$response = Api_Client::get_document( $document_id );
 
-			if ( ! $response['ok'] ) {
-				$retryable = ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $response['error'] );
-				if ( $retryable ) {
-					Document_State::mark_pending_retry(
-						$post_id,
-						$response['error'],
-						isset( $response['error_code'] ) ? $response['error_code'] : '',
-						isset( $response['reference'] ) ? $response['reference'] : '',
-						true
-					);
-					return 'updated';
-				}
-
-				Document_State::mark_failed(
+		if ( ! $response['ok'] ) {
+			$retryable = ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $response['error'] );
+			if ( $retryable ) {
+				Document_State::mark_pending_retry(
 					$post_id,
 					$response['error'],
 					isset( $response['error_code'] ) ? $response['error_code'] : '',
 					isset( $response['reference'] ) ? $response['reference'] : '',
-					false
+					true
 				);
-				return 'failed';
+				self::schedule_next_poll( $post_id, $attempts );
+				return 'updated';
 			}
 
+			Document_State::mark_failed(
+				$post_id,
+				$response['error'],
+				isset( $response['error_code'] ) ? $response['error_code'] : '',
+				isset( $response['reference'] ) ? $response['reference'] : '',
+				false
+			);
+			self::clear_next_poll( $post_id );
+			return 'failed';
+		}
+
 		if ( isset( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
-			Document_State::write_polled_state( $post_id, $response['body']['document'] );
-			do_action( 'filetoweb_integration_after_poll_post', $post_id, $response['body']['document'] );
+			$document = $response['body']['document'];
+			$status   = Security::sanitize_status( isset( $document['status'] ) ? $document['status'] : '' );
+
+			Document_State::write_polled_state( $post_id, $document );
+			do_action( 'filetoweb_integration_after_poll_post', $post_id, $document );
+
+			if ( in_array( $status, self::pending_statuses(), true ) ) {
+				self::schedule_next_poll( $post_id, $attempts );
+			} else {
+				self::clear_next_poll( $post_id );
+			}
+
 			return 'updated';
 		}
 
+		self::schedule_next_poll( $post_id, $attempts );
 		return 'skipped';
 	}
 
@@ -180,11 +207,50 @@ class Sync {
 			return $counts;
 		}
 
-		$retry_counts = self::retry_pending_syncs( $limit );
+		$remaining = $limit;
+		$stages    = array( 'jobs', 'retries', 'posts' );
+		$cursor    = absint( get_option( self::OPTION_QUEUE_CURSOR, 0 ) ) % count( $stages );
+		$stages    = array_merge( array_slice( $stages, $cursor ), array_slice( $stages, 0, $cursor ) );
 
-		$posts = self::pending_poll_posts( $limit );
+		update_option( self::OPTION_QUEUE_CURSOR, ( $cursor + 1 ) % count( $stages ), false );
 
-		foreach ( $posts as $post_id ) {
+		foreach ( $stages as $index => $stage ) {
+			if ( $remaining <= 0 ) {
+				break;
+			}
+
+			$stages_left  = count( $stages ) - $index;
+			$stage_limit  = min( $remaining, max( 1, (int) ceil( $remaining / $stages_left ) ) );
+			$stage_counts = self::poll_stage( $stage, $stage_limit );
+
+			self::merge_counts( $counts, $stage_counts );
+			$remaining -= self::count_work( $stage_counts );
+		}
+
+		return $counts;
+	}
+
+	/**
+	 * Run one independently bounded polling queue.
+	 *
+	 * @param string $stage Queue name.
+	 * @param int    $limit Maximum work for this queue.
+	 * @return array
+	 */
+	private static function poll_stage( $stage, $limit ) {
+		if ( 'jobs' === $stage ) {
+			return class_exists( __NAMESPACE__ . '\\PDF_To_Page' )
+				? PDF_To_Page::poll_pending_jobs( $limit )
+				: self::empty_counts();
+		}
+
+		if ( 'retries' === $stage ) {
+			return self::retry_pending_syncs( $limit );
+		}
+
+		$counts = self::empty_counts();
+
+		foreach ( self::pending_poll_posts( $limit ) as $post_id ) {
 			$result = self::poll_post( $post_id );
 
 			if ( 'updated' === $result ) {
@@ -196,28 +262,15 @@ class Sync {
 			}
 		}
 
-		$remaining = max( 0, $limit - count( $posts ) );
-		if ( $remaining > 0 && class_exists( __NAMESPACE__ . '\\PDF_To_Page' ) ) {
-			$job_counts = PDF_To_Page::poll_pending_jobs( $remaining );
-
-			foreach ( $job_counts as $key => $value ) {
-				if ( isset( $counts[ $key ] ) ) {
-					$counts[ $key ] += absint( $value );
-				}
-			}
-		}
-
-		foreach ( $retry_counts as $key => $value ) {
-			if ( isset( $counts[ $key ] ) ) {
-				$counts[ $key ] += absint( $value );
-			}
-		}
-
 		return $counts;
 	}
 
 	/**
-	 * Return pending FileToWeb posts, including explicit PDF-to-Page drafts.
+	 * Return pending FileToWeb posts in fair next-due order.
+	 *
+	 * Posts created before queue metadata existed are selected by oldest ID as a
+	 * recovery sweep. Once checked, every non-terminal item receives a future
+	 * due time and moves behind older work.
 	 *
 	 * @param int $limit Max items.
 	 * @return array
@@ -230,44 +283,96 @@ class Sync {
 			),
 			array(
 				'key'     => Document_State::META_STATUS,
-				'value'   => array( 'awaiting_upload', 'uploaded', 'queued', 'pending', 'importing', 'processing', 'converting' ),
+				'value'   => self::pending_statuses(),
 				'compare' => 'IN',
 			),
 		);
 
-		$posts = get_posts(
+		$recovery_posts = get_posts(
 			array(
-				'post_type'      => array( 'attachment', 'document' ),
+				'post_type'      => array( 'attachment', 'document', 'page' ),
 				'post_status'    => 'any',
 				'posts_per_page' => $limit,
 				'fields'         => 'ids',
-				'meta_query'     => $status_query,
-			)
-		);
-
-		if ( count( $posts ) >= $limit ) {
-			return $posts;
-		}
-
-		$pages = get_posts(
-			array(
-				'post_type'      => 'page',
-				'post_status'    => array( 'draft', 'pending', 'publish', 'private' ),
-				'posts_per_page' => $limit - count( $posts ),
-				'fields'         => 'ids',
+				'orderby'        => 'ID',
+				'order'          => 'ASC',
 				'meta_query'     => array_merge(
 					$status_query,
 					array(
 						array(
-							'key'   => Document_State::META_PDF_TO_PAGE,
-							'value' => '1',
+							'key'     => Document_State::META_NEXT_POLL_AT,
+							'compare' => 'NOT EXISTS',
 						),
 					)
 				),
 			)
 		);
 
-		return array_merge( $posts, $pages );
+		$due_posts = get_posts(
+			array(
+				'post_type'      => array( 'attachment', 'document', 'page' ),
+				'post_status'    => 'any',
+				'posts_per_page' => $limit,
+				'fields'         => 'ids',
+				'meta_key'       => Document_State::META_NEXT_POLL_AT,
+				'orderby'        => 'meta_value_num',
+				'order'          => 'ASC',
+				'meta_query'     => array_merge(
+					$status_query,
+					array(
+						array(
+							'key'     => Document_State::META_NEXT_POLL_AT,
+							'value'   => time(),
+							'compare' => '<=',
+							'type'    => 'NUMERIC',
+						),
+					)
+				),
+			)
+		);
+
+		return self::merge_recovery_and_due( $recovery_posts, $due_posts, $limit, self::OPTION_POST_RECOVERY_CURSOR );
+	}
+
+	/**
+	 * Record one API status check.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return int Updated attempt count.
+	 */
+	private static function record_poll_attempt( $post_id ) {
+		$attempts = absint( get_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, true ) ) + 1;
+
+		update_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, $attempts );
+		update_post_meta( $post_id, Document_State::META_LAST_POLLED_AT, time() );
+
+		return $attempts;
+	}
+
+	/**
+	 * Move a non-terminal item to its next backoff window.
+	 *
+	 * @param int $post_id Post ID.
+	 * @param int $attempts Completed poll attempts.
+	 */
+	private static function schedule_next_poll( $post_id, $attempts = 0 ) {
+		$attempts    = max( 0, absint( $attempts ) );
+		$delay_index = min( $attempts, count( self::POLL_DELAYS ) - 1 );
+		$delay       = self::POLL_DELAYS[ $delay_index ];
+		$delay       = max( 30, absint( apply_filters( 'filetoweb_integration_poll_delay_seconds', $delay, $post_id, $attempts ) ) );
+		$hash        = sprintf( '%u', crc32( absint( $post_id ) . ':' . $attempts ) );
+		$jitter      = absint( $hash ) % 21;
+
+		update_post_meta( $post_id, Document_State::META_NEXT_POLL_AT, time() + $delay + $jitter );
+	}
+
+	/**
+	 * Remove an item from the active polling queue.
+	 *
+	 * @param int $post_id Post ID.
+	 */
+	private static function clear_next_poll( $post_id ) {
+		delete_post_meta( $post_id, Document_State::META_NEXT_POLL_AT );
 	}
 
 	/**
@@ -285,38 +390,87 @@ class Sync {
 			return $counts;
 		}
 
-		$posts = get_posts(
+		$retry_query = array(
+			'relation' => 'OR',
+			array(
+				'relation' => 'AND',
+				array(
+					'key'   => Document_State::META_STATUS,
+					'value' => 'pending',
+				),
+				array(
+					'relation' => 'OR',
+					array(
+						'key'     => Document_State::META_DOCUMENT_ID,
+						'compare' => 'NOT EXISTS',
+					),
+					array(
+						'key'     => Document_State::META_DOCUMENT_ID,
+						'value'   => '',
+						'compare' => '=',
+					),
+				),
+			),
+			array(
+				'relation' => 'AND',
+				array(
+					'key'   => Document_State::META_STATUS,
+					'value' => 'failed',
+				),
+				array(
+					'key'     => Document_State::META_LAST_ERROR,
+					'value'   => 'timed out',
+					'compare' => 'LIKE',
+				),
+			),
+		);
+
+		$recovery_posts = get_posts(
 			array(
 				'post_type'      => 'attachment',
 				'post_mime_type' => 'application/pdf',
 				'post_status'    => 'inherit',
 				'posts_per_page' => $limit,
 				'fields'         => 'ids',
-				'orderby'        => 'date',
-				'order'          => 'DESC',
+				'orderby'        => 'ID',
+				'order'          => 'ASC',
 				'meta_query'     => array(
-					'relation' => 'OR',
+					'relation' => 'AND',
+					$retry_query,
 					array(
-						'key'   => Document_State::META_STATUS,
-						'value' => 'pending',
-					),
-					array(
-						'relation' => 'AND',
-						array(
-							'key'   => Document_State::META_STATUS,
-							'value' => 'failed',
-						),
-						array(
-							'key'     => Document_State::META_LAST_ERROR,
-							'value'   => 'timed out',
-							'compare' => 'LIKE',
-						),
+						'key'     => Document_State::META_NEXT_POLL_AT,
+						'compare' => 'NOT EXISTS',
 					),
 				),
 			)
 		);
 
+		$due_posts = get_posts(
+			array(
+				'post_type'      => 'attachment',
+				'post_mime_type' => 'application/pdf',
+				'post_status'    => 'inherit',
+				'posts_per_page' => $limit,
+				'fields'         => 'ids',
+				'meta_key'       => Document_State::META_NEXT_POLL_AT,
+				'orderby'        => 'meta_value_num',
+				'order'          => 'ASC',
+				'meta_query'     => array(
+					'relation' => 'AND',
+					$retry_query,
+					array(
+						'key'     => Document_State::META_NEXT_POLL_AT,
+						'value'   => time(),
+						'compare' => '<=',
+						'type'    => 'NUMERIC',
+					),
+				),
+			)
+		);
+		$posts = self::merge_recovery_and_due( $recovery_posts, $due_posts, $limit, self::OPTION_RETRY_RECOVERY_CURSOR );
+
 		foreach ( $posts as $post_id ) {
+			$attempts = self::record_poll_attempt( $post_id );
 			$result = self::sync_attachment_now( $post_id, 'cron_retry' );
 
 			if ( isset( $result['status'] ) && ! in_array( $result['status'], array( 'failed', 'skipped' ), true ) ) {
@@ -324,6 +478,7 @@ class Sync {
 			} elseif ( isset( $result['status'] ) && 'failed' === $result['status'] ) {
 				++$counts['failed'];
 			} else {
+				self::schedule_next_poll( $post_id, $attempts );
 				++$counts['skipped'];
 			}
 		}
@@ -497,6 +652,10 @@ class Sync {
 					isset( $response['reference'] ) ? $response['reference'] : '',
 					true
 				);
+				self::schedule_next_poll(
+					$post_id,
+					absint( get_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, true ) )
+				);
 				return array(
 					'status' => 'pending',
 					'error'  => $response['error'],
@@ -510,6 +669,7 @@ class Sync {
 				isset( $response['reference'] ) ? $response['reference'] : '',
 				! empty( $response['retryable'] )
 			);
+			self::clear_next_poll( $post_id );
 			return array(
 				'status' => 'failed',
 				'error'  => $response['error'],
@@ -517,16 +677,110 @@ class Sync {
 		}
 
 		if ( isset( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
-			Document_State::write_from_api( $post_id, $response['body']['document'], $source );
+			$document = $response['body']['document'];
+			$status   = Security::sanitize_status( isset( $document['status'] ) ? $document['status'] : '' );
 
-			do_action( 'filetoweb_integration_after_sync_post', $post_id, $source, $response['body']['document'] );
+			Document_State::write_from_api( $post_id, $document, $source );
+			update_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, 0 );
+			update_post_meta( $post_id, Document_State::META_LAST_POLLED_AT, 0 );
+
+			if ( in_array( $status, self::pending_statuses(), true ) ) {
+				self::schedule_next_poll( $post_id );
+			} else {
+				self::clear_next_poll( $post_id );
+			}
+
+			do_action( 'filetoweb_integration_after_sync_post', $post_id, $source, $document );
 
 			return array(
-				'status' => Security::sanitize_status( $response['body']['document']['status'] ),
+				'status' => $status,
 			);
 		}
 
+		self::schedule_next_poll(
+			$post_id,
+			absint( get_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, true ) )
+		);
+
 		return array( 'status' => 'queued' );
+	}
+
+	/**
+	 * Merge result counters.
+	 *
+	 * @param array $target Target counters.
+	 * @param array $source Source counters.
+	 */
+	private static function merge_counts( &$target, $source ) {
+		foreach ( (array) $source as $key => $value ) {
+			if ( isset( $target[ $key ] ) ) {
+				$target[ $key ] += absint( $value );
+			}
+		}
+	}
+
+	/**
+	 * Count API work represented by a result counter set.
+	 *
+	 * @param array $counts Result counters.
+	 * @return int
+	 */
+	private static function count_work( $counts ) {
+		return absint( isset( $counts['queued'] ) ? $counts['queued'] : 0 )
+			+ absint( isset( $counts['skipped'] ) ? $counts['skipped'] : 0 )
+			+ absint( isset( $counts['failed'] ) ? $counts['failed'] : 0 )
+			+ absint( isset( $counts['updated'] ) ? $counts['updated'] : 0 );
+	}
+
+	/**
+	 * Combine upgrade-recovery and normally scheduled work without starving either.
+	 *
+	 * When both queues are populated, at least one fifth of the batch is reserved
+	 * for recovery. Unused capacity is immediately returned to the other queue.
+	 *
+	 * @param array  $recovery_posts Posts that predate queue metadata.
+	 * @param array  $due_posts Normally scheduled due posts.
+	 * @param int    $limit Maximum selected posts.
+	 * @param string $cursor_option Persistent cursor used for one-item batches.
+	 * @return array
+	 */
+	private static function merge_recovery_and_due( $recovery_posts, $due_posts, $limit, $cursor_option ) {
+		$limit          = max( 0, absint( $limit ) );
+		$recovery_posts = array_values( array_unique( array_map( 'absint', (array) $recovery_posts ) ) );
+		$due_posts      = array_values( array_unique( array_map( 'absint', (array) $due_posts ) ) );
+
+		if ( empty( $recovery_posts ) ) {
+			return array_slice( $due_posts, 0, $limit );
+		}
+
+		if ( empty( $due_posts ) ) {
+			return array_slice( $recovery_posts, 0, $limit );
+		}
+
+		if ( 1 === $limit ) {
+			$cursor          = absint( get_option( $cursor_option, 0 ) ) % 2;
+			$recovery_quota  = 0 === $cursor ? 1 : 0;
+			update_option( $cursor_option, ( $cursor + 1 ) % 2, false );
+		} else {
+			$recovery_quota = min( count( $recovery_posts ), max( 1, (int) floor( $limit / 5 ) ), $limit - 1 );
+		}
+
+		$selected       = array_slice( $recovery_posts, 0, $recovery_quota );
+		$due_quota      = min( count( $due_posts ), $limit - count( $selected ) );
+		$selected       = array_merge( $selected, array_slice( $due_posts, 0, $due_quota ) );
+
+		if ( count( $selected ) < $limit ) {
+			$selected = array_merge(
+				$selected,
+				array_slice( $recovery_posts, $recovery_quota, $limit - count( $selected ) )
+			);
+		}
+
+		if ( count( $selected ) < $limit ) {
+			$selected = array_merge( $selected, array_slice( $due_posts, $due_quota, $limit - count( $selected ) ) );
+		}
+
+		return array_slice( array_values( array_unique( $selected ) ), 0, $limit );
 	}
 
 	/**
