@@ -361,9 +361,134 @@ class MeetingMaterialsTest extends TestCase {
 		$this->assertStringNotContainsString( 'Check conversion progress', $output );
 		$this->assertStringNotContainsString( 'Retry processing', $output );
 		$this->assertStringNotContainsString( 'slot=agenda', $output );
+		$this->assertStringContainsString( 'Refresh embedded preview', $output );
+		$this->assertStringContainsString( 'filetoweb_integration_refresh_preview', $output );
+		$this->assertStringContainsString( 'post_id=101', $output );
 		$this->assertStringContainsString( 'Original PDF', $output );
 		$this->assertStringContainsString( 'Generated HTML', $output );
 		$this->assertStringContainsString( 'Edit in FileToWeb', $output );
+	}
+
+	public function test_ready_meeting_material_metabox_renders_preview_refresh_action(): void {
+		$this->meeting_meta[55] = array(
+			'minutes_attachment' => 103,
+		);
+
+		$this->meeting_meta[103] = array(
+			Document_State::META_STATUS      => 'ready',
+			Document_State::META_DOCUMENT_ID => 'doc-103',
+			Document_State::META_PAGE_COUNT  => 3,
+			Document_State::META_HTML_URL    => 'https://filetoweb.com/d/demo/1',
+		);
+
+		$this->attachment_urls[103]  = 'https://example.test/wp-content/uploads/minutes.pdf';
+		$this->attachment_mimes[103] = 'application/pdf';
+		$this->attachment_files[103] = __FILE__;
+
+		ob_start();
+		Meeting_Materials::render_meta_box(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'Ready', $output );
+		$this->assertStringContainsString( '3 pages', $output );
+		$this->assertStringContainsString( 'Refresh embedded preview', $output );
+		$this->assertStringContainsString( 'filetoweb_integration_refresh_preview', $output );
+		$this->assertStringContainsString( 'post_id=103', $output );
+		$this->assertStringNotContainsString( 'Check conversion progress', $output );
+	}
+
+	public function test_ready_meeting_material_surfaces_stored_preview_error(): void {
+		$this->meeting_meta[55] = array(
+			'minutes_attachment' => 103,
+		);
+
+		$this->meeting_meta[103] = array(
+			Document_State::META_STATUS      => 'ready',
+			Document_State::META_DOCUMENT_ID => 'doc-103',
+			Document_State::META_LAST_ERROR  => 'WordPress storage could not verify the FileToWeb preview.',
+		);
+
+		$this->attachment_urls[103]  = 'https://example.test/wp-content/uploads/minutes.pdf';
+		$this->attachment_mimes[103] = 'application/pdf';
+		$this->attachment_files[103] = __FILE__;
+
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			103,
+			'https://example.test/wp-content/uploads/minutes.pdf',
+			array(
+				'#name' => 'meeting_minutes',
+			)
+		);
+		$inline_output = ob_get_clean();
+
+		ob_start();
+		Meeting_Materials::render_meta_box(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+		$metabox_output = ob_get_clean();
+
+		foreach ( array( $inline_output, $metabox_output ) as $output ) {
+			$this->assertStringContainsString( 'filetoweb-preview-error', $output );
+			$this->assertStringContainsString( 'Preview error:', $output );
+			$this->assertStringContainsString( 'WordPress storage could not verify the FileToWeb preview.', $output );
+			$this->assertStringContainsString( 'Refresh embedded preview', $output );
+		}
+	}
+
+	public function test_ready_meeting_material_hides_refresh_without_attachment_permission(): void {
+		$this->meeting_meta[101] = array(
+			Document_State::META_STATUS      => 'ready',
+			Document_State::META_DOCUMENT_ID => 'doc-101',
+		);
+
+		$this->attachment_urls[101]  = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$this->attachment_mimes[101] = 'application/pdf';
+		$this->attachment_files[101] = __FILE__;
+
+		Functions\when( 'current_user_can' )->alias(
+			function ( $capability, $post_id = 0 ) {
+				if ( 'edit_post' === $capability ) {
+					return 55 === absint( $post_id );
+				}
+
+				return true;
+			}
+		);
+		Functions\when( 'get_post' )->justReturn(
+			(object) array(
+				'ID'        => 55,
+				'post_type' => 'meeting',
+			)
+		);
+
+		ob_start();
+		Meeting_Materials::render_inline_upload_control(
+			101,
+			'https://example.test/wp-content/uploads/agenda.pdf',
+			array(
+				'#name' => 'meeting_agenda',
+			)
+		);
+		$output = ob_get_clean();
+
+		$this->assertStringNotContainsString( 'Refresh embedded preview', $output );
+		$this->assertStringNotContainsString( 'filetoweb_integration_refresh_preview', $output );
 	}
 
 	public function test_inline_upload_control_renders_processing_time_help_for_processing_material(): void {

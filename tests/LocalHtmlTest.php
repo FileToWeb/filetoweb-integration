@@ -256,4 +256,42 @@ class LocalHtmlTest extends TestCase {
 			$this->meta[123][ Document_State::META_LAST_ERROR ]
 		);
 	}
+
+	public function test_current_legacy_cache_preserves_failed_preview_migration_error(): void {
+		$this->assertSame( 'updated', Local_HTML::refresh_for_post( 123 ) );
+
+		unset( $this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ] );
+
+		Functions\when( 'has_action' )->justReturn( true );
+		Functions\when( 'do_action' )->justReturn( null );
+		Functions\when( 'add_filter' )->justReturn( true );
+		Functions\when( 'remove_filter' )->justReturn( true );
+		Functions\when( 'wp_safe_remote_head' )->justReturn(
+			array(
+				'code' => 503,
+			)
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+
+		$this->assertSame( 'failed', Local_HTML::refresh_for_post( 123 ) );
+		$this->assertSame(
+			'FileToWeb preview files could not be verified in WordPress storage.',
+			$this->meta[123][ Document_State::META_LAST_ERROR ]
+		);
+	}
+
+	public function test_current_cache_upgrades_preview_record_without_artifact_manifest(): void {
+		$this->assertSame( 'updated', Local_HTML::refresh_for_post( 123 ) );
+
+		$this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ]['artifacts'] = array();
+
+		$this->assertSame( 'current', Local_HTML::refresh_for_post( 123 ) );
+		$this->assertNotEmpty(
+			$this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ]['artifacts']
+		);
+	}
 }

@@ -727,6 +727,19 @@ class Admin {
 	}
 
 	/**
+	 * Build the ready-preview refresh URL for another admin surface.
+	 *
+	 * Meeting materials reuse the attachment refresh handler so publication,
+	 * authorization, error reporting, and redirect behavior stay consistent.
+	 *
+	 * @param int $post_id PDF-backed post or attachment ID.
+	 * @return string
+	 */
+	public static function refresh_preview_url( $post_id ) {
+		return self::admin_action_url( 'refresh_preview', $post_id );
+	}
+
+	/**
 	 * Can the current user sync or poll one PDF-backed post?
 	 *
 	 * @param int $post_id Post ID.

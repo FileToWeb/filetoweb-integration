@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.43
+
+- Add **Refresh embedded preview** to ready Agenda, Agenda Packet, and Minutes attachments in both ProudCity Meeting editor layouts.
+- Reuse the existing attachment refresh flow so a Meeting preview can be republished without uploading or reconverting its source PDF.
+- Show customer-safe WordPress publication errors directly beside ready Meeting materials when the generated HTML exists but its embedded preview is unavailable.
+- Preserve the exact publication failure when an older local preview cannot be migrated to ProudCity's durable preview record.
+
 ## 0.1.42
 
 - Poll pending conversions every minute in oldest-due-first order so large syncs cannot indefinitely block completed files.

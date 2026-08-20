@@ -359,6 +359,7 @@ class Meeting_Materials {
 
 		$status      = get_post_meta( $attachment_id, Document_State::META_STATUS, true );
 		$document_id = get_post_meta( $attachment_id, Document_State::META_DOCUMENT_ID, true );
+		$error       = get_post_meta( $attachment_id, Document_State::META_LAST_ERROR, true );
 		$html_url    = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_HTML_URL, true ) );
 		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_EDITOR_URL, true ) );
 		$local_url   = Local_HTML::local_url( $attachment_id );
@@ -382,8 +383,11 @@ class Meeting_Materials {
 				<?php endif; ?>
 			<?php elseif ( $can_manage_attachment && Settings::configured() && 'not_synced' === $state ) : ?>
 				<a class="button button-small" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
+			<?php elseif ( $can_manage_attachment && Settings::configured() && 'ready' === $state && $document_id ) : ?>
+				<a class="button button-small" href="<?php echo esc_url( Admin::refresh_preview_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Refresh embedded preview', 'filetoweb-integration' ); ?></a>
 			<?php endif; ?>
 			<span style="display:inline-block;margin-left:6px;vertical-align:middle;"><?php echo self::status_badge( $status ); ?></span>
+			<?php self::render_preview_error( $state, $error, true ); ?>
 			<?php
 			if ( $can_manage_attachment ) {
 				Admin::render_public_replacement_controls(
@@ -469,6 +473,7 @@ class Meeting_Materials {
 		$source_url    = $attachment_id ? Source_Resolver::original_attachment_url( $attachment_id ) : '';
 		$status        = $attachment_id ? get_post_meta( $attachment_id, Document_State::META_STATUS, true ) : '';
 		$document_id   = $attachment_id ? get_post_meta( $attachment_id, Document_State::META_DOCUMENT_ID, true ) : '';
+		$error         = $attachment_id ? get_post_meta( $attachment_id, Document_State::META_LAST_ERROR, true ) : '';
 		$page_count    = $attachment_id ? absint( get_post_meta( $attachment_id, Document_State::META_PAGE_COUNT, true ) ) : 0;
 		$html_url      = $attachment_id ? Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_HTML_URL, true ) ) : '';
 		$editor_url    = $attachment_id ? Security::sanitize_filetoweb_url( get_post_meta( $attachment_id, Document_State::META_EDITOR_URL, true ) ) : '';
@@ -492,6 +497,7 @@ class Meeting_Materials {
 				<?php if ( $page_count ) : ?>
 					<br /><?php echo esc_html( sprintf( _n( '%d page', '%d pages', $page_count, 'filetoweb-integration' ), $page_count ) ); ?>
 				<?php endif; ?>
+				<?php self::render_preview_error( $state, $error ); ?>
 			</td>
 			<td>
 				<?php if ( $source_url ) : ?>
@@ -520,6 +526,8 @@ class Meeting_Materials {
 						<?php endif; ?>
 					<?php elseif ( Settings::configured() && 'not_synced' === $state ) : ?>
 						<a class="button" href="<?php echo esc_url( self::admin_action_url( 'sync_material', $meeting_id, $slot ) ); ?>"><?php esc_html_e( 'Sync this PDF', 'filetoweb-integration' ); ?></a>
+					<?php elseif ( Settings::configured() && 'ready' === $state && $document_id ) : ?>
+						<a class="button" href="<?php echo esc_url( Admin::refresh_preview_url( $attachment_id ) ); ?>"><?php esc_html_e( 'Refresh embedded preview', 'filetoweb-integration' ); ?></a>
 					<?php endif; ?>
 					<?php
 					Admin::render_public_replacement_controls(
@@ -666,6 +674,27 @@ class Meeting_Materials {
 			),
 			'filetoweb_integration_retry_processing_' . $attachment_id
 		);
+	}
+
+	/**
+	 * Show a stored publication error when conversion is ready but its preview is not.
+	 *
+	 * @param string $state Normalized FileToWeb state.
+	 * @param string $error Customer-safe stored error.
+	 * @param bool   $compact Whether to use the inline Meeting-field layout.
+	 */
+	private static function render_preview_error( $state, $error, $compact = false ) {
+		$error = is_scalar( $error ) ? trim( (string) $error ) : '';
+
+		if ( 'ready' !== $state || '' === $error ) {
+			return;
+		}
+
+		$style = $compact
+			? 'display:block;margin:5px 0 0;color:#b32d2e;font-size:12px;line-height:1.4;'
+			: 'display:block;margin-top:5px;color:#b32d2e;font-size:12px;line-height:1.4;';
+
+		echo '<span class="filetoweb-preview-error" style="' . esc_attr( $style ) . '"><strong>' . esc_html__( 'Preview error:', 'filetoweb-integration' ) . '</strong> ' . esc_html( $error ) . '</span>';
 	}
 
 	/**

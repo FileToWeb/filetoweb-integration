@@ -106,8 +106,15 @@ class Local_HTML {
 		}
 
 		if ( self::has_current_local_html( $post_id, $viewer_url, $fingerprint ) ) {
-			if ( get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true ) ) {
-				Proud_HTML_Preview::migrate_existing_post( $post_id );
+			$preview_record  = Proud_HTML_Preview::record_for_post( $post_id );
+			$needs_migration = ! $preview_record || empty( $preview_record['artifacts'] );
+
+			if ( get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true ) && $needs_migration ) {
+				if ( ! Proud_HTML_Preview::migrate_existing_post( $post_id ) ) {
+					$error = Proud_HTML_Preview::last_publish_error();
+					update_post_meta( $post_id, Document_State::META_LAST_ERROR, $error ? $error : __( 'FileToWeb local HTML cache could not be published.', 'filetoweb-integration' ) );
+					return 'failed';
+				}
 			}
 			Native_Page::maybe_auto_create_draft( $post_id );
 			return 'current';

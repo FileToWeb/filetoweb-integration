@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.42
+Stable tag: 0.1.43
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -81,6 +81,13 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.43 =
+
+* Adds Refresh embedded preview to completed Agenda, Agenda Packet, and Minutes attachments in both ProudCity Meeting editor layouts.
+* Republishes a Meeting preview without uploading or reconverting its source PDF.
+* Shows customer-safe WordPress publication errors directly beside completed Meeting materials.
+* Preserves the exact publication failure when an older local preview cannot be migrated to ProudCity's durable preview record.
 
 = 0.1.42 =
 
