@@ -34,6 +34,9 @@ class Sync {
 		add_action( 'add_attachment', array( __CLASS__, 'schedule_attachment_sync' ) );
 		add_action( 'edit_attachment', array( __CLASS__, 'schedule_attachment_sync' ) );
 		add_action( 'save_post', array( __CLASS__, 'schedule_document_sync' ), 30, 2 );
+		add_action( 'trashed_post', array( __CLASS__, 'stop_sync_for_removed_post' ) );
+		add_action( 'before_delete_post', array( __CLASS__, 'stop_sync_for_removed_post' ) );
+		add_action( 'delete_attachment', array( __CLASS__, 'stop_sync_for_removed_post' ) );
 		add_action( self::HOOK_SYNC_ITEM, array( __CLASS__, 'sync_item' ), 10, 3 );
 	}
 
@@ -43,6 +46,10 @@ class Sync {
 	 * @param int $attachment_id Attachment ID.
 	 */
 	public static function schedule_attachment_sync( $attachment_id ) {
+		if ( ! self::is_syncable_post( $attachment_id, 'attachment' ) ) {
+			return;
+		}
+
 		self::schedule_sync( $attachment_id, 'attachment', 'attachment_save' );
 	}
 
@@ -53,7 +60,7 @@ class Sync {
 	 * @param \WP_Post $post Post.
 	 */
 	public static function schedule_document_sync( $post_id, $post ) {
-		if ( ! is_object( $post ) || 'document' !== $post->post_type ) {
+		if ( ! is_object( $post ) || 'document' !== $post->post_type || ! self::is_syncable_status( isset( $post->post_status ) ? $post->post_status : '' ) ) {
 			return;
 		}
 
@@ -76,6 +83,11 @@ class Sync {
 			return;
 		}
 
+		if ( ! self::is_syncable_post( $post_id, $kind ) ) {
+			self::clear_next_poll( $post_id );
+			return;
+		}
+
 		if ( 'attachment' === $kind ) {
 			self::sync_attachment_now( $post_id, $trigger );
 			return;
@@ -94,6 +106,10 @@ class Sync {
 	 * @return array
 	 */
 	public static function sync_attachment_now( $attachment_id, $trigger = 'manual_sync' ) {
+		if ( ! self::is_syncable_post( $attachment_id, 'attachment' ) ) {
+			return array( 'status' => 'skipped' );
+		}
+
 		$source = Source_Resolver::for_attachment( $attachment_id );
 
 		if ( ! $source ) {
@@ -111,6 +127,10 @@ class Sync {
 	 * @return array
 	 */
 	public static function sync_document_now( $post_id, $trigger = 'manual_sync' ) {
+		if ( ! self::is_syncable_post( $post_id, 'document' ) ) {
+			return array( 'status' => 'skipped' );
+		}
+
 		$source = Source_Resolver::for_document( $post_id );
 
 		if ( ! $source ) {
@@ -135,6 +155,11 @@ class Sync {
 	 */
 	public static function poll_post( $post_id ) {
 		if ( ! Settings::configured() ) {
+			return 'skipped';
+		}
+
+		if ( ! self::is_syncable_post( $post_id ) ) {
+			self::clear_next_poll( $post_id );
 			return 'skipped';
 		}
 
@@ -373,6 +398,61 @@ class Sync {
 	 */
 	private static function clear_next_poll( $post_id ) {
 		delete_post_meta( $post_id, Document_State::META_NEXT_POLL_AT );
+	}
+
+	/**
+	 * Remove trashed or deleted content from FileToWeb's local work queues.
+	 *
+	 * @param int $post_id Post ID.
+	 */
+	public static function stop_sync_for_removed_post( $post_id ) {
+		$post_id = absint( $post_id );
+
+		if ( ! $post_id ) {
+			return;
+		}
+
+		foreach ( array( 'attachment', 'document' ) as $kind ) {
+			$trigger = 'attachment' === $kind ? 'attachment_save' : 'document_save';
+			wp_clear_scheduled_hook( self::HOOK_SYNC_ITEM, array( $post_id, $kind, $trigger ) );
+		}
+
+		self::clear_next_poll( $post_id );
+	}
+
+	/**
+	 * Whether a WordPress post still represents content eligible for syncing.
+	 *
+	 * @param int    $post_id Post ID.
+	 * @param string $expected_kind Optional expected source kind.
+	 * @return bool
+	 */
+	private static function is_syncable_post( $post_id, $expected_kind = '' ) {
+		$post_id = absint( $post_id );
+
+		if ( ! $post_id ) {
+			return false;
+		}
+
+		$post_type = get_post_type( $post_id );
+
+		if ( $expected_kind && $expected_kind !== $post_type ) {
+			return false;
+		}
+
+		return (bool) $post_type && self::is_syncable_status( get_post_status( $post_id ) );
+	}
+
+	/**
+	 * Whether a WordPress status represents retained content.
+	 *
+	 * @param string $status Post status.
+	 * @return bool
+	 */
+	private static function is_syncable_status( $status ) {
+		$status = sanitize_key( (string) $status );
+
+		return '' !== $status && ! in_array( $status, array( 'trash', 'auto-draft' ), true );
 	}
 
 	/**

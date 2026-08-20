@@ -31,6 +31,8 @@ class SyncTest extends TestCase {
 		);
 		Functions\when( 'current_time' )->justReturn( '2026-06-08 12:00:00' );
 		Functions\when( 'home_url' )->justReturn( 'https://city.example' );
+		Functions\when( 'get_post_type' )->justReturn( 'attachment' );
+		Functions\when( 'get_post_status' )->justReturn( 'inherit' );
 		Functions\when( 'FileToWeb\Integration\gethostbynamel' )->justReturn( array( '93.184.216.34' ) );
 		Functions\when( 'FileToWeb\Integration\dns_get_record' )->justReturn( array() );
 		Functions\when( 'get_option' )->alias(
@@ -198,6 +200,50 @@ class SyncTest extends TestCase {
 		$this->assertSame( 'pending', $stored[ Document_State::META_STATUS ] );
 		$this->assertSame( 'attachment_save', $stored[ Document_State::META_LAST_TRIGGER ] );
 		$this->assertSame( array( $attachment_id, 'attachment', 'attachment_save' ), $scheduled_args );
+	}
+
+	public function test_trashed_pdf_attachment_is_not_scheduled(): void {
+		Functions\when( 'get_post_status' )->justReturn( 'trash' );
+		Functions\expect( 'update_post_meta' )->never();
+		Functions\expect( 'wp_schedule_single_event' )->never();
+		Functions\expect( 'wp_remote_post' )->never();
+
+		Sync::schedule_attachment_sync( 123 );
+
+		$this->addToAssertionCount( 1 );
+	}
+
+	public function test_scheduled_sync_rechecks_that_attachment_still_exists(): void {
+		Functions\when( 'get_post_type' )->justReturn( false );
+		Functions\when( 'get_post_status' )->justReturn( false );
+		Functions\expect( 'wp_remote_request' )->never();
+		Functions\expect( 'delete_post_meta' )
+			->once()
+			->with( 123, Document_State::META_NEXT_POLL_AT )
+			->andReturn( true );
+
+		Sync::sync_item( 123, 'attachment', 'attachment_save' );
+
+		$this->addToAssertionCount( 1 );
+	}
+
+	public function test_removed_post_is_cleared_from_sync_and_poll_queues(): void {
+		Functions\expect( 'wp_clear_scheduled_hook' )
+			->once()
+			->with( Sync::HOOK_SYNC_ITEM, array( 123, 'attachment', 'attachment_save' ) )
+			->andReturn( 1 );
+		Functions\expect( 'wp_clear_scheduled_hook' )
+			->once()
+			->with( Sync::HOOK_SYNC_ITEM, array( 123, 'document', 'document_save' ) )
+			->andReturn( 1 );
+		Functions\expect( 'delete_post_meta' )
+			->once()
+			->with( 123, Document_State::META_NEXT_POLL_AT )
+			->andReturn( true );
+
+		Sync::stop_sync_for_removed_post( 123 );
+
+		$this->addToAssertionCount( 1 );
 	}
 
 	public function test_retryable_poll_failure_stays_pending_with_support_reference(): void {

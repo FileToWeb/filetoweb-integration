@@ -107,6 +107,16 @@ class MeetingMaterialsTest extends TestCase {
 		);
 		Functions\when( 'post_type_exists' )->justReturn( true );
 		Functions\when( 'wp_is_post_revision' )->justReturn( false );
+		Functions\when( 'get_post_type' )->alias(
+			function ( $post_id ) {
+				return 55 === (int) $post_id ? 'meeting' : 'attachment';
+			}
+		);
+		Functions\when( 'get_post_status' )->alias(
+			function ( $post_id ) {
+				return 55 === (int) $post_id ? 'publish' : 'inherit';
+			}
+		);
 		Functions\when( 'home_url' )->alias(
 			function ( $path = '' ) {
 				return 'https://example.test' . $path;
@@ -269,6 +279,25 @@ class MeetingMaterialsTest extends TestCase {
 		$post = (object) array(
 			'ID'        => 55,
 			'post_type' => 'meeting',
+		);
+
+		Meeting_Materials::schedule_meeting_material_sync( 55, $post, true );
+
+		$this->addToAssertionCount( 1 );
+	}
+
+	public function test_trashed_meeting_does_not_resubmit_its_materials(): void {
+		$this->meeting_meta[55] = array(
+			'agenda_attachment'  => 101,
+			'minutes_attachment' => 103,
+		);
+		Functions\expect( 'wp_schedule_single_event' )->never();
+		Functions\expect( 'wp_remote_post' )->never();
+
+		$post = (object) array(
+			'ID'          => 55,
+			'post_type'   => 'meeting',
+			'post_status' => 'trash',
 		);
 
 		Meeting_Materials::schedule_meeting_material_sync( 55, $post, true );

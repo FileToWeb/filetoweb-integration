@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.43
+Stable tag: 0.1.44
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -81,6 +81,12 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.44 =
+
+* Verifies true WP Stateless preview bundles through authenticated WordPress storage, allowing ProudCity's private GCS previews to publish correctly.
+* Prevents trashed, auto-draft, and deleted WordPress content from scheduling new FileToWeb work.
+* Clears removed WordPress content from FileToWeb sync and polling queues.
 
 = 0.1.43 =
 

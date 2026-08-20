@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.44
+
+- Verify true WP Stateless preview bundles through WordPress's authenticated stream storage instead of requiring private GCS objects to answer anonymous public requests.
+- Prevent trashed, auto-draft, or deleted attachments and Proud Documents from scheduling, retrying, or polling FileToWeb work.
+- Remove deleted WordPress content from the plugin's local sync and poll queues.
+
 ## 0.1.43
 
 - Add **Refresh embedded preview** to ready Agenda, Agenda Packet, and Minutes attachments in both ProudCity Meeting editor layouts.

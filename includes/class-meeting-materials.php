@@ -200,7 +200,7 @@ class Meeting_Materials {
 	public static function schedule_meeting_material_sync( $post_id, $post, $update ) {
 		unset( $update );
 
-		if ( ! self::enabled() || ! is_object( $post ) || 'meeting' !== $post->post_type ) {
+		if ( ! self::enabled() || ! is_object( $post ) || 'meeting' !== $post->post_type || in_array( isset( $post->post_status ) ? $post->post_status : '', array( 'trash', 'auto-draft' ), true ) ) {
 			return;
 		}
 

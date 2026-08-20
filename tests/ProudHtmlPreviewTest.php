@@ -155,6 +155,7 @@ class ProudHtmlPreviewTest extends TestCase {
 		Functions\when( 'untrailingslashit' )->alias( function ( $value ) { return rtrim( (string) $value, '/' ); } );
 		Functions\when( 'trailingslashit' )->alias( function ( $value ) { return rtrim( (string) $value, '/' ) . '/'; } );
 		Functions\when( 'wp_normalize_path' )->alias( function ( $value ) { return str_replace( '\\', '/', (string) $value ); } );
+		Functions\when( 'wp_is_stream' )->alias( function ( $value ) { return false !== strpos( (string) $value, '://' ); } );
 		Functions\when( 'wp_upload_dir' )->alias(
 			function () {
 				if ( $this->use_stream_uploads ) {
@@ -478,6 +479,59 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertSame( $record['artifact_key'], $record['artifacts'][0]['artifact_key'] );
 		$this->assertFileExists(
 			$this->uploads_dir . '/proudcity/delawarecountyin/' . $record['artifact_key']
+		);
+	}
+
+	public function test_private_stateless_stream_preview_uses_authenticated_storage_verification(): void {
+		if ( ! in_array( 'ftwgs', stream_get_wrappers(), true ) ) {
+			$this->assertTrue( stream_wrapper_register( 'ftwgs', FtwGsDirectoryStreamWrapper::class ) );
+		}
+
+		FtwGsDirectoryStreamWrapper::$root = $this->uploads_dir;
+		$this->use_stream_uploads           = true;
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\when( 'do_action' )->justReturn( null );
+		Functions\expect( 'wp_safe_remote_head' )->never();
+
+		$record = Proud_HTML_Preview::publish(
+			74,
+			'<html><body>Private Stateless preview</body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://storage.googleapis.com/proudcity/delawarecountyin/private.pdf',
+			'private-stateless-fingerprint'
+		);
+
+		$this->assertIsArray( $record, Proud_HTML_Preview::last_publish_error() );
+		$this->assertSame(
+			'filetoweb-integration/previews/74/privatestatelessfingerprint/index.html',
+			$record['artifact_key']
+		);
+	}
+
+	public function test_windows_upload_path_still_verifies_remote_stateless_artifact(): void {
+		$bundle_dir = $this->uploads_dir . '/windows-bundle';
+		mkdir( $bundle_dir, 0777, true );
+		file_put_contents( $bundle_dir . '/index.html', '<html><body>Windows preview</body></html>' );
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\when( 'do_action' )->justReturn( null );
+		Functions\expect( 'wp_safe_remote_head' )
+			->once()
+			->andReturn( array( 'code' => 200, 'body' => '' ) );
+
+		$method = new ReflectionMethod( Proud_HTML_Preview::class, 'sync_bundle_with_stateless' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$method->setAccessible( true );
+		}
+
+		$this->assertTrue(
+			$method->invoke(
+				null,
+				$bundle_dir,
+				'C:/inetpub/wwwroot/wp-content/uploads',
+				'https://cdn.example.org/uploads'
+			)
 		);
 	}
 

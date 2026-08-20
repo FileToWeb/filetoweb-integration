@@ -970,6 +970,21 @@ class Proud_HTML_Preview {
 			self::sync_file_with_stateless( $name, $path, $uploads_basedir );
 		}
 
+		// True WP Stateless mode exposes uploads through an authenticated gs://
+		// stream wrapper. ProudCity serves these private objects through its
+		// preview endpoint, so an anonymous HTTP HEAD is neither necessary nor a
+		// valid durability check. Verify the objects through WordPress's storage
+		// credentials instead.
+		if ( self::is_stream_upload_directory( $uploads_basedir ) ) {
+			foreach ( $files as $path ) {
+				if ( ! is_readable( $path ) ) {
+					return false;
+				}
+			}
+
+			return true;
+		}
+
 		foreach ( $files as $path ) {
 			$name     = ltrim( str_replace( wp_normalize_path( $uploads_basedir ), '', wp_normalize_path( $path ) ), '/' );
 			$url      = trailingslashit( $uploads_baseurl ) . str_replace( '%2F', '/', rawurlencode( $name ) );
@@ -993,6 +1008,17 @@ class Proud_HTML_Preview {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Whether WordPress uploads use an authenticated stream wrapper.
+	 *
+	 * @param string $uploads_basedir Upload base directory.
+	 * @return bool
+	 */
+	private static function is_stream_upload_directory( $uploads_basedir ) {
+		return function_exists( 'wp_is_stream' )
+			&& wp_is_stream( wp_normalize_path( (string) $uploads_basedir ) );
 	}
 
 	/**
