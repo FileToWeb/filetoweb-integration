@@ -228,6 +228,48 @@ class LocalHtmlTest extends TestCase {
 		$this->assertSame( 'updated', Local_HTML::poll_refresh_result( 123 ) );
 	}
 
+	public function test_explicit_poll_refresh_fetches_and_publishes_editor_only_html_changes(): void {
+		$this->assertSame( 'updated', Local_HTML::refresh_for_post( 123 ) );
+		$original_path = $this->meta[123][ Document_State::META_LOCAL_HTML_PATH ];
+
+		$this->requests = array();
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url, $args ) {
+				$this->requests[] = $url;
+				$this->assertSame( 'no-cache', $args['headers']['Cache-Control'] );
+				$this->assertSame( 'no-cache', $args['headers']['Pragma'] );
+
+				return array(
+					'body' => '<!doctype html><html><head></head><body><main>Updated content without the logo</main></body></html>',
+				);
+			}
+		);
+
+		$this->assertSame( 'current', Local_HTML::refresh_for_post( 123 ) );
+		$this->assertSame( array(), $this->requests );
+
+		Local_HTML::refresh_after_poll(
+			123,
+			array(
+				'continuous_url' => 'https://filetoweb.com/d/demo/continuous',
+			),
+			true
+		);
+
+		$this->assertSame( 'updated', Local_HTML::poll_refresh_result( 123 ) );
+		$this->assertSame( array( 'https://filetoweb.com/d/demo/continuous?chrome=0' ), $this->requests );
+
+		$updated_path = $this->meta[123][ Document_State::META_LOCAL_HTML_PATH ];
+		$this->assertNotSame( $original_path, $updated_path );
+		$this->assertStringContainsString( 'fingerprint123-', $updated_path );
+		$this->assertStringContainsString( 'Updated content without the logo', file_get_contents( $updated_path ) );
+		$this->assertStringNotContainsString( '<img', file_get_contents( $updated_path ) );
+
+		$record = $this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ];
+		$this->assertStringContainsString( 'fingerprint123-', $record['artifact_key'] );
+		$this->assertCount( 1, $record['artifacts'] );
+	}
+
 	public function test_refresh_preserves_the_preview_publication_stage_error(): void {
 		Functions\when( 'wp_remote_get' )->alias(
 			function ( $url ) {

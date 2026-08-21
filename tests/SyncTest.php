@@ -341,7 +341,7 @@ class SyncTest extends TestCase {
 		$this->assertLessThanOrEqual( time() + 320, $stored[ Document_State::META_NEXT_POLL_AT ] );
 	}
 
-	public function test_ready_poll_removes_item_from_active_queue(): void {
+	public function test_ready_manual_poll_forwards_forced_preview_refresh_and_removes_item_from_active_queue(): void {
 		$stored       = array();
 		$deleted_keys = array();
 		$post_id      = 987;
@@ -370,8 +370,20 @@ class SyncTest extends TestCase {
 			}
 		);
 		$this->mock_successful_document_response( 'ready' );
+		Functions\expect( 'do_action' )
+			->once()
+			->with(
+				'filetoweb_integration_after_poll_post',
+				$post_id,
+				\Mockery::on(
+					function ( $document ) {
+						return is_array( $document ) && 'ready' === $document['status'];
+					}
+				),
+				true
+			);
 
-		$this->assertSame( 'updated', Sync::poll_post( $post_id ) );
+		$this->assertSame( 'updated', Sync::poll_post( $post_id, true ) );
 		$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
 		$this->assertContains( Document_State::META_NEXT_POLL_AT, $deleted_keys );
 	}

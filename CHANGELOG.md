@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.45
+
+- Make an explicit **Refresh embedded preview** request fetch the latest published FileToWeb HTML even when the original PDF and viewer URL are unchanged.
+- Publish editor-only HTML changes to a content-versioned preview bundle so ProudCity activates the refreshed markup without reusing stale preview files.
+- Request cache revalidation during explicit refreshes without uploading or reconverting the source PDF.
+
 ## 0.1.44
 
 - Verify true WP Stateless preview bundles through WordPress's authenticated stream storage instead of requiring private GCS objects to answer anonymous public requests.

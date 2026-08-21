@@ -28,7 +28,7 @@ class Local_HTML {
 	public static function init() {
 		add_action( 'template_redirect', array( __CLASS__, 'maybe_serve_local_html' ), -100 );
 		add_action( 'filetoweb_integration_after_sync_post', array( __CLASS__, 'refresh_after_sync' ), 20, 3 );
-		add_action( 'filetoweb_integration_after_poll_post', array( __CLASS__, 'refresh_after_poll' ), 20, 2 );
+		add_action( 'filetoweb_integration_after_poll_post', array( __CLASS__, 'refresh_after_poll' ), 20, 3 );
 	}
 
 	/**
@@ -48,11 +48,12 @@ class Local_HTML {
 	 *
 	 * @param int   $post_id Post ID.
 	 * @param array $document API document.
+	 * @param bool  $force_latest Whether an administrator explicitly requested the latest published HTML.
 	 */
-	public static function refresh_after_poll( $post_id, $document ) {
+	public static function refresh_after_poll( $post_id, $document, $force_latest = false ) {
 		$post_id = absint( $post_id );
 
-		self::$poll_refresh_results[ $post_id ] = self::refresh_for_post( $post_id, $document );
+		self::$poll_refresh_results[ $post_id ] = self::refresh_for_post( $post_id, $document, $force_latest );
 	}
 
 	/**
@@ -81,9 +82,10 @@ class Local_HTML {
 	 *
 	 * @param int        $post_id Post ID.
 	 * @param array|null $document Optional API document.
+	 * @param bool       $force_latest Bypass the PDF-based cache check and fetch the latest published HTML.
 	 * @return string Status.
 	 */
-	public static function refresh_for_post( $post_id, $document = null ) {
+	public static function refresh_for_post( $post_id, $document = null, $force_latest = false ) {
 		$post_id = absint( $post_id );
 
 		if ( ! $post_id || 'ready' !== get_post_meta( $post_id, Document_State::META_STATUS, true ) ) {
@@ -105,7 +107,7 @@ class Local_HTML {
 			return 'skipped';
 		}
 
-		if ( self::has_current_local_html( $post_id, $viewer_url, $fingerprint ) ) {
+		if ( ! $force_latest && self::has_current_local_html( $post_id, $viewer_url, $fingerprint ) ) {
 			$preview_record  = Proud_HTML_Preview::record_for_post( $post_id );
 			$needs_migration = ! $preview_record || empty( $preview_record['artifacts'] );
 
@@ -120,7 +122,7 @@ class Local_HTML {
 			return 'current';
 		}
 
-		$response = self::fetch_html( $viewer_url );
+		$response = self::fetch_html( $viewer_url, $force_latest );
 
 		if ( ! $response['ok'] ) {
 			update_post_meta( $post_id, Document_State::META_LAST_ERROR, $response['error'] );
@@ -137,7 +139,7 @@ class Local_HTML {
 		$source_url = get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
 
 		if ( $source_url ) {
-			$record = Proud_HTML_Preview::publish( $post_id, $html, $viewer_url, $source_url, $fingerprint );
+			$record = Proud_HTML_Preview::publish( $post_id, $html, $viewer_url, $source_url, $fingerprint, $force_latest );
 
 			if ( ! $record ) {
 				$error = Proud_HTML_Preview::last_publish_error();
@@ -410,9 +412,10 @@ class Local_HTML {
 	 * Fetch ready FileToWeb HTML for local caching.
 	 *
 	 * @param string $url FileToWeb URL.
+	 * @param bool   $bypass_cache Request revalidation from FileToWeb and intermediary caches.
 	 * @return array
 	 */
-	private static function fetch_html( $url ) {
+	private static function fetch_html( $url, $bypass_cache = false ) {
 		$url = Security::sanitize_filetoweb_url( $url );
 
 		if ( ! $url ) {
@@ -423,13 +426,22 @@ class Local_HTML {
 			);
 		}
 
+		$args = array(
+			'timeout'            => 20,
+			'redirection'        => 0,
+			'reject_unsafe_urls' => true,
+		);
+
+		if ( $bypass_cache ) {
+			$args['headers'] = array(
+				'Cache-Control' => 'no-cache',
+				'Pragma'        => 'no-cache',
+			);
+		}
+
 		$response = wp_remote_get(
 			$url,
-			array(
-				'timeout'            => 20,
-				'redirection'        => 0,
-				'reject_unsafe_urls' => true,
-			)
+			$args
 		);
 
 		if ( is_wp_error( $response ) ) {

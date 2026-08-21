@@ -676,7 +676,7 @@ class Admin {
 			}
 
 			Local_HTML::clear_poll_refresh_result( $refresh_post_id );
-			$poll_result    = Sync::poll_post( $refresh_post_id );
+			$poll_result    = Sync::poll_post( $refresh_post_id, true );
 			$refresh_result = Local_HTML::poll_refresh_result( $refresh_post_id );
 
 			if ( $refresh_post_id !== $post_id ) {

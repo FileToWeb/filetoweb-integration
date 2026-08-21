@@ -150,10 +150,11 @@ class Sync {
 	/**
 	 * Poll one post.
 	 *
-	 * @param int $post_id Post ID.
+	 * @param int  $post_id Post ID.
+	 * @param bool $force_latest_preview Whether to bypass the local preview cache after polling.
 	 * @return string
 	 */
-	public static function poll_post( $post_id ) {
+	public static function poll_post( $post_id, $force_latest_preview = false ) {
 		if ( ! Settings::configured() ) {
 			return 'skipped';
 		}
@@ -202,7 +203,7 @@ class Sync {
 			$status   = Security::sanitize_status( isset( $document['status'] ) ? $document['status'] : '' );
 
 			Document_State::write_polled_state( $post_id, $document );
-			do_action( 'filetoweb_integration_after_poll_post', $post_id, $document );
+			do_action( 'filetoweb_integration_after_poll_post', $post_id, $document, (bool) $force_latest_preview );
 
 			if ( in_array( $status, self::pending_statuses(), true ) ) {
 				self::schedule_next_poll( $post_id, $attempts );

@@ -95,9 +95,10 @@ class Proud_HTML_Preview {
 	 * @param string $viewer_url FileToWeb viewer URL used to resolve assets.
 	 * @param string $source_url Original PDF URL.
 	 * @param string $fingerprint Source fingerprint.
+	 * @param bool   $content_versioned Whether the bundle path must also identify the current published HTML.
 	 * @return array|false Preview record or false.
 	 */
-	public static function publish( $post_id, $html, $viewer_url, $source_url, $fingerprint ) {
+	public static function publish( $post_id, $html, $viewer_url, $source_url, $fingerprint, $content_versioned = false ) {
 		self::$last_publish_error = '';
 
 		$post_id     = absint( $post_id );
@@ -118,7 +119,7 @@ class Proud_HTML_Preview {
 			return self::publish_failure( __( 'WordPress storage is unavailable for the FileToWeb preview.', 'filetoweb-integration' ) );
 		}
 
-		$hash         = self::fingerprint_slug( $fingerprint );
+		$hash         = self::bundle_slug( $fingerprint, $html, $content_versioned );
 		$artifact_key = self::BUNDLE_ROOT . '/' . $post_id . '/' . $hash . '/index.html';
 		$artifact_url = $baseurl . '/' . $artifact_key;
 		$bundle_dir   = trailingslashit( $basedir ) . dirname( $artifact_key );
@@ -1236,5 +1237,26 @@ class Proud_HTML_Preview {
 		$slug = substr( preg_replace( '/[^a-zA-Z0-9]/', '', $fingerprint ), 0, 48 );
 
 		return $slug ? strtolower( $slug ) : substr( hash( 'sha256', $fingerprint ), 0, 48 );
+	}
+
+	/**
+	 * Build a deterministic bundle segment for a PDF source and optional HTML revision.
+	 *
+	 * Explicit refreshes use a content suffix so editor-only changes publish to
+	 * a new immutable path even though the source PDF fingerprint is unchanged.
+	 *
+	 * @param string $fingerprint Source fingerprint.
+	 * @param string $html Prepared HTML.
+	 * @param bool   $content_versioned Include the HTML revision in the path.
+	 * @return string
+	 */
+	private static function bundle_slug( $fingerprint, $html, $content_versioned ) {
+		$slug = self::fingerprint_slug( $fingerprint );
+
+		if ( ! $content_versioned ) {
+			return $slug;
+		}
+
+		return $slug . '-' . substr( hash( 'sha256', (string) $html ), 0, 16 );
 	}
 }
