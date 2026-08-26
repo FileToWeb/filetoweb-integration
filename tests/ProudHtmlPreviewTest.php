@@ -124,6 +124,8 @@ class ProudHtmlPreviewTest extends TestCase {
 	private $options     = array();
 	private $requests    = array();
 	private $use_stream_uploads = false;
+	private $stateless_client;
+	private $stateless;
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -133,6 +135,8 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->meta        = array();
 		$this->requests    = array();
 		$this->use_stream_uploads = false;
+		$this->stateless_client    = new FtwTestStatelessClient();
+		$this->stateless           = new FtwTestStatelessBootstrap( $this->stateless_client );
 		$this->options     = array(
 			Settings::OPTION_SETTINGS => array(
 				Settings::KEY_ENABLED       => '1',
@@ -203,7 +207,20 @@ class ProudHtmlPreviewTest extends TestCase {
 			}
 		);
 		Functions\when( 'clean_post_cache' )->justReturn( null );
-		Functions\when( 'apply_filters' )->alias( function ( $tag, $value ) { return $value; } );
+		Functions\when( 'apply_filters' )->alias(
+			function ( $tag, $value, $use_root = false ) {
+				if ( 'wp_stateless_file_name' === $tag && true === $use_root ) {
+					return 'oakwoodohio/2026/08/' . basename( $value );
+				}
+
+				return $value;
+			}
+		);
+		Functions\when( 'ud_get_stateless_media' )->alias(
+			function () {
+				return $this->stateless;
+			}
+		);
 		Functions\when( 'has_action' )->justReturn( false );
 		Functions\when( 'is_wp_error' )->justReturn( false );
 		Functions\when( 'wp_remote_retrieve_response_code' )->alias( function ( $response ) { return $response['code']; } );
@@ -245,7 +262,7 @@ class ProudHtmlPreviewTest extends TestCase {
 
 		$this->assertIsArray( $record );
 		$this->assertSame( 'filetoweb', $record['provider'] );
-		$this->assertSame( 1, $record['version'] );
+		$this->assertSame( 2, $record['version'] );
 		$this->assertArrayHasKey( 'source_fingerprint_algorithm', $record );
 		$this->assertCount( 4, $record['artifacts'] );
 		$this->assertSame( $record['artifact_key'], $record['artifacts'][3]['artifact_key'] );
@@ -390,7 +407,6 @@ class ProudHtmlPreviewTest extends TestCase {
 	public function test_stateless_sync_runs_only_when_hook_is_available(): void {
 		$synced = array();
 		Functions\when( 'has_action' )->justReturn( 1 );
-		Functions\when( 'wp_safe_remote_head' )->justReturn( array( 'code' => 200, 'body' => '' ) );
 		Functions\when( 'do_action' )->alias(
 			function ( $hook, $name ) use ( &$synced ) {
 				if ( 'sm:sync::syncFile' === $hook ) {
@@ -399,7 +415,7 @@ class ProudHtmlPreviewTest extends TestCase {
 			}
 		);
 
-		Proud_HTML_Preview::publish(
+		$record = Proud_HTML_Preview::publish(
 			45,
 			'<html><body><img src="/d/demo/assets/hero.png"></body></html>',
 			'https://filetoweb.com/d/demo/continuous?chrome=0',
@@ -409,6 +425,20 @@ class ProudHtmlPreviewTest extends TestCase {
 
 		$this->assertCount( 2, $synced );
 		$this->assertContains( 'filetoweb-integration/previews/45/fingerprint456/index.html', $synced );
+		$this->assertSame(
+			'oakwoodohio/2026/08/filetoweb-integration/previews/45/fingerprint456/index.html',
+			$this->meta[45][ Proud_HTML_Preview::META_KEY ]['artifact_key']
+		);
+		$this->assertContains(
+			'oakwoodohio/2026/08/filetoweb-integration/previews/45/fingerprint456/index.html',
+			$this->stateless_client->checked
+		);
+		$stored = file_get_contents( $this->uploads_dir . '/' . $record['local_artifact_key'] );
+		$this->assertStringContainsString(
+			'https://storage.googleapis.com/proudcity/oakwoodohio/2026/08/filetoweb-integration/previews/45/fingerprint456/assets/',
+			$stored
+		);
+		$this->assertStringNotContainsString( 'https://city.example/wp-content/uploads/', $stored );
 	}
 
 	public function test_manifest_and_cleanup_support_stateless_stream_directories(): void {
@@ -504,7 +534,7 @@ class ProudHtmlPreviewTest extends TestCase {
 
 		$this->assertIsArray( $record, Proud_HTML_Preview::last_publish_error() );
 		$this->assertSame(
-			'filetoweb-integration/previews/74/privatestatelessfingerprint/index.html',
+			'oakwoodohio/2026/08/filetoweb-integration/previews/74/privatestatelessfingerprint/index.html',
 			$record['artifact_key']
 		);
 	}
@@ -516,9 +546,7 @@ class ProudHtmlPreviewTest extends TestCase {
 
 		Functions\when( 'has_action' )->justReturn( 1 );
 		Functions\when( 'do_action' )->justReturn( null );
-		Functions\expect( 'wp_safe_remote_head' )
-			->once()
-			->andReturn( array( 'code' => 200, 'body' => '' ) );
+		Functions\expect( 'wp_safe_remote_head' )->never();
 
 		$method = new ReflectionMethod( Proud_HTML_Preview::class, 'sync_bundle_with_stateless' );
 		if ( PHP_VERSION_ID < 80100 ) {
@@ -580,7 +608,8 @@ class ProudHtmlPreviewTest extends TestCase {
 			null,
 			'filetoweb-integration/previews/10154/fingerprint/index.html',
 			'/tmp/index.html',
-			'gs://proudcity/delawarecountyin/2026/08'
+			'delawarecountyin/2026/08/filetoweb-integration/previews/10154/fingerprint/index.html',
+			$this->stateless_client
 		);
 
 		$this->assertSame(
@@ -588,8 +617,57 @@ class ProudHtmlPreviewTest extends TestCase {
 			$resolved_name
 		);
 		$this->assertSame( 'filetoweb-preserve-object-name', $sync_args['name_with_root'] );
+		$this->assertTrue( $sync_args['use_root'] );
 		$this->assertFalse( $sync_args['ephemeral'] );
 		$this->assertTrue( $filter_removed );
+	}
+
+	public function test_stateless_storage_prefixes_prevent_cross_tenant_bundle_collisions(): void {
+		$tenant = 'delawarecountyin';
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\when( 'apply_filters' )->alias(
+			function ( $tag, $value, $use_root = false ) use ( &$tenant ) {
+				return 'wp_stateless_file_name' === $tag && true === $use_root
+					? $tenant . '/2026/08/' . basename( $value )
+					: $value;
+			}
+		);
+
+		$method = new ReflectionMethod( Proud_HTML_Preview::class, 'storage_context' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$method->setAccessible( true );
+		}
+
+		$key      = 'filetoweb-integration/previews/10030/shared-hash/index.html';
+		$delaware = $method->invoke( null, $this->uploads_dir, 'https://city.example/wp-content/uploads', $key );
+		$tenant   = 'somervillenj';
+		$somerville = $method->invoke( null, $this->uploads_dir, 'https://city.example/wp-content/uploads', $key );
+
+		$this->assertSame( 'delawarecountyin/2026/08/', $delaware['object_prefix'] );
+		$this->assertSame( 'somervillenj/2026/08/', $somerville['object_prefix'] );
+		$this->assertNotSame( $delaware['object_prefix'] . $key, $somerville['object_prefix'] . $key );
+		$this->assertStringEndsWith( $key, $delaware['object_prefix'] . $key );
+		$this->assertStringEndsWith( $key, $somerville['object_prefix'] . $key );
+	}
+
+	public function test_true_stateless_upload_directory_preserves_its_exact_gcs_root(): void {
+		Functions\when( 'has_action' )->justReturn( 1 );
+
+		$method = new ReflectionMethod( Proud_HTML_Preview::class, 'storage_context' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$method->setAccessible( true );
+		}
+
+		$key     = 'filetoweb-integration/previews/74/fingerprint/index.html';
+		$storage = $method->invoke(
+			null,
+			'gs://proudcity/oakwoodoh/2026/08',
+			'https://storage.googleapis.com/proudcity/oakwoodoh/2026/08',
+			$key
+		);
+
+		$this->assertSame( 'oakwoodoh/2026/08/', $storage['object_prefix'] );
+		$this->assertSame( 'https://storage.googleapis.com/proudcity', $storage['public_baseurl'] );
 	}
 
 	public function test_stateless_sync_removes_object_name_filter_after_exception(): void {
@@ -627,7 +705,8 @@ class ProudHtmlPreviewTest extends TestCase {
 				null,
 				'filetoweb-integration/previews/10154/fingerprint/index.html',
 				'/tmp/index.html',
-				'gs://proudcity/delawarecountyin/2026/08'
+				'delawarecountyin/2026/08/filetoweb-integration/previews/10154/fingerprint/index.html',
+				$this->stateless_client
 			);
 			$this->fail( 'Expected the WP Stateless exception to be rethrown.' );
 		} catch ( RuntimeException $exception ) {
@@ -655,7 +734,7 @@ class ProudHtmlPreviewTest extends TestCase {
 	public function test_stateless_failure_does_not_publish_the_pointer(): void {
 		Functions\when( 'has_action' )->justReturn( 1 );
 		Functions\when( 'do_action' )->justReturn( null );
-		Functions\when( 'wp_safe_remote_head' )->justReturn( array( 'code' => 404, 'body' => '' ) );
+		$this->stateless_client->exists = false;
 
 		$record = Proud_HTML_Preview::publish(
 			49,
@@ -721,6 +800,74 @@ class ProudHtmlPreviewTest extends TestCase {
 
 		$this->assertTrue( Proud_HTML_Preview::migrate_existing_post( 50 ) );
 		$this->assertNotEmpty( $this->meta[50][ Proud_HTML_Preview::META_KEY ]['artifacts'] );
+	}
+
+	public function test_schema_one_bundle_recovers_from_gcs_without_filetoweb_reconversion(): void {
+		$bundle = 'filetoweb-integration/previews/61/legacyfingerprint';
+		$asset  = $bundle . '/assets/logo.png';
+		$index  = $bundle . '/index.html';
+		$synced = array();
+		$this->meta[61] = array(
+			Proud_HTML_Preview::META_KEY => array(
+				'version'            => 1,
+				'provider'           => 'filetoweb',
+				'source_url'         => 'https://city.example/wp-content/uploads/legacy.pdf',
+				'source_fingerprint' => 'legacy-fingerprint',
+				'artifact_key'       => $index,
+				'artifact_url'       => 'https://city.example/wp-content/uploads/' . $index,
+				'artifacts'          => array(
+					array(
+						'artifact_key' => $asset,
+						'artifact_url' => 'https://city.example/wp-content/uploads/' . $asset,
+					),
+					array(
+						'artifact_key' => $index,
+						'artifact_url' => 'https://city.example/wp-content/uploads/' . $index,
+					),
+				),
+				'token'              => 'legacy-token',
+				'published_at'       => '2026-08-21 11:52:50',
+			),
+			Document_State::META_LOCAL_HTML_SOURCE_URL => 'https://filetoweb.com/d/demo/continuous?chrome=0',
+		);
+		$this->stateless_client->objects = array(
+			$asset => 'PNG',
+			$index => '<html><body><img src="https://city.example/wp-content/uploads/' . $asset . '"></body></html>',
+		);
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\when( 'do_action' )->alias(
+			function ( $hook, $name ) use ( &$synced ) {
+				if ( 'sm:sync::syncFile' === $hook ) {
+					$synced[] = $name;
+				}
+			}
+		);
+
+		$this->assertTrue( Proud_HTML_Preview::migrate_existing_post( 61 ) );
+
+		$record = $this->meta[61][ Proud_HTML_Preview::META_KEY ];
+		$this->assertSame( 2, $record['version'] );
+		$this->assertSame( $index, $record['local_artifact_key'] );
+		$this->assertSame( 'oakwoodohio/2026/08/' . $index, $record['artifact_key'] );
+		$this->assertSame( '2', $this->meta[61][ Proud_HTML_Preview::META_STORAGE_SCHEMA ] );
+		$this->assertSame( array(), $this->requests );
+		$this->assertEqualsCanonicalizing( array( $asset, $index ), $synced );
+		$this->assertEqualsCanonicalizing(
+			array(
+				'oakwoodohio/2026/08/' . $asset,
+				'oakwoodohio/2026/08/' . $index,
+			),
+			$this->stateless_client->checked
+		);
+		$this->assertSame( array( $asset, $index ), array_column( $record['legacy_artifacts'], 'artifact_key' ) );
+
+		$recovered = file_get_contents( $this->uploads_dir . '/' . $index );
+		$this->assertStringContainsString(
+			'https://storage.googleapis.com/proudcity/oakwoodohio/2026/08/' . $asset,
+			$recovered
+		);
+		$this->assertStringNotContainsString( 'https://city.example/wp-content/uploads/' . $asset, $recovered );
 	}
 
 	public function test_explicit_disable_changes_provider_but_deactivation_does_not(): void {

@@ -42,6 +42,9 @@ if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) 
 		)
 	);
 	$queued_artifacts = array();
+	$legacy_option    = 'proud_html_preview_legacy_artifacts';
+	$legacy_artifacts = get_option( $legacy_option, array() );
+	$legacy_artifacts = is_array( $legacy_artifacts ) ? $legacy_artifacts : array();
 
 	foreach ( is_array( $preview_rows ) ? $preview_rows : array() as $row ) {
 		$value = isset( $row->meta_value ) ? maybe_unserialize( $row->meta_value ) : null;
@@ -50,12 +53,19 @@ if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) 
 			continue;
 		}
 
+		$version   = isset( $value['version'] ) ? (int) $value['version'] : 0;
 		$artifacts = isset( $value['artifacts'] ) && is_array( $value['artifacts'] ) ? $value['artifacts'] : array();
 		if ( empty( $artifacts ) && ! empty( $value['artifact_key'] ) && ! empty( $value['artifact_url'] ) ) {
 			$artifacts[] = array(
 				'artifact_key' => $value['artifact_key'],
 				'artifact_url' => $value['artifact_url'],
 			);
+		}
+
+		$legacy = isset( $value['legacy_artifacts'] ) && is_array( $value['legacy_artifacts'] ) ? $value['legacy_artifacts'] : array();
+		if ( 2 > $version ) {
+			$legacy   = array_merge( $legacy, $artifacts );
+			$artifacts = array();
 		}
 
 		foreach ( $artifacts as $artifact ) {
@@ -69,12 +79,35 @@ if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) 
 			}
 		}
 
+		foreach ( $legacy as $artifact ) {
+			if ( empty( $artifact['artifact_key'] ) || empty( $artifact['artifact_url'] ) ) {
+				continue;
+			}
+
+			$artifact_key = ltrim( str_replace( '\\', '/', (string) $artifact['artifact_key'] ), '/' );
+			$artifact_url = esc_url_raw( (string) $artifact['artifact_url'] );
+			if ( ! $artifact_key || ! $artifact_url || false !== strpos( $artifact_key, '../' ) || false !== strpos( $artifact_key, '/..' ) ) {
+				continue;
+			}
+
+			$identity = hash( 'sha256', 'filetoweb|' . $artifact_key . '|' . $artifact_url );
+			$legacy_artifacts[ $identity ] = array(
+				'provider'     => 'filetoweb',
+				'artifact_key' => $artifact_key,
+				'artifact_url' => $artifact_url,
+			);
+		}
+
 		if ( isset( $row->meta_id ) ) {
 			$wpdb->delete(
 				$wpdb->postmeta,
 				array( 'meta_id' => absint( $row->meta_id ) )
 			);
 		}
+	}
+
+	if ( $legacy_artifacts ) {
+		update_option( $legacy_option, $legacy_artifacts, false );
 	}
 }
 
@@ -126,6 +159,7 @@ $meta_keys = array(
 	'_filetoweb_source_post_id',
 	'_filetoweb_public_replacement_paused',
 	'_filetoweb_paused_html_preview',
+	'_filetoweb_preview_storage_schema',
 );
 
 foreach ( $meta_keys as $meta_key ) {
@@ -146,7 +180,7 @@ if ( function_exists( 'wp_upload_dir' ) ) {
 	$dir     = isset( $uploads['basedir'] ) ? trailingslashit( $uploads['basedir'] ) . 'filetoweb-integration' : '';
 
 	if ( $dir && is_dir( $dir ) ) {
-		$remove_dir = function ( $path ) use ( &$remove_dir, $uploads ) {
+		$remove_dir = function ( $path ) use ( &$remove_dir ) {
 			$items = glob( trailingslashit( $path ) . '*' );
 
 			foreach ( is_array( $items ) ? $items : array() as $item ) {
@@ -155,18 +189,7 @@ if ( function_exists( 'wp_upload_dir' ) ) {
 					continue;
 				}
 
-					if ( is_file( $item ) ) {
-						$name = ltrim( str_replace( '\\', '/', str_replace( $uploads['basedir'], '', $item ) ), '/' );
-						$url  = trailingslashit( $uploads['baseurl'] ) . str_replace( '%2F', '/', rawurlencode( $name ) );
-
-						if ( function_exists( '\\Proud\\Core\\proud_html_preview_queue_cleanup' ) ) {
-							call_user_func( '\\Proud\\Core\\proud_html_preview_queue_cleanup', 'filetoweb', $name, $url );
-						}
-
-						if ( function_exists( 'has_action' ) && has_action( 'sm:sync::deleteFile' ) ) {
-							do_action( 'sm:sync::deleteFile', $name );
-					}
-
+				if ( is_file( $item ) ) {
 					unlink( $item ); // phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink
 				}
 			}

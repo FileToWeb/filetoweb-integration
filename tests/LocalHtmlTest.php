@@ -308,14 +308,15 @@ class LocalHtmlTest extends TestCase {
 		Functions\when( 'do_action' )->justReturn( null );
 		Functions\when( 'add_filter' )->justReturn( true );
 		Functions\when( 'remove_filter' )->justReturn( true );
-		Functions\when( 'wp_safe_remote_head' )->justReturn(
-			array(
-				'code' => 503,
-			)
-		);
-		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
-			function ( $response ) {
-				return $response['code'];
+		$client         = new FtwTestStatelessClient();
+		$client->exists = false;
+		$stateless      = new FtwTestStatelessBootstrap( $client );
+		Functions\when( 'ud_get_stateless_media' )->justReturn( $stateless );
+		Functions\when( 'apply_filters' )->alias(
+			function ( $tag, $value, $use_root = false ) {
+				return 'wp_stateless_file_name' === $tag && true === $use_root
+					? 'example/2026/08/' . basename( $value )
+					: $value;
 			}
 		);
 

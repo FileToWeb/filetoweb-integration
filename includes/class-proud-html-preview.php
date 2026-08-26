@@ -15,12 +15,13 @@ class Proud_HTML_Preview {
 	const META_KEY                 = '_proud_html_preview';
 	const META_PUBLIC_PAUSED       = '_filetoweb_public_replacement_paused';
 	const META_PAUSED_RECORD       = '_filetoweb_paused_html_preview';
+	const META_STORAGE_SCHEMA      = '_filetoweb_preview_storage_schema';
 	const OPTION_PROVIDERS         = 'proud_html_preview_providers';
 	const OPTION_MIGRATION_VERSION = 'filetoweb_integration_preview_migration_version';
 	const PROVIDER                 = 'filetoweb';
-	const SCHEMA_VERSION           = 1;
+	const SCHEMA_VERSION           = 2;
 	const MIGRATION_HOOK           = 'filetoweb_integration_migrate_html_previews';
-	const MIGRATION_VERSION        = '1';
+	const MIGRATION_VERSION        = '2';
 	const BUNDLE_ROOT              = 'filetoweb-integration/previews';
 
 	/**
@@ -119,22 +120,30 @@ class Proud_HTML_Preview {
 			return self::publish_failure( __( 'WordPress storage is unavailable for the FileToWeb preview.', 'filetoweb-integration' ) );
 		}
 
-		$hash         = self::bundle_slug( $fingerprint, $html, $content_versioned );
-		$artifact_key = self::BUNDLE_ROOT . '/' . $post_id . '/' . $hash . '/index.html';
-		$artifact_url = $baseurl . '/' . $artifact_key;
-		$bundle_dir   = trailingslashit( $basedir ) . dirname( $artifact_key );
-		$index_path   = trailingslashit( $basedir ) . $artifact_key;
-		$current      = self::record_for_post( $post_id );
+		$hash               = self::bundle_slug( $fingerprint, $html, $content_versioned );
+		$local_artifact_key = self::BUNDLE_ROOT . '/' . $post_id . '/' . $hash . '/index.html';
+		$storage            = self::storage_context( $basedir, $baseurl, $local_artifact_key );
+
+		if ( empty( $storage ) ) {
+			return self::publish_failure( __( 'WP Stateless storage details are unavailable for the FileToWeb preview.', 'filetoweb-integration' ) );
+		}
+
+		$artifact_key     = self::storage_artifact_key( $local_artifact_key, $storage );
+		$artifact_url     = self::storage_artifact_url( $local_artifact_key, $storage );
+		$bundle_dir       = trailingslashit( $basedir ) . dirname( $local_artifact_key );
+		$index_path       = trailingslashit( $basedir ) . $local_artifact_key;
+		$current          = self::record_for_post( $post_id );
+		$legacy_artifacts = self::legacy_artifacts_for_record( $current );
 
 		if ( self::record_matches( $current, $source_url, $fingerprint, $artifact_key ) && is_readable( $index_path ) ) {
-			$manifest  = self::artifact_manifest( $bundle_dir, $basedir, $baseurl );
+			$manifest  = self::artifact_manifest( $bundle_dir, $basedir, $baseurl, $storage );
 			$algorithm = sanitize_key( get_post_meta( $post_id, Document_State::META_SOURCE_FINGERPRINT_ALGORITHM, true ) );
 			if ( empty( $manifest ) ) {
 				return self::publish_failure( __( 'FileToWeb preview files could not be enumerated in WordPress storage.', 'filetoweb-integration' ) );
 			}
 
 			if ( empty( $current['artifacts'] ) || $manifest !== $current['artifacts'] || $algorithm !== ( isset( $current['source_fingerprint_algorithm'] ) ? $current['source_fingerprint_algorithm'] : '' ) ) {
-				if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl ) ) {
+				if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage ) ) {
 					return self::publish_failure( __( 'FileToWeb preview files could not be verified in WordPress storage.', 'filetoweb-integration' ) );
 				}
 
@@ -157,7 +166,7 @@ class Proud_HTML_Preview {
 			return self::publish_failure( __( 'WordPress storage could not create the temporary FileToWeb preview directory.', 'filetoweb-integration' ) );
 		}
 
-		$bundle_url = dirname( $artifact_url );
+		$bundle_url = self::storage_artifact_url( dirname( $local_artifact_key ), $storage );
 		$mirrored   = array();
 		$complete   = true;
 		$html       = self::mirror_assets( $html, $viewer_url, $temp_dir, $bundle_url, $mirrored, $complete );
@@ -174,9 +183,7 @@ class Proud_HTML_Preview {
 			return self::publish_failure( __( 'FileToWeb preview HTML could not be written to WordPress storage.', 'filetoweb-integration' ) );
 		}
 
-		if ( is_dir( $bundle_dir ) && is_readable( $index_path ) ) {
-			self::remove_directory( $temp_dir );
-		} elseif ( is_dir( $bundle_dir ) ) {
+		if ( is_dir( $bundle_dir ) ) {
 			$stale_dir = $bundle_dir . '.stale-' . strtolower( wp_generate_password( 10, false, false ) );
 
 			if ( ! rename( $bundle_dir, $stale_dir ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
@@ -199,7 +206,7 @@ class Proud_HTML_Preview {
 		$token        = wp_generate_password( 40, false, false );
 		$published_at = current_time( 'mysql', true );
 		$algorithm    = sanitize_key( get_post_meta( $post_id, Document_State::META_SOURCE_FINGERPRINT_ALGORITHM, true ) );
-		$manifest     = self::artifact_manifest( $bundle_dir, $basedir, $baseurl );
+		$manifest     = self::artifact_manifest( $bundle_dir, $basedir, $baseurl, $storage );
 
 		if ( empty( $manifest ) ) {
 			return self::publish_failure( __( 'FileToWeb preview files could not be enumerated in WordPress storage.', 'filetoweb-integration' ) );
@@ -213,12 +220,16 @@ class Proud_HTML_Preview {
 			'source_fingerprint_algorithm' => $algorithm,
 			'artifact_key'       => $artifact_key,
 			'artifact_url'       => esc_url_raw( $artifact_url ),
+			'local_artifact_key' => $local_artifact_key,
 			'artifacts'          => $manifest,
 			'token'              => $token,
 			'published_at'       => $published_at,
 		);
+		if ( $legacy_artifacts ) {
+			$record['legacy_artifacts'] = $legacy_artifacts;
+		}
 
-		if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl ) ) {
+		if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage ) ) {
 			return self::publish_failure( __( 'FileToWeb preview files could not be verified in WordPress storage.', 'filetoweb-integration' ) );
 		}
 
@@ -362,6 +373,8 @@ class Proud_HTML_Preview {
 	 * @param array $record Preview record.
 	 */
 	private static function store_record( $post_id, $record ) {
+		update_post_meta( $post_id, self::META_STORAGE_SCHEMA, (string) self::SCHEMA_VERSION );
+
 		if ( self::is_public_paused( $post_id ) ) {
 			update_post_meta( $post_id, self::META_PAUSED_RECORD, $record );
 
@@ -425,8 +438,17 @@ class Proud_HTML_Preview {
 		$post_id = absint( $post_id );
 		$record  = self::record_for_post( $post_id );
 
-		if ( ! $post_id || ( $record && ! empty( $record['artifacts'] ) ) ) {
+		if ( ! $post_id ) {
 			return false;
+		}
+
+		if ( $record && ! empty( $record['artifacts'] ) ) {
+			if ( self::SCHEMA_VERSION <= (int) ( isset( $record['version'] ) ? $record['version'] : 0 ) ) {
+				update_post_meta( $post_id, self::META_STORAGE_SCHEMA, (string) self::SCHEMA_VERSION );
+				return false;
+			}
+
+			return self::migrate_stateless_record( $post_id, $record );
 		}
 
 		$path        = self::safe_legacy_path( get_post_meta( $post_id, Document_State::META_LOCAL_HTML_PATH, true ) );
@@ -448,7 +470,252 @@ class Proud_HTML_Preview {
 	}
 
 	/**
-	 * Schedule bounded migration for pre-0.1.32 cache records.
+	 * Rebuild a schema-v1 bundle from its intact GCS objects without reconversion.
+	 *
+	 * @param int   $post_id Source post ID.
+	 * @param array $record Existing preview record.
+	 * @return bool
+	 */
+	private static function migrate_stateless_record( $post_id, $record ) {
+		$uploads          = wp_upload_dir();
+		$basedir          = isset( $uploads['basedir'] ) ? wp_normalize_path( $uploads['basedir'] ) : '';
+		$baseurl          = isset( $uploads['baseurl'] ) ? untrailingslashit( $uploads['baseurl'] ) : '';
+		$stored_index_key = isset( $record['local_artifact_key'] )
+			? $record['local_artifact_key']
+			: ( isset( $record['artifact_key'] ) ? $record['artifact_key'] : '' );
+		$index_key        = self::legacy_local_artifact_key( $stored_index_key );
+		$legacy_artifacts = self::legacy_artifacts_for_record( $record );
+
+		if ( ! $basedir || ! $baseurl || ! $index_key || 'index.html' !== basename( $index_key ) ) {
+			return false;
+		}
+
+		$bundle_dir = trailingslashit( $basedir ) . dirname( $index_key );
+		$storage    = self::storage_context( $basedir, $baseurl, $index_key );
+
+		if ( empty( $storage ) ) {
+			return false;
+		}
+
+		if ( empty( $storage['stateless'] ) ) {
+			$manifest = self::artifact_manifest( $bundle_dir, $basedir, $baseurl, $storage );
+			if ( empty( $manifest ) || ! is_readable( trailingslashit( $basedir ) . $index_key ) ) {
+				return false;
+			}
+
+			$record['version']            = self::SCHEMA_VERSION;
+			$record['artifact_key']       = $index_key;
+			$record['artifact_url']       = self::storage_artifact_url( $index_key, $storage );
+			$record['local_artifact_key'] = $index_key;
+			$record['artifacts']          = $manifest;
+			if ( $legacy_artifacts ) {
+				$record['legacy_artifacts'] = $legacy_artifacts;
+			}
+			self::store_record( $post_id, $record );
+
+			return true;
+		}
+
+		$artifacts = isset( $record['artifacts'] ) && is_array( $record['artifacts'] ) ? $record['artifacts'] : array();
+		$client   = $storage['client'];
+		$temp_dir = $bundle_dir . '.migration-' . strtolower( wp_generate_password( 10, false, false ) );
+		$url_map  = array();
+
+		if ( empty( $artifacts ) || ! wp_mkdir_p( $temp_dir ) ) {
+			return false;
+		}
+
+		foreach ( $artifacts as $artifact ) {
+			$old_key   = isset( $artifact['artifact_key'] ) ? ltrim( (string) $artifact['artifact_key'], '/' ) : '';
+			$local_key = self::legacy_local_artifact_key( $old_key );
+
+			if ( ! $local_key || 0 !== strpos( $local_key, trailingslashit( dirname( $index_key ) ) ) ) {
+				self::remove_directory( $temp_dir );
+				return false;
+			}
+
+			$relative = ltrim( substr( $local_key, strlen( dirname( $index_key ) ) ), '/' );
+			$source   = trailingslashit( $basedir ) . $local_key;
+			$target   = trailingslashit( $temp_dir ) . $relative;
+
+			if ( ! $relative || ! wp_mkdir_p( dirname( $target ) ) ) {
+				self::remove_directory( $temp_dir );
+				return false;
+			}
+
+			$copied = is_readable( $source ) && copy( $source, $target ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_copy
+			if ( ! $copied && is_callable( array( $client, 'get_media' ) ) ) {
+				$copied = 200 === (int) $client->get_media( $old_key, true, $target );
+			}
+
+			if ( ! $copied || ! is_readable( $target ) ) {
+				self::remove_directory( $temp_dir );
+				return false;
+			}
+
+			$new_url  = self::storage_artifact_url( $local_key, $storage );
+			$old_urls = array(
+				isset( $artifact['artifact_url'] ) ? (string) $artifact['artifact_url'] : '',
+				trailingslashit( $baseurl ) . str_replace( '%2F', '/', rawurlencode( $local_key ) ),
+				trailingslashit( $storage['public_baseurl'] ) . str_replace( '%2F', '/', rawurlencode( $old_key ) ),
+			);
+
+			foreach ( array_filter( array_unique( $old_urls ) ) as $old_url ) {
+				$url_map[ $old_url ] = $new_url;
+			}
+		}
+
+		foreach ( self::files_in_directory( $temp_dir ) as $path ) {
+			$extension = strtolower( pathinfo( $path, PATHINFO_EXTENSION ) );
+			if ( ! in_array( $extension, array( 'html', 'css' ), true ) ) {
+				continue;
+			}
+
+			$contents = file_get_contents( $path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+			$contents = is_string( $contents ) ? str_replace( array_keys( $url_map ), array_values( $url_map ), $contents ) : '';
+
+			$written = '' !== $contents && false !== file_put_contents( $path, $contents ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_file_put_contents
+			if ( ! $written ) {
+				self::remove_directory( $temp_dir );
+				return false;
+			}
+		}
+
+		$stale_dir = '';
+		if ( is_dir( $bundle_dir ) ) {
+			$stale_dir = $bundle_dir . '.stale-' . strtolower( wp_generate_password( 10, false, false ) );
+			if ( ! rename( $bundle_dir, $stale_dir ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+				self::remove_directory( $temp_dir );
+				return false;
+			}
+		}
+
+		if ( ! rename( $temp_dir, $bundle_dir ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+			if ( $stale_dir ) {
+				rename( $stale_dir, $bundle_dir ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+			}
+			self::remove_directory( $temp_dir );
+			return false;
+		}
+
+		if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage ) ) {
+			self::remove_directory( $bundle_dir );
+			if ( $stale_dir ) {
+				rename( $stale_dir, $bundle_dir ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+			}
+			return false;
+		}
+
+		if ( $stale_dir ) {
+			self::remove_directory( $stale_dir );
+		}
+
+		$manifest = self::artifact_manifest( $bundle_dir, $basedir, $baseurl, $storage );
+		if ( empty( $manifest ) ) {
+			return false;
+		}
+
+		$record['version']            = self::SCHEMA_VERSION;
+		$record['artifact_key']       = self::storage_artifact_key( $index_key, $storage );
+		$record['artifact_url']       = self::storage_artifact_url( $index_key, $storage );
+		$record['local_artifact_key'] = $index_key;
+		$record['artifacts']          = $manifest;
+		$record['published_at']       = current_time( 'mysql', true );
+		if ( $legacy_artifacts ) {
+			$record['legacy_artifacts'] = $legacy_artifacts;
+		}
+		self::store_record( $post_id, $record );
+
+		$viewer_url = get_post_meta( $post_id, Document_State::META_LOCAL_HTML_SOURCE_URL, true );
+		if ( $viewer_url && ! empty( $record['token'] ) ) {
+			self::write_legacy_pointer(
+				$post_id,
+				trailingslashit( $basedir ) . $index_key,
+				$record['token'],
+				$viewer_url,
+				$record['source_fingerprint'],
+				$record['published_at']
+			);
+		}
+
+		self::clean_public_cache( $post_id );
+
+		return true;
+	}
+
+	/**
+	 * Recover the WordPress-local part of a schema-v1 artifact key.
+	 *
+	 * @param mixed $key Stored artifact key.
+	 * @return string
+	 */
+	private static function legacy_local_artifact_key( $key ) {
+		$key      = wp_normalize_path( ltrim( (string) $key, '/' ) );
+		$position = strpos( $key, self::BUNDLE_ROOT . '/' );
+
+		if ( false === $position ) {
+			return '';
+		}
+
+		$key = substr( $key, $position );
+
+		return false === strpos( $key, '../' ) && false === strpos( $key, '/..' ) ? $key : '';
+	}
+
+	/**
+	 * Preserve old shared object identities for deferred fleet-wide cleanup.
+	 *
+	 * Rootless schema-v1 objects may have been claimed by multiple tenants. They
+	 * must not be deleted during an individual site's migration, because another
+	 * tenant may still need the object for recovery. Keeping the identities in
+	 * the v2 record allows ProudCity to remove them after every tenant migrates.
+	 *
+	 * @param array $record Preview record.
+	 * @return array
+	 */
+	private static function legacy_artifacts_for_record( $record ) {
+		if ( ! is_array( $record ) ) {
+			return array();
+		}
+
+		$artifacts = isset( $record['legacy_artifacts'] ) && is_array( $record['legacy_artifacts'] )
+			? $record['legacy_artifacts']
+			: array();
+
+		if ( self::SCHEMA_VERSION > (int) ( isset( $record['version'] ) ? $record['version'] : 0 ) ) {
+			$current_artifacts = isset( $record['artifacts'] ) && is_array( $record['artifacts'] )
+				? $record['artifacts']
+				: array();
+			$artifacts         = array_merge( $artifacts, $current_artifacts );
+		}
+
+		$legacy = array();
+		$seen   = array();
+		foreach ( $artifacts as $artifact ) {
+			$key = isset( $artifact['artifact_key'] ) ? ltrim( wp_normalize_path( (string) $artifact['artifact_key'] ), '/' ) : '';
+			$url = isset( $artifact['artifact_url'] ) ? esc_url_raw( (string) $artifact['artifact_url'] ) : '';
+
+			if ( ! $key || ! $url || false !== strpos( $key, '../' ) || false !== strpos( $key, '/..' ) ) {
+				continue;
+			}
+
+			$identity = $key . '|' . $url;
+			if ( isset( $seen[ $identity ] ) ) {
+				continue;
+			}
+
+			$legacy[]         = array(
+				'artifact_key' => $key,
+				'artifact_url' => $url,
+			);
+			$seen[ $identity ] = true;
+		}
+
+		return $legacy;
+	}
+
+	/**
+	 * Schedule bounded migration for legacy and pre-storage-schema previews.
 	 */
 	public static function schedule_migration() {
 		if ( self::MIGRATION_VERSION === (string) get_option( self::OPTION_MIGRATION_VERSION, '' ) ) {
@@ -461,33 +728,54 @@ class Proud_HTML_Preview {
 	}
 
 	/**
-	 * Migrate a bounded set of existing local caches without API work.
+	 * Migrate a bounded set of existing previews without FileToWeb API work.
 	 */
 	public static function migrate_legacy_batch() {
 		$post_ids = get_posts(
 			array(
 				'post_type'      => array( 'attachment', 'document' ),
 				'post_status'    => 'any',
-				'posts_per_page' => 25,
+				'posts_per_page' => 10,
 				'fields'         => 'ids',
 				'meta_query'     => array(
 					array(
-						'key'     => Document_State::META_LOCAL_HTML_PATH,
-						'compare' => 'EXISTS',
+						'relation' => 'OR',
+						array(
+							'key'     => Document_State::META_LOCAL_HTML_PATH,
+							'compare' => 'EXISTS',
+						),
+						array(
+							'key'     => self::META_KEY,
+							'compare' => 'EXISTS',
+						),
+						array(
+							'key'     => self::META_PAUSED_RECORD,
+							'compare' => 'EXISTS',
+						),
 					),
 					array(
-						'key'     => self::META_KEY,
-						'compare' => 'NOT EXISTS',
+						'relation' => 'OR',
+						array(
+							'key'     => self::META_STORAGE_SCHEMA,
+							'compare' => 'NOT EXISTS',
+						),
+						array(
+							'key'     => self::META_STORAGE_SCHEMA,
+							'value'   => self::MIGRATION_VERSION . '%',
+							'compare' => 'NOT LIKE',
+						),
 					),
 				),
 			)
 		);
 
 		foreach ( $post_ids as $post_id ) {
-			self::migrate_existing_post( $post_id );
+			if ( ! self::migrate_existing_post( $post_id ) && ! get_post_meta( $post_id, self::META_STORAGE_SCHEMA, true ) ) {
+				update_post_meta( $post_id, self::META_STORAGE_SCHEMA, self::MIGRATION_VERSION . '-needs-refresh' );
+			}
 		}
 
-		if ( 25 === count( $post_ids ) ) {
+		if ( 10 === count( $post_ids ) ) {
 			wp_schedule_single_event( time() + 30, self::MIGRATION_HOOK );
 			return;
 		}
@@ -844,10 +1132,12 @@ class Proud_HTML_Preview {
 	 * @param string $bundle_dir Bundle directory.
 	 * @param string $uploads_basedir Upload base directory.
 	 * @param string $uploads_baseurl Upload base URL.
+	 * @param array  $storage Resolved storage context.
 	 * @return array
 	 */
-	private static function artifact_manifest( $bundle_dir, $uploads_basedir, $uploads_baseurl ) {
+	private static function artifact_manifest( $bundle_dir, $uploads_basedir, $uploads_baseurl, $storage = array() ) {
 		$manifest = array();
+		$storage  = $storage ? $storage : self::local_storage_context( $uploads_baseurl );
 
 		foreach ( self::files_in_directory( $bundle_dir ) as $path ) {
 			$key = ltrim( str_replace( wp_normalize_path( $uploads_basedir ), '', wp_normalize_path( $path ) ), '/' );
@@ -857,8 +1147,8 @@ class Proud_HTML_Preview {
 			}
 
 			$manifest[] = array(
-				'artifact_key' => $key,
-				'artifact_url' => esc_url_raw( trailingslashit( $uploads_baseurl ) . str_replace( '%2F', '/', rawurlencode( $key ) ) ),
+				'artifact_key' => self::storage_artifact_key( $key, $storage ),
+				'artifact_url' => self::storage_artifact_url( $key, $storage ),
 			);
 		}
 
@@ -870,6 +1160,113 @@ class Proud_HTML_Preview {
 		);
 
 		return $manifest;
+	}
+
+	/**
+	 * Resolve the exact WP Stateless namespace and public host for a bundle.
+	 *
+	 * WP Stateless 4.4.1 reduces a non-media path to basename() when use_root is
+	 * enabled. We let WP Stateless resolve its configured tenant/date root using
+	 * a probe filename, then append FileToWeb's complete nested key ourselves.
+	 *
+	 * @param string $uploads_basedir Upload base directory.
+	 * @param string $uploads_baseurl Upload base URL.
+	 * @param string $local_artifact_key Relative artifact key.
+	 * @return array
+	 */
+	private static function storage_context( $uploads_basedir, $uploads_baseurl, $local_artifact_key ) {
+		if ( ! function_exists( 'has_action' ) || ! has_action( 'sm:sync::syncFile' ) ) {
+			return self::local_storage_context( $uploads_baseurl );
+		}
+
+		try {
+			$stateless = ud_get_stateless_media();
+		} catch ( \Throwable $exception ) {
+			return array();
+		}
+
+		if (
+			! is_object( $stateless )
+			|| ! is_callable( array( $stateless, 'get_client' ) )
+			|| ! is_callable( array( $stateless, 'get_gs_host' ) )
+		) {
+			return array();
+		}
+
+		$client = $stateless->get_client();
+		$host   = esc_url_raw( untrailingslashit( $stateless->get_gs_host() ) );
+
+		if (
+			! is_object( $client )
+			|| ! is_callable( array( $client, 'media_exists' ) )
+			|| ! $host
+			|| 'https' !== strtolower( (string) parse_url( $host, PHP_URL_SCHEME ) )
+		) {
+			return array();
+		}
+
+		$object_name = self::stateless_object_name( $uploads_basedir, $local_artifact_key );
+
+		if ( ! $object_name ) {
+			$probe       = 'filetoweb-storage-root-probe';
+			$resolved    = trim( (string) apply_filters( 'wp_stateless_file_name', $probe, true, '', '' ), '/' );
+			$root        = '.' === dirname( $resolved ) ? '' : trim( dirname( $resolved ), '/' );
+			$object_name = ltrim( ( $root ? $root . '/' : '' ) . ltrim( $local_artifact_key, '/' ), '/' );
+		}
+
+		$local_artifact_key = ltrim( (string) $local_artifact_key, '/' );
+		if ( ! $object_name || substr( $object_name, -strlen( $local_artifact_key ) ) !== $local_artifact_key ) {
+			return array();
+		}
+
+		return array(
+			'stateless'     => true,
+			'object_prefix' => substr( $object_name, 0, -strlen( $local_artifact_key ) ),
+			'public_baseurl' => $host,
+			'client'        => $client,
+		);
+	}
+
+	/**
+	 * Build the standard local WordPress storage context.
+	 *
+	 * @param string $uploads_baseurl Upload base URL.
+	 * @return array
+	 */
+	private static function local_storage_context( $uploads_baseurl ) {
+		return array(
+			'stateless'     => false,
+			'object_prefix' => '',
+			'public_baseurl' => untrailingslashit( $uploads_baseurl ),
+			'client'        => null,
+		);
+	}
+
+	/**
+	 * Map a WordPress-local key to its durable storage key.
+	 *
+	 * @param string $local_key WordPress-local artifact key.
+	 * @param array  $storage Storage context.
+	 * @return string
+	 */
+	private static function storage_artifact_key( $local_key, $storage ) {
+		$prefix = isset( $storage['object_prefix'] ) ? trim( (string) $storage['object_prefix'], '/' ) : '';
+
+		return ltrim( ( $prefix ? $prefix . '/' : '' ) . ltrim( (string) $local_key, '/' ), '/' );
+	}
+
+	/**
+	 * Map a WordPress-local key to its public storage URL.
+	 *
+	 * @param string $local_key WordPress-local artifact key or directory.
+	 * @param array  $storage Storage context.
+	 * @return string
+	 */
+	private static function storage_artifact_url( $local_key, $storage ) {
+		$key  = self::storage_artifact_key( $local_key, $storage );
+		$host = isset( $storage['public_baseurl'] ) ? untrailingslashit( $storage['public_baseurl'] ) : '';
+
+		return esc_url_raw( trailingslashit( $host ) . str_replace( '%2F', '/', rawurlencode( $key ) ) );
 	}
 
 	/**
@@ -957,69 +1354,38 @@ class Proud_HTML_Preview {
 	 * @param string $bundle_dir Bundle directory.
 	 * @param string $uploads_basedir Upload base directory.
 	 * @param string $uploads_baseurl Upload base URL.
+	 * @param array  $storage Resolved storage context.
 	 * @return bool
 	 */
-	private static function sync_bundle_with_stateless( $bundle_dir, $uploads_basedir, $uploads_baseurl ) {
+	private static function sync_bundle_with_stateless( $bundle_dir, $uploads_basedir, $uploads_baseurl, $storage = array() ) {
 		if ( ! function_exists( 'has_action' ) || ! has_action( 'sm:sync::syncFile' ) ) {
 			return true;
 		}
 
 		$files = self::files_in_directory( $bundle_dir );
-
-		foreach ( $files as $path ) {
-			$name = ltrim( str_replace( wp_normalize_path( $uploads_basedir ), '', wp_normalize_path( $path ) ), '/' );
-			self::sync_file_with_stateless( $name, $path, $uploads_basedir );
+		if ( empty( $files ) ) {
+			return false;
 		}
 
-		// True WP Stateless mode exposes uploads through an authenticated gs://
-		// stream wrapper. ProudCity serves these private objects through its
-		// preview endpoint, so an anonymous HTTP HEAD is neither necessary nor a
-		// valid durability check. Verify the objects through WordPress's storage
-		// credentials instead.
-		if ( self::is_stream_upload_directory( $uploads_basedir ) ) {
-			foreach ( $files as $path ) {
-				if ( ! is_readable( $path ) ) {
-					return false;
-				}
-			}
+		if ( empty( $storage ) ) {
+			$first_name = ltrim( str_replace( wp_normalize_path( $uploads_basedir ), '', wp_normalize_path( $files[0] ) ), '/' );
+			$storage    = self::storage_context( $uploads_basedir, $uploads_baseurl, $first_name );
+		}
 
-			return true;
+		if ( empty( $storage ) || empty( $storage['stateless'] ) ) {
+			return false;
 		}
 
 		foreach ( $files as $path ) {
-			$name     = ltrim( str_replace( wp_normalize_path( $uploads_basedir ), '', wp_normalize_path( $path ) ), '/' );
-			$url      = trailingslashit( $uploads_baseurl ) . str_replace( '%2F', '/', rawurlencode( $name ) );
-			$response = wp_safe_remote_head(
-				$url,
-				array(
-					'timeout'            => 10,
-					'redirection'        => 0,
-					'reject_unsafe_urls' => true,
-				)
-			);
+			$name        = ltrim( str_replace( wp_normalize_path( $uploads_basedir ), '', wp_normalize_path( $path ) ), '/' );
+			$object_name = self::storage_artifact_key( $name, $storage );
 
-			if ( is_wp_error( $response ) ) {
-				return false;
-			}
-
-			$code = absint( wp_remote_retrieve_response_code( $response ) );
-			if ( $code < 200 || $code >= 300 ) {
+			if ( ! self::sync_file_with_stateless( $name, $path, $object_name, $storage['client'] ) ) {
 				return false;
 			}
 		}
 
 		return true;
-	}
-
-	/**
-	 * Whether WordPress uploads use an authenticated stream wrapper.
-	 *
-	 * @param string $uploads_basedir Upload base directory.
-	 * @return bool
-	 */
-	private static function is_stream_upload_directory( $uploads_basedir ) {
-		return function_exists( 'wp_is_stream' )
-			&& wp_is_stream( wp_normalize_path( (string) $uploads_basedir ) );
 	}
 
 	/**
@@ -1033,25 +1399,21 @@ class Proud_HTML_Preview {
 	 *
 	 * @param string $name Relative artifact name below the uploads directory.
 	 * @param string $path Absolute artifact path.
-	 * @param string $uploads_basedir WordPress uploads base directory.
+	 * @param string $object_name Exact bucket-relative object name.
+	 * @param object $client WP Stateless GCS client.
+	 * @return bool
 	 */
-	private static function sync_file_with_stateless( $name, $path, $uploads_basedir ) {
+	private static function sync_file_with_stateless( $name, $path, $object_name, $client ) {
 		$args = array(
 			'ephemeral'      => false,
+			'use_root'      => true,
 			'source'         => 'filetoweb-integration',
 			'source_version' => defined( 'FILETOWEB_INTEGRATION_VERSION' ) ? FILETOWEB_INTEGRATION_VERSION : '',
 		);
 
-		$object_name = self::stateless_object_name( $uploads_basedir, $name );
-
-		if ( ! $object_name ) {
-			do_action( 'sm:sync::syncFile', $name, $path, 2, $args );
-			return;
-		}
-
 		$marker = 'filetoweb-preserve-object-name';
-		$filter = function ( $filtered_name, $name_with_root ) use ( $marker, $object_name ) {
-			return $marker === $name_with_root ? $object_name : $filtered_name;
+		$filter = function ( $filtered_name, $use_root ) use ( $marker, $object_name ) {
+			return $marker === $use_root || true === $use_root ? $object_name : $filtered_name;
 		};
 
 		$args['name_with_root'] = $marker;
@@ -1062,6 +1424,14 @@ class Proud_HTML_Preview {
 		} finally {
 			remove_filter( 'wp_stateless_file_name', $filter, PHP_INT_MAX );
 		}
+
+		if ( ! is_object( $client ) || ! is_callable( array( $client, 'media_exists' ) ) ) {
+			return false;
+		}
+
+		$remote = $client->media_exists( $object_name );
+
+		return ! is_wp_error( $remote ) && (bool) $remote;
 	}
 
 	/**
@@ -1195,6 +1565,7 @@ class Proud_HTML_Preview {
 	 */
 	private static function record_matches( $record, $source_url, $fingerprint, $artifact_key ) {
 		return is_array( $record )
+			&& self::SCHEMA_VERSION <= (int) ( isset( $record['version'] ) ? $record['version'] : 0 )
 			&& $source_url === ( isset( $record['source_url'] ) ? $record['source_url'] : '' )
 			&& $fingerprint === ( isset( $record['source_fingerprint'] ) ? $record['source_fingerprint'] : '' )
 			&& $artifact_key === ( isset( $record['artifact_key'] ) ? $record['artifact_key'] : '' )

@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.45
+Stable tag: 0.1.46
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -62,7 +62,7 @@ Yes. Use **Show original PDF publicly** in the FileToWeb panel for a Proud Docum
 
 = What happens if the plugin is deactivated, disabled, or uninstalled? =
 
-On ProudCity releases that support the provider-neutral preview contract, deactivation stops sync and polling but preserves completed Proud Document and Meeting HTML previews. Explicitly turning off public replacement disables the FileToWeb provider and restores the original PDF preview. Uninstalling removes FileToWeb preview records and artifacts; supported ProudCity core releases retry remote WP Stateless deletion until storage confirms removal. Generic links in arbitrary page and widget content require the active plugin.
+On ProudCity releases that support the provider-neutral preview contract, deactivation stops sync and polling but preserves completed Proud Document and Meeting HTML previews. Explicitly turning off public replacement disables the FileToWeb provider and restores the original PDF preview. Uninstalling queues exact tenant-prefixed artifacts for verified deletion. Legacy rootless object identities remain in ProudCity's `proud_html_preview_legacy_artifacts` registry so they can be removed safely after every tenant has migrated. Generic links in arbitrary page and widget content require the active plugin.
 
 = Where is the API key stored? =
 
@@ -81,6 +81,13 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.46 =
+
+* Uses tenant-prefixed GCS URLs in ProudCity preview manifests and generated HTML assets.
+* Preserves complete nested FileToWeb paths while applying WP Stateless's tenant root, preventing cross-site object-name collisions.
+* Verifies preview publication directly through authenticated GCS storage instead of a randomly selected WordPress pod.
+* Recovers existing preview bundles from GCS and republishes them with corrected URLs without reconverting PDFs or consuming FileToWeb credits, while retaining legacy shared-object identities for deferred cleanup after all tenants migrate.
 
 = 0.1.45 =
 

@@ -14,7 +14,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
 - Ready FileToWeb output is published as a sanitized, fingerprinted bundle under WordPress uploads during sync/poll/admin actions, not during citizen page loads.
 - True WP Stateless installations preserve the bundle's complete nested Google Cloud Storage object paths when making preview artifacts public.
-- Each completed bundle publishes a provider-neutral `_proud_html_preview` record with a complete artifact manifest that updated ProudCity core/theme releases can serve after this plugin is deactivated and clean up after uninstall.
+- Each completed bundle publishes a provider-neutral `_proud_html_preview` record with a complete artifact manifest that updated ProudCity core/theme releases can serve after this plugin is deactivated and clean up after uninstall. On WP Stateless sites, bundle paths and generated asset URLs use the exact tenant-prefixed GCS namespace and are verified directly through authenticated storage.
 - Public front-end PDF links are replaced with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.
 - ProudCity Meeting preview iframes can show the WordPress-local HTML copy while keeping Download buttons and literal material links pointed at the original PDF.
 - Add-on plugins can override the ready public replacement URL through `filetoweb_integration_ready_replacement_url`.
@@ -57,7 +57,7 @@ The original WordPress file remains intact. Public rendering does not make a liv
 
 For one-item recovery, use **Show original PDF publicly** in that source's FileToWeb panel. The active public preview record is retained privately and refreshed by later syncs, but WordPress keeps using the PDF until an editor chooses **Restore HTML preview**. Restoration fails closed if the local HTML does not match the current source fingerprint. Because the pause belongs to the source attachment, reusing the same Media PDF in Documents or Meetings pauses it everywhere.
 
-On ProudCity releases that support `_proud_html_preview`, completed Proud Document and Meeting preview bundles remain available after plugin deactivation. Turning off **Replace public PDF links with generated HTML** explicitly disables the FileToWeb preview provider and restores PDF previews. Uninstalling removes FileToWeb preview records and artifacts; supported ProudCity core releases retain a provider-neutral queue until remote WP Stateless deletion is verified. Generic links in arbitrary page/widget content still require the active plugin because those replacements are performed at render time.
+On ProudCity releases that support `_proud_html_preview`, completed Proud Document and Meeting preview bundles remain available after plugin deactivation. Turning off **Replace public PDF links with generated HTML** explicitly disables the FileToWeb preview provider and restores PDF previews. Uninstalling queues exact tenant-prefixed artifacts for verified deletion. Legacy rootless object identities remain in ProudCity's `proud_html_preview_legacy_artifacts` registry so they can be removed safely after every tenant has migrated. Generic links in arbitrary page/widget content still require the active plugin because those replacements are performed at render time.
 
 ## Security Notes
 

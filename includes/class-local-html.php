@@ -109,7 +109,9 @@ class Local_HTML {
 
 		if ( ! $force_latest && self::has_current_local_html( $post_id, $viewer_url, $fingerprint ) ) {
 			$preview_record  = Proud_HTML_Preview::record_for_post( $post_id );
-			$needs_migration = ! $preview_record || empty( $preview_record['artifacts'] );
+			$needs_migration = ! $preview_record
+				|| empty( $preview_record['artifacts'] )
+				|| Proud_HTML_Preview::SCHEMA_VERSION > (int) ( isset( $preview_record['version'] ) ? $preview_record['version'] : 0 );
 
 			if ( get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true ) && $needs_migration ) {
 				if ( ! Proud_HTML_Preview::migrate_existing_post( $post_id ) ) {

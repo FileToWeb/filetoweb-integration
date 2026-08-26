@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.46
+
+- Publish preview manifests and generated HTML asset references with the exact tenant-prefixed GCS object URLs used by ProudCity's WP Stateless configuration.
+- Preserve complete nested FileToWeb bundle paths while enabling WP Stateless root handling, preventing preview bundles from different tenants from sharing object names.
+- Verify every uploaded preview artifact through the authenticated WP Stateless GCS client instead of sending a public request to a randomly selected WordPress pod.
+- Recover schema-v1 preview bundles from their intact GCS objects and republish them under the corrected namespace without uploading or reconverting the source PDF, while retaining legacy shared-object identities for deferred fleet-wide cleanup.
+
 ## 0.1.45
 
 - Make an explicit **Refresh embedded preview** request fetch the latest published FileToWeb HTML even when the original PDF and viewer URL are unchanged.

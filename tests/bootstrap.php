@@ -16,6 +16,54 @@ if ( ! class_exists( 'WP_Widget' ) ) {
 	}
 }
 
+if ( ! class_exists( 'FtwTestStatelessClient' ) ) {
+	class FtwTestStatelessClient {
+		public $exists = true;
+		public $checked = array();
+		public $objects = array();
+
+		public function media_exists( $path ) {
+			$this->checked[] = $path;
+
+			return $this->exists ? (object) array( 'id' => $path ) : false;
+		}
+
+		public function get_media( $path, $return_code = false, $target = '' ) {
+			unset( $return_code );
+
+			if ( ! array_key_exists( $path, $this->objects ) || ! $target ) {
+				return 404;
+			}
+
+			if ( ! is_dir( dirname( $target ) ) ) {
+				mkdir( dirname( $target ), 0777, true );
+			}
+
+			return false === file_put_contents( $target, $this->objects[ $path ] ) ? 500 : 200;
+		}
+	}
+}
+
+if ( ! class_exists( 'FtwTestStatelessBootstrap' ) ) {
+	class FtwTestStatelessBootstrap {
+		private $client;
+		private $host;
+
+		public function __construct( $client, $host = 'https://storage.googleapis.com/proudcity' ) {
+			$this->client = $client;
+			$this->host   = $host;
+		}
+
+		public function get_client() {
+			return $this->client;
+		}
+
+		public function get_gs_host() {
+			return $this->host;
+		}
+	}
+}
+
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/proud-core-stubs.php';
 

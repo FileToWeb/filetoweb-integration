@@ -56,6 +56,8 @@ class UninstallTest extends TestCase {
 			}
 		);
 		Functions\when( 'absint' )->alias( function ( $value ) { return abs( intval( $value ) ); } );
+		Functions\when( 'esc_url_raw' )->returnArg();
+		Functions\expect( 'do_action' )->never();
 			Functions\when( 'wp_clear_scheduled_hook' )->alias(
 				function ( $hook ) use ( &$cleared_hooks ) {
 					$cleared_hooks[] = $hook;
@@ -89,10 +91,21 @@ class UninstallTest extends TestCase {
 						'meta_id'    => 17,
 						'meta_value' => serialize(
 							array(
+								'version'      => 2,
 								'provider'     => 'filetoweb',
-								'artifact_key' => 'filetoweb-integration/previews/1/fp/index.html',
-								'artifact_url' => 'https://city.example/wp-content/uploads/filetoweb-integration/previews/1/fp/index.html',
+								'artifact_key' => 'oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/index.html',
+								'artifact_url' => 'https://storage.googleapis.com/proudcity/oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/index.html',
 								'artifacts'    => array(
+									array(
+										'artifact_key' => 'oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/assets/image.png',
+										'artifact_url' => 'https://storage.googleapis.com/proudcity/oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/assets/image.png',
+									),
+									array(
+										'artifact_key' => 'oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/index.html',
+										'artifact_url' => 'https://storage.googleapis.com/proudcity/oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/index.html',
+									),
+								),
+								'legacy_artifacts' => array(
 									array(
 										'artifact_key' => 'filetoweb-integration/previews/1/fp/assets/image.png',
 										'artifact_url' => 'https://city.example/wp-content/uploads/filetoweb-integration/previews/1/fp/assets/image.png',
@@ -140,6 +153,7 @@ class UninstallTest extends TestCase {
 			$this->assertContains( Document_State::META_ERROR_REFERENCE, $GLOBALS['wpdb']->deleted_meta_keys );
 			$this->assertContains( Document_State::META_ERROR_RETRYABLE, $GLOBALS['wpdb']->deleted_meta_keys );
 			$this->assertContains( Document_State::META_LAST_TRIGGER, $GLOBALS['wpdb']->deleted_meta_keys );
+			$this->assertContains( Proud_HTML_Preview::META_STORAGE_SCHEMA, $GLOBALS['wpdb']->deleted_meta_keys );
 			$this->assertContains( 'filetoweb_integration_poll_schedule_version', $deleted_options );
 			$this->assertContains( 'filetoweb_integration_poll_queue_cursor', $deleted_options );
 			$this->assertContains( 'filetoweb_integration_post_recovery_cursor', $deleted_options );
@@ -147,7 +161,15 @@ class UninstallTest extends TestCase {
 			$this->assertContains( PDF_To_Page::OPTION_RECOVERY_CURSOR, $deleted_options );
 			$this->assertSame( array( 17 ), $GLOBALS['wpdb']->deleted_meta_ids );
 			$this->assertCount( 2, $GLOBALS['filetoweb_test_cleanup_queue'] );
-			$this->assertSame( 'filetoweb-integration/previews/1/fp/assets/image.png', $GLOBALS['filetoweb_test_cleanup_queue'][0][1] );
+			$this->assertSame( 'oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/assets/image.png', $GLOBALS['filetoweb_test_cleanup_queue'][0][1] );
+			$this->assertArrayHasKey( 'proud_html_preview_legacy_artifacts', $updated_options );
+			$this->assertSame(
+				array(
+					'filetoweb-integration/previews/1/fp/assets/image.png',
+					'filetoweb-integration/previews/1/fp/index.html',
+				),
+				array_column( $updated_options['proud_html_preview_legacy_artifacts'], 'artifact_key' )
+			);
 			$this->assertSame( array( 'another-provider' => true ), $updated_options[ Proud_HTML_Preview::OPTION_PROVIDERS ] );
 			$this->assertContains( 'filetoweb_integration_poll_pending', $cleared_hooks );
 			$this->assertContains( 'filetoweb_integration_process_bulk_queue', $cleared_hooks );
