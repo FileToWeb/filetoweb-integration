@@ -39,7 +39,7 @@ class Proud_HTML_Preview {
 	 */
 	public static function init() {
 		add_action( 'update_option_' . Settings::OPTION_SETTINGS, array( __CLASS__, 'settings_updated' ), 10, 3 );
-		add_action( 'init', array( __CLASS__, 'schedule_migration' ), 20 );
+		add_action( 'init', array( __CLASS__, 'disable_automatic_migration' ), 1 );
 		add_action( self::MIGRATION_HOOK, array( __CLASS__, 'migrate_legacy_batch' ) );
 	}
 
@@ -48,7 +48,7 @@ class Proud_HTML_Preview {
 	 */
 	public static function activate() {
 		self::ensure_provider_state();
-		self::schedule_migration();
+		self::disable_automatic_migration( true );
 	}
 
 	/**
@@ -878,72 +878,36 @@ class Proud_HTML_Preview {
 	}
 
 	/**
-	 * Schedule bounded migration for legacy and pre-storage-schema previews.
+	 * Backward-compatible entry point that now disables automatic migration.
+	 *
+	 * Automatic fleet migration was removed in 0.1.48 after its database query
+	 * caused production lock contention. Existing previews remain available for
+	 * explicit, per-document refresh without scanning wp_postmeta.
 	 */
 	public static function schedule_migration() {
-		if ( self::MIGRATION_VERSION === (string) get_option( self::OPTION_MIGRATION_VERSION, '' ) ) {
-			return;
-		}
-
-		if ( ! wp_next_scheduled( self::MIGRATION_HOOK ) ) {
-			wp_schedule_single_event( time() + 15, self::MIGRATION_HOOK );
-		}
+		self::disable_automatic_migration();
 	}
 
 	/**
-	 * Migrate a bounded set of existing previews without FileToWeb API work.
+	 * Make any migration event left by 0.1.46 or 0.1.47 harmless.
 	 */
 	public static function migrate_legacy_batch() {
-		$post_ids = get_posts(
-			array(
-				'post_type'      => array( 'attachment', 'document' ),
-				'post_status'    => 'any',
-				'posts_per_page' => 10,
-				'fields'         => 'ids',
-				'meta_query'     => array(
-					array(
-						'relation' => 'OR',
-						array(
-							'key'     => Document_State::META_LOCAL_HTML_PATH,
-							'compare' => 'EXISTS',
-						),
-						array(
-							'key'     => self::META_KEY,
-							'compare' => 'EXISTS',
-						),
-						array(
-							'key'     => self::META_PAUSED_RECORD,
-							'compare' => 'EXISTS',
-						),
-					),
-					array(
-						'relation' => 'OR',
-						array(
-							'key'     => self::META_STORAGE_SCHEMA,
-							'compare' => 'NOT EXISTS',
-						),
-						array(
-							'key'     => self::META_STORAGE_SCHEMA,
-							'value'   => self::MIGRATION_VERSION . '%',
-							'compare' => 'NOT LIKE',
-						),
-					),
-				),
-			)
-		);
+		self::disable_automatic_migration( true );
+	}
 
-		foreach ( $post_ids as $post_id ) {
-			if ( ! self::migrate_existing_post( $post_id ) && self::MIGRATION_VERSION !== (string) get_post_meta( $post_id, self::META_STORAGE_SCHEMA, true ) ) {
-				update_post_meta( $post_id, self::META_STORAGE_SCHEMA, self::MIGRATION_VERSION . '-needs-refresh' );
-			}
+	/**
+	 * Remove all queued automatic migration events without scanning post data.
+	 *
+	 * @param bool $force_clear Clear the hook without first reading the cron array.
+	 */
+	public static function disable_automatic_migration( $force_clear = false ) {
+		if ( $force_clear || ( function_exists( 'wp_next_scheduled' ) && wp_next_scheduled( self::MIGRATION_HOOK ) ) ) {
+			wp_clear_scheduled_hook( self::MIGRATION_HOOK );
 		}
 
-		if ( 10 === count( $post_ids ) ) {
-			wp_schedule_single_event( time() + 30, self::MIGRATION_HOOK );
-			return;
+		if ( self::MIGRATION_VERSION !== (string) get_option( self::OPTION_MIGRATION_VERSION, '' ) ) {
+			update_option( self::OPTION_MIGRATION_VERSION, self::MIGRATION_VERSION, false );
 		}
-
-		update_option( self::OPTION_MIGRATION_VERSION, self::MIGRATION_VERSION, false );
 	}
 
 	/**

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.48
+
+- Disable automatic fleet-wide preview migration and remove its `wp_postmeta` scan after a production incident on large ProudCity sites.
+- Clear migration cron events left by versions 0.1.46 and 0.1.47 during activation, initialization, deactivation, or execution of a queued event.
+- Preserve explicit per-document preview refresh without any bulk attachment query.
+
 ## 0.1.47
 
 - Mark authenticated WP Stateless/GCS preview records explicitly and resolve them before checking a ProudCity pod's ephemeral local uploads directory, while retaining the local-token path as a legacy fallback.

@@ -850,37 +850,52 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertSame( array(), $this->requests );
 	}
 
-	public function test_failed_schema_two_batch_is_marked_for_refresh_and_does_not_starve_migration(): void {
-		$bundle = 'filetoweb-integration/previews/70/missing';
-		$index  = $bundle . '/index.html';
-		$root   = 'oakwoodohio/2026/07/';
+	public function test_automatic_migration_handler_clears_legacy_event_without_querying_posts(): void {
+		$this->options[ Proud_HTML_Preview::OPTION_MIGRATION_VERSION ] = '2';
 
-		$this->meta[70] = array(
-			Proud_HTML_Preview::META_STORAGE_SCHEMA => '2',
-			Proud_HTML_Preview::META_KEY => array(
-				'version'            => 2,
-				'provider'           => 'filetoweb',
-				'source_url'         => 'https://city.example/wp-content/uploads/missing.pdf',
-				'source_fingerprint' => 'missing-fingerprint',
-				'artifact_key'       => $root . $index,
-				'artifact_url'       => 'https://storage.googleapis.com/proudcity/' . $root . $index,
-				'local_artifact_key' => $index,
-				'artifacts'          => array(
-					array(
-						'artifact_key' => $root . $index,
-						'artifact_url' => 'https://storage.googleapis.com/proudcity/' . $root . $index,
-					),
-				),
-			),
-		);
-		$this->stateless_client->exists = false;
-
-		Functions\when( 'has_action' )->justReturn( 1 );
-		Functions\when( 'get_posts' )->justReturn( array( 70 ) );
+		Functions\expect( 'get_posts' )->never();
+		Functions\expect( 'wp_schedule_single_event' )->never();
+		Functions\expect( 'wp_next_scheduled' )->never();
+		Functions\expect( 'wp_clear_scheduled_hook' )->once()->with( Proud_HTML_Preview::MIGRATION_HOOK )->andReturn( true );
 
 		Proud_HTML_Preview::migrate_legacy_batch();
 
-		$this->assertSame( Proud_HTML_Preview::MIGRATION_VERSION . '-needs-refresh', $this->meta[70][ Proud_HTML_Preview::META_STORAGE_SCHEMA ] );
+		$this->assertSame( Proud_HTML_Preview::MIGRATION_VERSION, $this->options[ Proud_HTML_Preview::OPTION_MIGRATION_VERSION ] );
+	}
+
+	public function test_init_cleanup_reads_cron_without_querying_posts_or_rewriting_current_version(): void {
+		$this->options[ Proud_HTML_Preview::OPTION_MIGRATION_VERSION ] = Proud_HTML_Preview::MIGRATION_VERSION;
+
+		Functions\expect( 'get_posts' )->never();
+		Functions\expect( 'wp_schedule_single_event' )->never();
+		Functions\expect( 'wp_next_scheduled' )->once()->with( Proud_HTML_Preview::MIGRATION_HOOK )->andReturn( false );
+		Functions\expect( 'wp_clear_scheduled_hook' )->never();
+		Functions\expect( 'update_option' )->never();
+
+		Proud_HTML_Preview::disable_automatic_migration();
+
+		$this->assertSame( Proud_HTML_Preview::MIGRATION_VERSION, $this->options[ Proud_HTML_Preview::OPTION_MIGRATION_VERSION ] );
+	}
+
+	public function test_legacy_scheduler_entrypoint_only_clears_existing_event(): void {
+		Functions\expect( 'get_posts' )->never();
+		Functions\expect( 'wp_schedule_single_event' )->never();
+		Functions\expect( 'wp_next_scheduled' )->once()->with( Proud_HTML_Preview::MIGRATION_HOOK )->andReturn( 1700000000 );
+		Functions\expect( 'wp_clear_scheduled_hook' )->once()->with( Proud_HTML_Preview::MIGRATION_HOOK )->andReturn( true );
+
+		Proud_HTML_Preview::schedule_migration();
+
+		$this->assertSame( Proud_HTML_Preview::MIGRATION_VERSION, $this->options[ Proud_HTML_Preview::OPTION_MIGRATION_VERSION ] );
+	}
+
+	public function test_activation_force_clears_migration_without_reading_cron_array(): void {
+		Functions\expect( 'get_posts' )->never();
+		Functions\expect( 'wp_schedule_single_event' )->never();
+		Functions\expect( 'wp_next_scheduled' )->never();
+		Functions\expect( 'wp_clear_scheduled_hook' )->once()->with( Proud_HTML_Preview::MIGRATION_HOOK )->andReturn( true );
+
+		Proud_HTML_Preview::activate();
+
 		$this->assertSame( Proud_HTML_Preview::MIGRATION_VERSION, $this->options[ Proud_HTML_Preview::OPTION_MIGRATION_VERSION ] );
 	}
 
@@ -962,7 +977,10 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertFalse( $this->options[ Proud_HTML_Preview::OPTION_PROVIDERS ]['filetoweb'] );
 
 		$this->options[ Proud_HTML_Preview::OPTION_PROVIDERS ]['filetoweb'] = true;
-		Functions\when( 'wp_clear_scheduled_hook' )->justReturn( true );
+		Functions\expect( 'wp_next_scheduled' )->never();
+		Functions\expect( 'wp_clear_scheduled_hook' )->once()->with( Cron::HOOK_POLL_PENDING )->andReturn( true );
+		Functions\expect( 'wp_clear_scheduled_hook' )->once()->with( Bulk_Queue::HOOK_PROCESS )->andReturn( true );
+		Functions\expect( 'wp_clear_scheduled_hook' )->once()->with( Proud_HTML_Preview::MIGRATION_HOOK )->andReturn( true );
 		Plugin::deactivate();
 
 		$this->assertTrue( $this->options[ Proud_HTML_Preview::OPTION_PROVIDERS ]['filetoweb'] );
