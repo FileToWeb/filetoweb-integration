@@ -55,6 +55,8 @@ if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) 
 
 		$version   = isset( $value['version'] ) ? (int) $value['version'] : 0;
 		$artifacts = isset( $value['artifacts'] ) && is_array( $value['artifacts'] ) ? $value['artifacts'] : array();
+		$superseded = isset( $value['superseded_artifacts'] ) && is_array( $value['superseded_artifacts'] ) ? $value['superseded_artifacts'] : array();
+		$artifacts  = array_merge( $artifacts, $superseded );
 		if ( empty( $artifacts ) && ! empty( $value['artifact_key'] ) && ! empty( $value['artifact_url'] ) ) {
 			$artifacts[] = array(
 				'artifact_key' => $value['artifact_key'],

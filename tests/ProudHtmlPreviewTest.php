@@ -262,7 +262,8 @@ class ProudHtmlPreviewTest extends TestCase {
 
 		$this->assertIsArray( $record );
 		$this->assertSame( 'filetoweb', $record['provider'] );
-		$this->assertSame( 2, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::STORAGE_BACKEND_LOCAL, $record['storage_backend'] );
 		$this->assertArrayHasKey( 'source_fingerprint_algorithm', $record );
 		$this->assertCount( 4, $record['artifacts'] );
 		$this->assertSame( $record['artifact_key'], $record['artifacts'][3]['artifact_key'] );
@@ -802,6 +803,87 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertNotEmpty( $this->meta[50][ Proud_HTML_Preview::META_KEY ]['artifacts'] );
 	}
 
+	public function test_schema_two_gcs_record_adds_storage_marker_without_resync(): void {
+		$bundle = 'filetoweb-integration/previews/60/fingerprint';
+		$asset  = $bundle . '/assets/logo.png';
+		$index  = $bundle . '/index.html';
+		$root   = 'oakwoodohio/2026/07/';
+		$synced = array();
+
+		$this->meta[60][ Proud_HTML_Preview::META_KEY ] = array(
+			'version'            => 2,
+			'provider'           => 'filetoweb',
+			'source_url'         => 'https://city.example/wp-content/uploads/current.pdf',
+			'source_fingerprint' => 'current-fingerprint',
+			'artifact_key'       => $root . $index,
+			'artifact_url'       => 'https://storage.googleapis.com/proudcity/' . $root . $index,
+			'local_artifact_key' => $index,
+			'artifacts'          => array(
+				array(
+					'artifact_key' => $root . $asset,
+					'artifact_url' => 'https://storage.googleapis.com/proudcity/' . $root . $asset,
+				),
+				array(
+					'artifact_key' => $root . $index,
+					'artifact_url' => 'https://storage.googleapis.com/proudcity/' . $root . $index,
+				),
+			),
+		);
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\when( 'do_action' )->alias(
+			function ( $hook, $name ) use ( &$synced ) {
+				if ( 'sm:sync::syncFile' === $hook ) {
+					$synced[] = $name;
+				}
+			}
+		);
+
+		$this->assertTrue( Proud_HTML_Preview::migrate_existing_post( 60 ) );
+
+		$record = $this->meta[60][ Proud_HTML_Preview::META_KEY ];
+		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::STORAGE_BACKEND_STATELESS, $record['storage_backend'] );
+		$this->assertSame( (string) Proud_HTML_Preview::SCHEMA_VERSION, $this->meta[60][ Proud_HTML_Preview::META_STORAGE_SCHEMA ] );
+		$this->assertSame( array( $root . $asset, $root . $index ), $this->stateless_client->checked );
+		$this->assertSame( array(), $synced );
+		$this->assertSame( array(), $this->requests );
+	}
+
+	public function test_failed_schema_two_batch_is_marked_for_refresh_and_does_not_starve_migration(): void {
+		$bundle = 'filetoweb-integration/previews/70/missing';
+		$index  = $bundle . '/index.html';
+		$root   = 'oakwoodohio/2026/07/';
+
+		$this->meta[70] = array(
+			Proud_HTML_Preview::META_STORAGE_SCHEMA => '2',
+			Proud_HTML_Preview::META_KEY => array(
+				'version'            => 2,
+				'provider'           => 'filetoweb',
+				'source_url'         => 'https://city.example/wp-content/uploads/missing.pdf',
+				'source_fingerprint' => 'missing-fingerprint',
+				'artifact_key'       => $root . $index,
+				'artifact_url'       => 'https://storage.googleapis.com/proudcity/' . $root . $index,
+				'local_artifact_key' => $index,
+				'artifacts'          => array(
+					array(
+						'artifact_key' => $root . $index,
+						'artifact_url' => 'https://storage.googleapis.com/proudcity/' . $root . $index,
+					),
+				),
+			),
+		);
+		$this->stateless_client->exists = false;
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\when( 'get_posts' )->justReturn( array( 70 ) );
+
+		Proud_HTML_Preview::migrate_legacy_batch();
+
+		$this->assertSame( Proud_HTML_Preview::MIGRATION_VERSION . '-needs-refresh', $this->meta[70][ Proud_HTML_Preview::META_STORAGE_SCHEMA ] );
+		$this->assertSame( Proud_HTML_Preview::MIGRATION_VERSION, $this->options[ Proud_HTML_Preview::OPTION_MIGRATION_VERSION ] );
+	}
+
 	public function test_schema_one_bundle_recovers_from_gcs_without_filetoweb_reconversion(): void {
 		$bundle = 'filetoweb-integration/previews/61/legacyfingerprint';
 		$asset  = $bundle . '/assets/logo.png';
@@ -847,10 +929,11 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertTrue( Proud_HTML_Preview::migrate_existing_post( 61 ) );
 
 		$record = $this->meta[61][ Proud_HTML_Preview::META_KEY ];
-		$this->assertSame( 2, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::STORAGE_BACKEND_STATELESS, $record['storage_backend'] );
 		$this->assertSame( $index, $record['local_artifact_key'] );
 		$this->assertSame( 'oakwoodohio/2026/08/' . $index, $record['artifact_key'] );
-		$this->assertSame( '2', $this->meta[61][ Proud_HTML_Preview::META_STORAGE_SCHEMA ] );
+		$this->assertSame( (string) Proud_HTML_Preview::SCHEMA_VERSION, $this->meta[61][ Proud_HTML_Preview::META_STORAGE_SCHEMA ] );
 		$this->assertSame( array(), $this->requests );
 		$this->assertEqualsCanonicalizing( array( $asset, $index ), $synced );
 		$this->assertEqualsCanonicalizing(

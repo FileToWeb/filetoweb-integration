@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.47
+
+- Mark authenticated WP Stateless/GCS preview records explicitly and resolve them before checking a ProudCity pod's ephemeral local uploads directory, while retaining the local-token path as a legacy fallback.
+- Upgrade verified 0.1.46 GCS records in place without downloading, resyncing, or reconverting their bundles.
+
 ## 0.1.46
 
 - Publish preview manifests and generated HTML asset references with the exact tenant-prefixed GCS object URLs used by ProudCity's WP Stateless configuration.

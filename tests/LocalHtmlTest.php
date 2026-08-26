@@ -18,6 +18,8 @@ class LocalHtmlTest extends TestCase {
 
 		$this->uploads_dir = sys_get_temp_dir() . '/ftw-local-html-' . uniqid();
 		$this->requests    = array();
+		$GLOBALS['filetoweb_test_preview_url_calls'] = array();
+		$GLOBALS['filetoweb_test_preview_urls']      = array();
 		$this->meta        = array(
 			123 => array(
 				Document_State::META_STATUS             => 'ready',
@@ -154,6 +156,7 @@ class LocalHtmlTest extends TestCase {
 
 	protected function tearDown(): void {
 		Local_HTML::clear_poll_refresh_result( 123 );
+		unset( $GLOBALS['filetoweb_test_preview_url_calls'], $GLOBALS['filetoweb_test_preview_urls'] );
 
 		if ( $this->uploads_dir && is_dir( $this->uploads_dir ) ) {
 			$this->remove_dir( $this->uploads_dir );
@@ -226,6 +229,65 @@ class LocalHtmlTest extends TestCase {
 		);
 
 		$this->assertSame( 'updated', Local_HTML::poll_refresh_result( 123 ) );
+	}
+
+	public function test_durable_preview_resolves_without_a_local_pod_copy(): void {
+		$durable_url = 'https://storage.googleapis.com/proudcity/oakwoodoh/2026/08/filetoweb-integration/previews/123/hash/index.html';
+
+		$this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ] = array(
+			'version'            => \FileToWeb\Integration\Proud_HTML_Preview::SCHEMA_VERSION,
+			'provider'           => 'filetoweb',
+			'storage_backend'    => \FileToWeb\Integration\Proud_HTML_Preview::STORAGE_BACKEND_STATELESS,
+			'source_url'         => $this->meta[123][ Document_State::META_ORIGINAL_URL ],
+			'source_fingerprint' => $this->meta[123][ Document_State::META_SOURCE_FINGERPRINT ],
+			'artifact_key'       => 'oakwoodoh/2026/08/filetoweb-integration/previews/123/hash/index.html',
+			'artifact_url'       => $durable_url,
+			'artifacts'          => array(
+				array(
+					'artifact_key' => 'oakwoodoh/2026/08/filetoweb-integration/previews/123/hash/index.html',
+					'artifact_url' => $durable_url,
+				),
+			),
+		);
+		$GLOBALS['filetoweb_test_preview_urls'][123] = $durable_url;
+
+		$this->assertFalse( Local_HTML::has_local_html( 123 ) );
+		$this->assertSame( $durable_url, Local_HTML::local_url( 123 ) );
+		$this->assertSame(
+			array(
+				array( 123, $this->meta[123][ Document_State::META_ORIGINAL_URL ] ),
+			),
+			$GLOBALS['filetoweb_test_preview_url_calls']
+		);
+	}
+
+	public function test_legacy_preview_without_a_local_copy_falls_back_to_the_pdf(): void {
+		$this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ] = array(
+			'version'            => 1,
+			'provider'           => 'filetoweb',
+			'source_url'         => $this->meta[123][ Document_State::META_ORIGINAL_URL ],
+			'source_fingerprint' => $this->meta[123][ Document_State::META_SOURCE_FINGERPRINT ],
+			'artifact_url'       => 'https://example.test/wp-content/uploads/filetoweb-integration/previews/123/hash/index.html',
+		);
+		$GLOBALS['filetoweb_test_preview_urls'][123] = $this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ]['artifact_url'];
+
+		$this->assertSame( '', Local_HTML::local_url( 123 ) );
+		$this->assertSame( array(), $GLOBALS['filetoweb_test_preview_url_calls'] );
+	}
+
+	public function test_current_local_storage_preview_without_a_local_copy_falls_back_to_the_pdf(): void {
+		$this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ] = array(
+			'version'            => \FileToWeb\Integration\Proud_HTML_Preview::SCHEMA_VERSION,
+			'provider'           => 'filetoweb',
+			'storage_backend'    => \FileToWeb\Integration\Proud_HTML_Preview::STORAGE_BACKEND_LOCAL,
+			'source_url'         => $this->meta[123][ Document_State::META_ORIGINAL_URL ],
+			'source_fingerprint' => $this->meta[123][ Document_State::META_SOURCE_FINGERPRINT ],
+			'artifact_url'       => 'https://example.test/wp-content/uploads/filetoweb-integration/previews/123/hash/index.html',
+		);
+		$GLOBALS['filetoweb_test_preview_urls'][123] = $this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ]['artifact_url'];
+
+		$this->assertSame( '', Local_HTML::local_url( 123 ) );
+		$this->assertSame( array(), $GLOBALS['filetoweb_test_preview_url_calls'] );
 	}
 
 	public function test_explicit_poll_refresh_fetches_and_publishes_editor_only_html_changes(): void {

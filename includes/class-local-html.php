@@ -178,13 +178,29 @@ class Local_HTML {
 	 * @return string
 	 */
 	public static function local_url( $post_id ) {
-		$post_id = absint( $post_id );
+		$post_id         = absint( $post_id );
+		$preview_record  = Proud_HTML_Preview::record_for_post( $post_id );
+		$has_preview_api = function_exists( '\\Proud\\Core\\proud_html_preview_url' );
+		$is_durable      = Proud_HTML_Preview::is_durable_record( $preview_record );
+
+		// A verified shared-storage preview lives outside the pod. Resolve it before
+		// looking at this pod's ephemeral uploads directory.
+		if ( $has_preview_api && $is_durable ) {
+			$source_url = get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
+			$durable_url = call_user_func( '\\Proud\\Core\\proud_html_preview_url', $post_id, $source_url );
+
+			if ( $durable_url ) {
+				return $durable_url;
+			}
+		}
 
 		if ( ! self::has_local_html( $post_id ) ) {
 			return '';
 		}
 
-		if ( function_exists( '\\Proud\\Core\\proud_html_preview_url' ) && Proud_HTML_Preview::record_for_post( $post_id ) ) {
+		// Preserve the existing local fallback for pre-marker records while their
+		// bounded background migration is still pending.
+		if ( $has_preview_api && $preview_record && ! $is_durable ) {
 			$source_url = get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
 			$durable_url = call_user_func( '\\Proud\\Core\\proud_html_preview_url', $post_id, $source_url );
 

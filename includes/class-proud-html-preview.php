@@ -19,9 +19,12 @@ class Proud_HTML_Preview {
 	const OPTION_PROVIDERS         = 'proud_html_preview_providers';
 	const OPTION_MIGRATION_VERSION = 'filetoweb_integration_preview_migration_version';
 	const PROVIDER                 = 'filetoweb';
-	const SCHEMA_VERSION           = 2;
+	const SCHEMA_VERSION           = 3;
+	const TENANT_PREFIX_SCHEMA_VERSION = 2;
 	const MIGRATION_HOOK           = 'filetoweb_integration_migrate_html_previews';
-	const MIGRATION_VERSION        = '2';
+	const MIGRATION_VERSION        = '3';
+	const STORAGE_BACKEND_LOCAL    = 'local';
+	const STORAGE_BACKEND_STATELESS = 'wp-stateless';
 	const BUNDLE_ROOT              = 'filetoweb-integration/previews';
 
 	/**
@@ -215,6 +218,7 @@ class Proud_HTML_Preview {
 		$record       = array(
 			'version'            => self::SCHEMA_VERSION,
 			'provider'           => self::PROVIDER,
+			'storage_backend'    => ! empty( $storage['stateless'] ) ? self::STORAGE_BACKEND_STATELESS : self::STORAGE_BACKEND_LOCAL,
 			'source_url'         => $source_url,
 			'source_fingerprint' => $fingerprint,
 			'source_fingerprint_algorithm' => $algorithm,
@@ -227,6 +231,10 @@ class Proud_HTML_Preview {
 		);
 		if ( $legacy_artifacts ) {
 			$record['legacy_artifacts'] = $legacy_artifacts;
+		}
+		$superseded_artifacts = self::superseded_artifacts_for_record( $current, $manifest );
+		if ( $superseded_artifacts ) {
+			$record['superseded_artifacts'] = $superseded_artifacts;
 		}
 
 		if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage ) ) {
@@ -280,6 +288,19 @@ class Proud_HTML_Preview {
 		}
 
 		return $record;
+	}
+
+	/**
+	 * Does a record point at a verified shared-storage preview?
+	 *
+	 * @param mixed $record Preview record.
+	 * @return bool
+	 */
+	public static function is_durable_record( $record ) {
+		return is_array( $record )
+			&& self::SCHEMA_VERSION <= (int) ( isset( $record['version'] ) ? $record['version'] : 0 )
+			&& self::STORAGE_BACKEND_STATELESS === ( isset( $record['storage_backend'] ) ? $record['storage_backend'] : '' )
+			&& ! empty( $record['artifact_url'] );
 	}
 
 	/**
@@ -443,9 +464,14 @@ class Proud_HTML_Preview {
 		}
 
 		if ( $record && ! empty( $record['artifacts'] ) ) {
-			if ( self::SCHEMA_VERSION <= (int) ( isset( $record['version'] ) ? $record['version'] : 0 ) ) {
+			$record_version = (int) ( isset( $record['version'] ) ? $record['version'] : 0 );
+			if ( self::SCHEMA_VERSION <= $record_version ) {
 				update_post_meta( $post_id, self::META_STORAGE_SCHEMA, (string) self::SCHEMA_VERSION );
 				return false;
+			}
+
+			if ( self::TENANT_PREFIX_SCHEMA_VERSION <= $record_version && self::migrate_storage_backend_marker( $post_id, $record ) ) {
+				return true;
 			}
 
 			return self::migrate_stateless_record( $post_id, $record );
@@ -470,7 +496,82 @@ class Proud_HTML_Preview {
 	}
 
 	/**
-	 * Rebuild a schema-v1 bundle from its intact GCS objects without reconversion.
+	 * Upgrade a verified 0.1.46 record without downloading or resyncing its bundle.
+	 *
+	 * @param int   $post_id Post ID.
+	 * @param array $record Existing schema-v2 record.
+	 * @return bool
+	 */
+	private static function migrate_storage_backend_marker( $post_id, $record ) {
+		$uploads          = wp_upload_dir();
+		$basedir          = isset( $uploads['basedir'] ) ? wp_normalize_path( $uploads['basedir'] ) : '';
+		$baseurl          = isset( $uploads['baseurl'] ) ? untrailingslashit( $uploads['baseurl'] ) : '';
+		$stored_index_key = isset( $record['local_artifact_key'] )
+			? $record['local_artifact_key']
+			: ( isset( $record['artifact_key'] ) ? $record['artifact_key'] : '' );
+		$index_key        = self::legacy_local_artifact_key( $stored_index_key );
+		$artifacts        = isset( $record['artifacts'] ) && is_array( $record['artifacts'] ) ? $record['artifacts'] : array();
+		$storage          = $basedir && $baseurl && $index_key ? self::storage_context( $basedir, $baseurl, $index_key ) : array();
+
+		if ( empty( $storage ) || empty( $artifacts ) ) {
+			return false;
+		}
+
+		$record_key    = isset( $record['artifact_key'] ) ? ltrim( wp_normalize_path( (string) $record['artifact_key'] ), '/' ) : '';
+		$record_url    = isset( $record['artifact_url'] ) ? esc_url_raw( (string) $record['artifact_url'] ) : '';
+		$record_found  = false;
+		$object_prefix = null;
+
+		foreach ( $artifacts as $artifact ) {
+			$artifact_key = isset( $artifact['artifact_key'] ) ? ltrim( wp_normalize_path( (string) $artifact['artifact_key'] ), '/' ) : '';
+			$artifact_url = isset( $artifact['artifact_url'] ) ? esc_url_raw( (string) $artifact['artifact_url'] ) : '';
+			$local_key    = self::legacy_local_artifact_key( $artifact_key );
+
+			if ( ! $local_key ) {
+				return false;
+			}
+
+			if ( ! empty( $storage['stateless'] ) ) {
+				$position       = strpos( $artifact_key, self::BUNDLE_ROOT . '/' );
+				$prefix         = false === $position ? '' : substr( $artifact_key, 0, $position );
+				$expected_url   = trailingslashit( $storage['public_baseurl'] ) . str_replace( '%2F', '/', rawurlencode( $artifact_key ) );
+				$object_prefix  = null === $object_prefix ? $prefix : $object_prefix;
+
+				if ( ! $prefix || $prefix !== $object_prefix || $expected_url !== $artifact_url ) {
+					return false;
+				}
+
+				$remote = $storage['client']->media_exists( $artifact_key );
+				if ( is_wp_error( $remote ) || ! $remote ) {
+					return false;
+				}
+			} elseif (
+				$local_key !== $artifact_key
+				|| self::storage_artifact_url( $local_key, $storage ) !== $artifact_url
+				|| ! is_readable( trailingslashit( $basedir ) . $local_key )
+			) {
+				return false;
+			}
+
+			if ( $record_key === $artifact_key && $record_url === $artifact_url ) {
+				$record_found = true;
+			}
+		}
+
+		if ( ! $record_found ) {
+			return false;
+		}
+
+		$record['version']         = self::SCHEMA_VERSION;
+		$record['storage_backend'] = ! empty( $storage['stateless'] ) ? self::STORAGE_BACKEND_STATELESS : self::STORAGE_BACKEND_LOCAL;
+		self::store_record( $post_id, $record );
+		self::clean_public_cache( $post_id );
+
+		return true;
+	}
+
+	/**
+	 * Rebuild a pre-marker bundle from its intact GCS objects without reconversion.
 	 *
 	 * @param int   $post_id Source post ID.
 	 * @param array $record Existing preview record.
@@ -503,13 +604,20 @@ class Proud_HTML_Preview {
 				return false;
 			}
 
+			$superseded_artifacts         = self::superseded_artifacts_for_record( $record, $manifest );
 			$record['version']            = self::SCHEMA_VERSION;
+			$record['storage_backend']    = self::STORAGE_BACKEND_LOCAL;
 			$record['artifact_key']       = $index_key;
 			$record['artifact_url']       = self::storage_artifact_url( $index_key, $storage );
 			$record['local_artifact_key'] = $index_key;
 			$record['artifacts']          = $manifest;
 			if ( $legacy_artifacts ) {
 				$record['legacy_artifacts'] = $legacy_artifacts;
+			}
+			if ( $superseded_artifacts ) {
+				$record['superseded_artifacts'] = $superseded_artifacts;
+			} else {
+				unset( $record['superseded_artifacts'] );
 			}
 			self::store_record( $post_id, $record );
 
@@ -615,7 +723,9 @@ class Proud_HTML_Preview {
 			return false;
 		}
 
+		$superseded_artifacts         = self::superseded_artifacts_for_record( $record, $manifest );
 		$record['version']            = self::SCHEMA_VERSION;
+		$record['storage_backend']    = self::STORAGE_BACKEND_STATELESS;
 		$record['artifact_key']       = self::storage_artifact_key( $index_key, $storage );
 		$record['artifact_url']       = self::storage_artifact_url( $index_key, $storage );
 		$record['local_artifact_key'] = $index_key;
@@ -623,6 +733,11 @@ class Proud_HTML_Preview {
 		$record['published_at']       = current_time( 'mysql', true );
 		if ( $legacy_artifacts ) {
 			$record['legacy_artifacts'] = $legacy_artifacts;
+		}
+		if ( $superseded_artifacts ) {
+			$record['superseded_artifacts'] = $superseded_artifacts;
+		} else {
+			unset( $record['superseded_artifacts'] );
 		}
 		self::store_record( $post_id, $record );
 
@@ -682,7 +797,7 @@ class Proud_HTML_Preview {
 			? $record['legacy_artifacts']
 			: array();
 
-		if ( self::SCHEMA_VERSION > (int) ( isset( $record['version'] ) ? $record['version'] : 0 ) ) {
+		if ( self::TENANT_PREFIX_SCHEMA_VERSION > (int) ( isset( $record['version'] ) ? $record['version'] : 0 ) ) {
 			$current_artifacts = isset( $record['artifacts'] ) && is_array( $record['artifacts'] )
 				? $record['artifacts']
 				: array();
@@ -712,6 +827,54 @@ class Proud_HTML_Preview {
 		}
 
 		return $legacy;
+	}
+
+	/**
+	 * Retain replaced tenant-specific artifacts until provider-neutral cleanup.
+	 *
+	 * @param array $record Previous preview record.
+	 * @param array $current_artifacts Newly published manifest.
+	 * @return array
+	 */
+	private static function superseded_artifacts_for_record( $record, $current_artifacts = array() ) {
+		if ( ! is_array( $record ) ) {
+			return array();
+		}
+
+		$artifacts = isset( $record['superseded_artifacts'] ) && is_array( $record['superseded_artifacts'] )
+			? $record['superseded_artifacts']
+			: array();
+		if ( self::TENANT_PREFIX_SCHEMA_VERSION <= (int) ( isset( $record['version'] ) ? $record['version'] : 0 ) ) {
+			$previous = isset( $record['artifacts'] ) && is_array( $record['artifacts'] ) ? $record['artifacts'] : array();
+			$artifacts = array_merge( $artifacts, $previous );
+		}
+
+		$current = array();
+		foreach ( is_array( $current_artifacts ) ? $current_artifacts : array() as $artifact ) {
+			if ( ! empty( $artifact['artifact_key'] ) && ! empty( $artifact['artifact_url'] ) ) {
+				$current[ (string) $artifact['artifact_key'] . '|' . (string) $artifact['artifact_url'] ] = true;
+			}
+		}
+
+		$superseded = array();
+		$seen       = array();
+		foreach ( $artifacts as $artifact ) {
+			$key = isset( $artifact['artifact_key'] ) ? ltrim( wp_normalize_path( (string) $artifact['artifact_key'] ), '/' ) : '';
+			$url = isset( $artifact['artifact_url'] ) ? esc_url_raw( (string) $artifact['artifact_url'] ) : '';
+			$identity = $key . '|' . $url;
+
+			if ( ! $key || ! $url || isset( $current[ $identity ] ) || isset( $seen[ $identity ] ) || false !== strpos( $key, '../' ) || false !== strpos( $key, '/..' ) ) {
+				continue;
+			}
+
+			$superseded[]     = array(
+				'artifact_key' => $key,
+				'artifact_url' => $url,
+			);
+			$seen[ $identity ] = true;
+		}
+
+		return $superseded;
 	}
 
 	/**
@@ -770,7 +933,7 @@ class Proud_HTML_Preview {
 		);
 
 		foreach ( $post_ids as $post_id ) {
-			if ( ! self::migrate_existing_post( $post_id ) && ! get_post_meta( $post_id, self::META_STORAGE_SCHEMA, true ) ) {
+			if ( ! self::migrate_existing_post( $post_id ) && self::MIGRATION_VERSION !== (string) get_post_meta( $post_id, self::META_STORAGE_SCHEMA, true ) ) {
 				update_post_meta( $post_id, self::META_STORAGE_SCHEMA, self::MIGRATION_VERSION . '-needs-refresh' );
 			}
 		}

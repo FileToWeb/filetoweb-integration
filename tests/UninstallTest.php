@@ -105,6 +105,12 @@ class UninstallTest extends TestCase {
 										'artifact_url' => 'https://storage.googleapis.com/proudcity/oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/index.html',
 									),
 								),
+								'superseded_artifacts' => array(
+									array(
+										'artifact_key' => 'oakwoodoh/2026/07/filetoweb-integration/previews/1/fp/index.html',
+										'artifact_url' => 'https://storage.googleapis.com/proudcity/oakwoodoh/2026/07/filetoweb-integration/previews/1/fp/index.html',
+									),
+								),
 								'legacy_artifacts' => array(
 									array(
 										'artifact_key' => 'filetoweb-integration/previews/1/fp/assets/image.png',
@@ -160,8 +166,9 @@ class UninstallTest extends TestCase {
 			$this->assertContains( 'filetoweb_integration_retry_recovery_cursor', $deleted_options );
 			$this->assertContains( PDF_To_Page::OPTION_RECOVERY_CURSOR, $deleted_options );
 			$this->assertSame( array( 17 ), $GLOBALS['wpdb']->deleted_meta_ids );
-			$this->assertCount( 2, $GLOBALS['filetoweb_test_cleanup_queue'] );
+			$this->assertCount( 3, $GLOBALS['filetoweb_test_cleanup_queue'] );
 			$this->assertSame( 'oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/assets/image.png', $GLOBALS['filetoweb_test_cleanup_queue'][0][1] );
+			$this->assertSame( 'oakwoodoh/2026/07/filetoweb-integration/previews/1/fp/index.html', $GLOBALS['filetoweb_test_cleanup_queue'][2][1] );
 			$this->assertArrayHasKey( 'proud_html_preview_legacy_artifacts', $updated_options );
 			$this->assertSame(
 				array(

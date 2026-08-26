@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.46
+Stable tag: 0.1.47
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -81,6 +81,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.47 =
+
+* Resolves explicitly verified GCS previews before checking a ProudCity pod's ephemeral local uploads directory, so every replica serves the same ready HTML preview.
+* Upgrades verified 0.1.46 GCS records in place without resyncing or reconverting their bundles.
 
 = 0.1.46 =
 
