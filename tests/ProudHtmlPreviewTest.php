@@ -262,7 +262,8 @@ class ProudHtmlPreviewTest extends TestCase {
 
 		$this->assertIsArray( $record );
 		$this->assertSame( 'filetoweb', $record['provider'] );
-		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::CORE_SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record[ Proud_HTML_Preview::RECORD_STORAGE_SCHEMA ] );
 		$this->assertSame( Proud_HTML_Preview::STORAGE_BACKEND_LOCAL, $record['storage_backend'] );
 		$this->assertArrayHasKey( 'source_fingerprint_algorithm', $record );
 		$this->assertCount( 4, $record['artifacts'] );
@@ -651,6 +652,57 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertStringEndsWith( $key, $somerville['object_prefix'] . $key );
 	}
 
+	public function test_proudcity_trust_filter_accepts_only_current_tenant_gcs_artifacts(): void {
+		Functions\when( 'has_action' )->justReturn( 1 );
+
+		$base_urls = array( 'https://city.example/wp-content/uploads' );
+		$key       = 'oakwoodohio/2025/12/filetoweb-integration/previews/74/fingerprint/index.html';
+		$url       = 'https://storage.googleapis.com/proudcity/' . $key;
+
+		$this->assertSame(
+			array(
+				'https://city.example/wp-content/uploads',
+				'https://storage.googleapis.com/proudcity',
+			),
+			Proud_HTML_Preview::trusted_storage_base_urls( $base_urls, $url, $key )
+		);
+
+		$other_key = 'delawarecountyin/2025/12/filetoweb-integration/previews/74/fingerprint/index.html';
+		$this->assertSame(
+			$base_urls,
+			Proud_HTML_Preview::trusted_storage_base_urls(
+				$base_urls,
+				'https://storage.googleapis.com/proudcity/' . $other_key,
+				$other_key
+			)
+		);
+
+		$this->assertSame(
+			$base_urls,
+			Proud_HTML_Preview::trusted_storage_base_urls(
+				$base_urls,
+				'https://storage.googleapis.com/another-bucket/' . $key,
+				$key
+			)
+		);
+		$this->assertSame(
+			$base_urls,
+			Proud_HTML_Preview::trusted_storage_base_urls(
+				$base_urls,
+				'https://storage.googleapis.com/proudcity/filetoweb-integration/previews/74/fingerprint/index.html',
+				'filetoweb-integration/previews/74/fingerprint/index.html'
+			)
+		);
+		$this->assertSame(
+			$base_urls,
+			Proud_HTML_Preview::trusted_storage_base_urls(
+				$base_urls,
+				'https://storage.googleapis.com/proudcity/oakwoodohiofiletoweb-integration/previews/74/fingerprint/index.html',
+				'oakwoodohiofiletoweb-integration/previews/74/fingerprint/index.html'
+			)
+		);
+	}
+
 	public function test_true_stateless_upload_directory_preserves_its_exact_gcs_root(): void {
 		Functions\when( 'has_action' )->justReturn( 1 );
 
@@ -842,7 +894,8 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertTrue( Proud_HTML_Preview::migrate_existing_post( 60 ) );
 
 		$record = $this->meta[60][ Proud_HTML_Preview::META_KEY ];
-		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::CORE_SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record[ Proud_HTML_Preview::RECORD_STORAGE_SCHEMA ] );
 		$this->assertSame( Proud_HTML_Preview::STORAGE_BACKEND_STATELESS, $record['storage_backend'] );
 		$this->assertSame( (string) Proud_HTML_Preview::SCHEMA_VERSION, $this->meta[60][ Proud_HTML_Preview::META_STORAGE_SCHEMA ] );
 		$this->assertSame( array( $root . $asset, $root . $index ), $this->stateless_client->checked );
@@ -944,7 +997,8 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertTrue( Proud_HTML_Preview::migrate_existing_post( 61 ) );
 
 		$record = $this->meta[61][ Proud_HTML_Preview::META_KEY ];
-		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::CORE_SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record[ Proud_HTML_Preview::RECORD_STORAGE_SCHEMA ] );
 		$this->assertSame( Proud_HTML_Preview::STORAGE_BACKEND_STATELESS, $record['storage_backend'] );
 		$this->assertSame( $index, $record['local_artifact_key'] );
 		$this->assertSame( 'oakwoodohio/2026/08/' . $index, $record['artifact_key'] );
@@ -1000,6 +1054,34 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertSame( 'ready', $this->meta[99][ Document_State::META_STATUS ] );
 		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_KEY, $this->meta[99] );
 		$this->assertSame( 'attachment-token', $this->meta[44][ Proud_HTML_Preview::META_KEY ]['token'] );
+	}
+
+	public function test_legacy_v3_record_is_made_core_compatible_per_post(): void {
+		$this->meta[62][ Proud_HTML_Preview::META_KEY ] = array(
+			'version'            => 3,
+			'provider'           => 'filetoweb',
+			'storage_backend'    => Proud_HTML_Preview::STORAGE_BACKEND_STATELESS,
+			'source_url'         => 'https://city.example/wp-content/uploads/current.pdf',
+			'source_fingerprint' => 'current-fingerprint',
+			'artifact_key'       => 'oakwoodohio/2026/08/filetoweb-integration/previews/62/fingerprint/index.html',
+			'artifact_url'       => 'https://storage.googleapis.com/proudcity/oakwoodohio/2026/08/filetoweb-integration/previews/62/fingerprint/index.html',
+			'artifacts'          => array(
+				array(
+					'artifact_key' => 'oakwoodohio/2026/08/filetoweb-integration/previews/62/fingerprint/index.html',
+					'artifact_url' => 'https://storage.googleapis.com/proudcity/oakwoodohio/2026/08/filetoweb-integration/previews/62/fingerprint/index.html',
+				),
+			),
+			'token'              => 'legacy-v3-token',
+			'published_at'       => '2026-08-21 11:52:50',
+		);
+
+		$record = Proud_HTML_Preview::prepare_public_record( 62 );
+
+		$this->assertSame( Proud_HTML_Preview::CORE_SCHEMA_VERSION, $record['version'] );
+		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $record[ Proud_HTML_Preview::RECORD_STORAGE_SCHEMA ] );
+		$this->assertSame( $record, $this->meta[62][ Proud_HTML_Preview::META_KEY ] );
+		$this->assertSame( (string) Proud_HTML_Preview::SCHEMA_VERSION, $this->meta[62][ Proud_HTML_Preview::META_STORAGE_SCHEMA ] );
+		$this->assertTrue( Proud_HTML_Preview::is_durable_record( $record ) );
 	}
 
 	public function test_meeting_materials_publish_independent_records(): void {

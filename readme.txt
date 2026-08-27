@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.48
+Stable tag: 0.1.49
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -62,7 +62,7 @@ Yes. Use **Show original PDF publicly** in the FileToWeb panel for a Proud Docum
 
 = What happens if the plugin is deactivated, disabled, or uninstalled? =
 
-On ProudCity releases that support the provider-neutral preview contract, deactivation stops sync and polling but preserves completed Proud Document and Meeting HTML previews. Explicitly turning off public replacement disables the FileToWeb provider and restores the original PDF preview. Uninstalling queues exact tenant-prefixed artifacts for verified deletion. Legacy rootless object identities remain in ProudCity's `proud_html_preview_legacy_artifacts` registry so they can be removed safely after every tenant has migrated. Generic links in arbitrary page and widget content require the active plugin.
+Deactivation stops sync and polling while preserving completed preview records and GCS bundles; public pages fall back to their original PDFs until FileToWeb is active again. Explicitly turning off public replacement also restores the original PDF preview. Uninstalling queues exact tenant-prefixed artifacts for verified deletion and preserves any rejected cleanup identities for deferred ProudCity cleanup. Legacy rootless object identities remain in ProudCity's `proud_html_preview_legacy_artifacts` registry so they can be removed safely after every tenant has migrated. Generic links in arbitrary page and widget content require the active plugin.
 
 = Where is the API key stored? =
 
@@ -81,6 +81,13 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.49 =
+
+* Publishes ProudCity preview records with the core schema version while tracking FileToWeb's storage schema separately.
+* Allows ProudCity to recover an exact current-tenant preview bundle from the configured WP Stateless GCS bucket after a pod restart.
+* Upgrades affected preview records only when that document is accessed or explicitly refreshed, without any fleet-wide database scan.
+* Resolves attachment-backed Proud Documents through their attachment-owned preview record and preserves rejected uninstall cleanup identities for deferred cleanup.
 
 = 0.1.48 =
 

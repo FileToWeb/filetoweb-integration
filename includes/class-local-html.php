@@ -109,9 +109,7 @@ class Local_HTML {
 
 		if ( ! $force_latest && self::has_current_local_html( $post_id, $viewer_url, $fingerprint ) ) {
 			$preview_record  = Proud_HTML_Preview::record_for_post( $post_id );
-			$needs_migration = ! $preview_record
-				|| empty( $preview_record['artifacts'] )
-				|| Proud_HTML_Preview::SCHEMA_VERSION > (int) ( isset( $preview_record['version'] ) ? $preview_record['version'] : 0 );
+			$needs_migration = Proud_HTML_Preview::needs_storage_migration( $preview_record );
 
 			if ( get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true ) && $needs_migration ) {
 				if ( ! Proud_HTML_Preview::migrate_existing_post( $post_id ) ) {
@@ -175,11 +173,14 @@ class Local_HTML {
 	 * Return the local public HTML URL for a source post.
 	 *
 	 * @param int $post_id Post ID.
+	 * @param bool $prepare_record Whether a specifically targeted record may be normalized.
 	 * @return string
 	 */
-	public static function local_url( $post_id ) {
+	public static function local_url( $post_id, $prepare_record = true ) {
 		$post_id         = absint( $post_id );
-		$preview_record  = Proud_HTML_Preview::record_for_post( $post_id );
+		$preview_record  = $prepare_record
+			? Proud_HTML_Preview::prepare_public_record( $post_id )
+			: Proud_HTML_Preview::record_for_post( $post_id );
 		$has_preview_api = function_exists( '\\Proud\\Core\\proud_html_preview_url' );
 		$is_durable      = Proud_HTML_Preview::is_durable_record( $preview_record );
 
@@ -228,9 +229,10 @@ class Local_HTML {
 	 * Return the preferred citizen-facing URL for a source.
 	 *
 	 * @param int $post_id Post ID.
+	 * @param bool $prepare_record Whether a specifically targeted record may be normalized.
 	 * @return string
 	 */
-	public static function public_url_for_post( $post_id ) {
+	public static function public_url_for_post( $post_id, $prepare_record = true ) {
 		$owner_post_id = Source_Resolver::preview_owner_post_id( $post_id );
 
 		if ( Proud_HTML_Preview::is_public_paused( $owner_post_id ) ) {
@@ -243,7 +245,7 @@ class Local_HTML {
 			return $page_url;
 		}
 
-		return self::local_url( $post_id );
+		return self::local_url( $owner_post_id, $prepare_record );
 	}
 
 	/**

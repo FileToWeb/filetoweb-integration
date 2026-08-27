@@ -424,9 +424,10 @@ class Link_Rewriter {
 	 * @param int    $post_id Source post ID.
 	 * @param string $context Replacement context.
 	 * @param string $source_url Original source URL.
+	 * @param bool   $prepare_record Whether a specifically targeted record may be normalized.
 	 * @return string
 	 */
-	private static function ready_replacement_url( $html_url, $post_id, $context, $source_url = '' ) {
+	private static function ready_replacement_url( $html_url, $post_id, $context, $source_url = '', $prepare_record = true ) {
 		$html_url = Security::sanitize_filetoweb_url( $html_url );
 		$owner_id = Source_Resolver::preview_owner_post_id( $post_id );
 
@@ -446,7 +447,7 @@ class Link_Rewriter {
 		 * @param string $context Replacement context.
 		 * @param string $source_url Original public source URL.
 		 */
-		$local_url   = Local_HTML::public_url_for_post( $post_id );
+		$local_url   = Local_HTML::public_url_for_post( $post_id, $prepare_record );
 		$replacement = apply_filters( 'filetoweb_integration_ready_replacement_url', $local_url, absint( $post_id ), $context, $source_url );
 
 		return is_string( $replacement ) && $replacement ? esc_url_raw( $replacement ) : '';
@@ -680,7 +681,7 @@ class Link_Rewriter {
 				$key = Security::normalize_public_url_key( $url );
 
 				if ( $key && ! isset( self::$ready_url_map[ $key ] ) ) {
-						self::$ready_url_map[ $key ] = self::ready_replacement_url( $html_url, $post_id, 'url_map', $url );
+						self::$ready_url_map[ $key ] = self::ready_replacement_url( $html_url, $post_id, 'url_map', $url, false );
 					}
 				}
 			}
@@ -719,7 +720,7 @@ class Link_Rewriter {
 			}
 
 			$html_url    = Document_State::ready_html_url( $post_id );
-			$preview_url = Local_HTML::local_url( $post_id );
+			$preview_url = Local_HTML::local_url( $owner_id, false );
 
 				if ( $html_url && $preview_url ) {
 					self::$preview_url_map[ Security::normalize_public_url_key( $html_url ) ] = $preview_url;

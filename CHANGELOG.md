@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.49
+
+- Publish ProudCity preview records with the core schema version while tracking FileToWeb's storage schema separately.
+- Allow ProudCity to recover an exact current-tenant preview bundle from the configured WP Stateless GCS bucket after a pod restart.
+- Upgrade affected preview records only when that document is accessed or explicitly refreshed, without any fleet-wide database scan.
+- Resolve attachment-backed Proud Documents through their attachment-owned preview record and preserve rejected uninstall cleanup identities for deferred cleanup.
+
 ## 0.1.48
 
 - Disable automatic fleet-wide preview migration and remove its `wp_postmeta` scan after a production incident on large ProudCity sites.

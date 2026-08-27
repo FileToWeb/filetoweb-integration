@@ -15,6 +15,7 @@ class UninstallTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
+		unset( $GLOBALS['filetoweb_test_cleanup_queue_results'] );
 		Monkey\tearDown();
 		parent::tearDown();
 	}
@@ -27,6 +28,7 @@ class UninstallTest extends TestCase {
 		$deleted_options = array();
 		$cleared_hooks   = array();
 		$GLOBALS['filetoweb_test_cleanup_queue'] = array();
+		$GLOBALS['filetoweb_test_cleanup_queue_results'] = array( true, false, true );
 
 		Functions\when( 'delete_option' )->alias(
 			function ( $name ) use ( &$deleted_options ) {
@@ -91,7 +93,8 @@ class UninstallTest extends TestCase {
 						'meta_id'    => 17,
 						'meta_value' => serialize(
 							array(
-								'version'      => 2,
+								'version'      => Proud_HTML_Preview::CORE_SCHEMA_VERSION,
+								Proud_HTML_Preview::RECORD_STORAGE_SCHEMA => Proud_HTML_Preview::SCHEMA_VERSION,
 								'provider'     => 'filetoweb',
 								'artifact_key' => 'oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/index.html',
 								'artifact_url' => 'https://storage.googleapis.com/proudcity/oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/index.html',
@@ -172,6 +175,7 @@ class UninstallTest extends TestCase {
 			$this->assertArrayHasKey( 'proud_html_preview_legacy_artifacts', $updated_options );
 			$this->assertSame(
 				array(
+					'oakwoodoh/2026/08/filetoweb-integration/previews/1/fp/index.html',
 					'filetoweb-integration/previews/1/fp/assets/image.png',
 					'filetoweb-integration/previews/1/fp/index.html',
 				),

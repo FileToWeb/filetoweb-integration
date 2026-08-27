@@ -45,6 +45,26 @@ if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) 
 	$legacy_option    = 'proud_html_preview_legacy_artifacts';
 	$legacy_artifacts = get_option( $legacy_option, array() );
 	$legacy_artifacts = is_array( $legacy_artifacts ) ? $legacy_artifacts : array();
+	$defer_artifact   = static function ( $artifact ) use ( &$legacy_artifacts ) {
+		if ( empty( $artifact['artifact_key'] ) || empty( $artifact['artifact_url'] ) ) {
+			return false;
+		}
+
+		$artifact_key = ltrim( str_replace( '\\', '/', (string) $artifact['artifact_key'] ), '/' );
+		$artifact_url = esc_url_raw( (string) $artifact['artifact_url'] );
+		if ( ! $artifact_key || ! $artifact_url || false !== strpos( $artifact_key, '../' ) || false !== strpos( $artifact_key, '/..' ) ) {
+			return false;
+		}
+
+		$identity = hash( 'sha256', 'filetoweb|' . $artifact_key . '|' . $artifact_url );
+		$legacy_artifacts[ $identity ] = array(
+			'provider'     => 'filetoweb',
+			'artifact_key' => $artifact_key,
+			'artifact_url' => $artifact_url,
+		);
+
+		return true;
+	};
 
 	foreach ( is_array( $preview_rows ) ? $preview_rows : array() as $row ) {
 		$value = isset( $row->meta_value ) ? maybe_unserialize( $row->meta_value ) : null;
@@ -53,7 +73,9 @@ if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) 
 			continue;
 		}
 
-		$version   = isset( $value['version'] ) ? (int) $value['version'] : 0;
+		$version   = isset( $value['filetoweb_storage_schema'] )
+			? (int) $value['filetoweb_storage_schema']
+			: ( isset( $value['version'] ) ? (int) $value['version'] : 0 );
 		$artifacts = isset( $value['artifacts'] ) && is_array( $value['artifacts'] ) ? $value['artifacts'] : array();
 		$superseded = isset( $value['superseded_artifacts'] ) && is_array( $value['superseded_artifacts'] ) ? $value['superseded_artifacts'] : array();
 		$artifacts  = array_merge( $artifacts, $superseded );
@@ -71,33 +93,26 @@ if ( method_exists( $wpdb, 'get_results' ) && method_exists( $wpdb, 'prepare' ) 
 		}
 
 		foreach ( $artifacts as $artifact ) {
-			if ( function_exists( '\\Proud\\Core\\proud_html_preview_queue_cleanup' ) && ! empty( $artifact['artifact_key'] ) && ! empty( $artifact['artifact_url'] ) ) {
-				$artifact_identity = (string) $artifact['artifact_key'] . '|' . (string) $artifact['artifact_url'];
-
-				if ( ! isset( $queued_artifacts[ $artifact_identity ] ) ) {
-					call_user_func( '\\Proud\\Core\\proud_html_preview_queue_cleanup', 'filetoweb', $artifact['artifact_key'], $artifact['artifact_url'] );
-					$queued_artifacts[ $artifact_identity ] = true;
-				}
-			}
-		}
-
-		foreach ( $legacy as $artifact ) {
 			if ( empty( $artifact['artifact_key'] ) || empty( $artifact['artifact_url'] ) ) {
 				continue;
 			}
 
-			$artifact_key = ltrim( str_replace( '\\', '/', (string) $artifact['artifact_key'] ), '/' );
-			$artifact_url = esc_url_raw( (string) $artifact['artifact_url'] );
-			if ( ! $artifact_key || ! $artifact_url || false !== strpos( $artifact_key, '../' ) || false !== strpos( $artifact_key, '/..' ) ) {
+			$artifact_identity = (string) $artifact['artifact_key'] . '|' . (string) $artifact['artifact_url'];
+			if ( isset( $queued_artifacts[ $artifact_identity ] ) ) {
 				continue;
 			}
 
-			$identity = hash( 'sha256', 'filetoweb|' . $artifact_key . '|' . $artifact_url );
-			$legacy_artifacts[ $identity ] = array(
-				'provider'     => 'filetoweb',
-				'artifact_key' => $artifact_key,
-				'artifact_url' => $artifact_url,
-			);
+			$queued = function_exists( '\\Proud\\Core\\proud_html_preview_queue_cleanup' )
+				&& call_user_func( '\\Proud\\Core\\proud_html_preview_queue_cleanup', 'filetoweb', $artifact['artifact_key'], $artifact['artifact_url'] );
+			$queued_artifacts[ $artifact_identity ] = (bool) $queued;
+
+			if ( ! $queued ) {
+				$defer_artifact( $artifact );
+			}
+		}
+
+		foreach ( $legacy as $artifact ) {
+			$defer_artifact( $artifact );
 		}
 
 		if ( isset( $row->meta_id ) ) {

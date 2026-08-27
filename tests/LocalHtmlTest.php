@@ -4,12 +4,14 @@ use Brain\Monkey;
 use Brain\Monkey\Functions;
 use FileToWeb\Integration\Document_State;
 use FileToWeb\Integration\Local_HTML;
+use FileToWeb\Integration\Proud_HTML_Preview;
 use FileToWeb\Integration\Settings;
 use PHPUnit\Framework\TestCase;
 
 class LocalHtmlTest extends TestCase {
 	private $uploads_dir = '';
 	private $meta        = array();
+	private $post_types  = array();
 	private $requests    = array();
 
 	protected function setUp(): void {
@@ -18,6 +20,7 @@ class LocalHtmlTest extends TestCase {
 
 		$this->uploads_dir = sys_get_temp_dir() . '/ftw-local-html-' . uniqid();
 		$this->requests    = array();
+		$this->post_types  = array();
 		$GLOBALS['filetoweb_test_preview_url_calls'] = array();
 		$GLOBALS['filetoweb_test_preview_urls']      = array();
 		$this->meta        = array(
@@ -93,12 +96,18 @@ class LocalHtmlTest extends TestCase {
 				return isset( $this->meta[ $post_id ][ $key ] ) ? $this->meta[ $post_id ][ $key ] : '';
 			}
 		);
+		Functions\when( 'get_post_type' )->alias(
+			function ( $post_id ) {
+				return isset( $this->post_types[ $post_id ] ) ? $this->post_types[ $post_id ] : '';
+			}
+		);
 		Functions\when( 'update_post_meta' )->alias(
 			function ( $post_id, $key, $value ) {
 				$this->meta[ $post_id ][ $key ] = $value;
 				return true;
 			}
 		);
+		Functions\when( 'clean_post_cache' )->justReturn( null );
 		Functions\when( 'apply_filters' )->alias(
 			function ( $tag, $value ) {
 				return $value;
@@ -252,13 +261,52 @@ class LocalHtmlTest extends TestCase {
 		$GLOBALS['filetoweb_test_preview_urls'][123] = $durable_url;
 
 		$this->assertFalse( Local_HTML::has_local_html( 123 ) );
+		$this->assertSame( $durable_url, Local_HTML::local_url( 123, false ) );
+		$this->assertSame( Proud_HTML_Preview::SCHEMA_VERSION, $this->meta[123][ Proud_HTML_Preview::META_KEY ]['version'] );
 		$this->assertSame( $durable_url, Local_HTML::local_url( 123 ) );
 		$this->assertSame(
+			\FileToWeb\Integration\Proud_HTML_Preview::CORE_SCHEMA_VERSION,
+			$this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ]['version']
+		);
+		$this->assertSame(
+			\FileToWeb\Integration\Proud_HTML_Preview::SCHEMA_VERSION,
+			$this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ][ \FileToWeb\Integration\Proud_HTML_Preview::RECORD_STORAGE_SCHEMA ]
+		);
+		$this->assertSame(
 			array(
+				array( 123, $this->meta[123][ Document_State::META_ORIGINAL_URL ] ),
 				array( 123, $this->meta[123][ Document_State::META_ORIGINAL_URL ] ),
 			),
 			$GLOBALS['filetoweb_test_preview_url_calls']
 		);
+	}
+
+	public function test_attachment_backed_document_uses_the_attachment_preview_url(): void {
+		$this->post_types[123] = 'attachment';
+		$this->post_types[124] = 'document';
+		$GLOBALS['filetoweb_test_preview_urls'][123] = 'https://example.test/proud-preview/123';
+		$this->meta[124]['document_meta'] = wp_json_encode( array( 'fid' => 123 ) );
+		$this->meta[123][ Document_State::META_ORIGINAL_URL ] = 'https://example.test/uploads/current.pdf';
+		$this->meta[123][ Proud_HTML_Preview::META_KEY ] = array(
+			'version'                         => Proud_HTML_Preview::CORE_SCHEMA_VERSION,
+			Proud_HTML_Preview::RECORD_STORAGE_SCHEMA => Proud_HTML_Preview::SCHEMA_VERSION,
+			'provider'                        => Proud_HTML_Preview::PROVIDER,
+			'storage_backend'                 => Proud_HTML_Preview::STORAGE_BACKEND_STATELESS,
+			'source_url'                      => 'https://example.test/uploads/current.pdf',
+			'source_fingerprint'              => 'current-fingerprint',
+			'artifact_key'                    => 'oakwoodohio/2026/08/filetoweb-integration/previews/123/fingerprint/index.html',
+			'artifact_url'                    => 'https://storage.googleapis.com/proudcity/oakwoodohio/2026/08/filetoweb-integration/previews/123/fingerprint/index.html',
+			'artifacts'                       => array(
+				array(
+					'artifact_key' => 'oakwoodohio/2026/08/filetoweb-integration/previews/123/fingerprint/index.html',
+					'artifact_url' => 'https://storage.googleapis.com/proudcity/oakwoodohio/2026/08/filetoweb-integration/previews/123/fingerprint/index.html',
+				),
+			),
+			'token'                           => 'attachment-token',
+			'published_at'                    => '2026-08-21 11:52:50',
+		);
+
+		$this->assertSame( 'https://example.test/proud-preview/123', Local_HTML::public_url_for_post( 124 ) );
 	}
 
 	public function test_legacy_preview_without_a_local_copy_falls_back_to_the_pdf(): void {

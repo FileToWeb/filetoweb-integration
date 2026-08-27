@@ -19,7 +19,9 @@ class Proud_HTML_Preview {
 	const OPTION_PROVIDERS         = 'proud_html_preview_providers';
 	const OPTION_MIGRATION_VERSION = 'filetoweb_integration_preview_migration_version';
 	const PROVIDER                 = 'filetoweb';
+	const CORE_SCHEMA_VERSION      = 1;
 	const SCHEMA_VERSION           = 3;
+	const RECORD_STORAGE_SCHEMA    = 'filetoweb_storage_schema';
 	const TENANT_PREFIX_SCHEMA_VERSION = 2;
 	const MIGRATION_HOOK           = 'filetoweb_integration_migrate_html_previews';
 	const MIGRATION_VERSION        = '3';
@@ -41,6 +43,7 @@ class Proud_HTML_Preview {
 		add_action( 'update_option_' . Settings::OPTION_SETTINGS, array( __CLASS__, 'settings_updated' ), 10, 3 );
 		add_action( 'init', array( __CLASS__, 'disable_automatic_migration' ), 1 );
 		add_action( self::MIGRATION_HOOK, array( __CLASS__, 'migrate_legacy_batch' ) );
+		add_filter( 'proud_html_preview_trusted_storage_base_urls', array( __CLASS__, 'trusted_storage_base_urls' ), 10, 3 );
 	}
 
 	/**
@@ -92,6 +95,84 @@ class Proud_HTML_Preview {
 	}
 
 	/**
+	 * Add the current tenant's exact WP Stateless GCS base to ProudCity's trust list.
+	 *
+	 * ProudCity validates the full artifact URL against the returned base and the
+	 * supplied artifact key. We additionally require the configured GCS bucket,
+	 * the current tenant's first object-prefix segment, and FileToWeb's bundle
+	 * root to match before exposing that base.
+	 *
+	 * @param array  $base_urls Existing trusted storage bases.
+	 * @param string $artifact_url Candidate artifact URL.
+	 * @param string $artifact_key Candidate bucket-relative artifact key.
+	 * @return array
+	 */
+	public static function trusted_storage_base_urls( $base_urls, $artifact_url = '', $artifact_key = '' ) {
+		$base_urls    = is_array( $base_urls ) ? $base_urls : array();
+		$artifact_url = esc_url_raw( (string) $artifact_url );
+		$artifact_key = ltrim( wp_normalize_path( (string) $artifact_key ), '/' );
+		$local_key    = self::legacy_local_artifact_key( $artifact_key );
+		$root_position = strpos( $artifact_key, self::BUNDLE_ROOT . '/' );
+
+		if (
+			! $artifact_url
+			|| ! $local_key
+			|| false === $root_position
+			|| 0 === $root_position
+			|| '/' !== substr( $artifact_key, $root_position - 1, 1 )
+		) {
+			return $base_urls;
+		}
+
+		$uploads = wp_upload_dir();
+		$basedir = isset( $uploads['basedir'] ) ? wp_normalize_path( $uploads['basedir'] ) : '';
+		$baseurl = isset( $uploads['baseurl'] ) ? untrailingslashit( $uploads['baseurl'] ) : '';
+		$storage = $basedir && $baseurl ? self::storage_context( $basedir, $baseurl, $local_key ) : array();
+
+		if ( empty( $storage['stateless'] ) || empty( $storage['object_prefix'] ) || empty( $storage['public_baseurl'] ) ) {
+			return $base_urls;
+		}
+
+		$current_tenant  = self::first_path_segment( $storage['object_prefix'] );
+		$artifact_tenant = self::first_path_segment( substr( $artifact_key, 0, $root_position ) );
+		$storage_base    = esc_url_raw( untrailingslashit( $storage['public_baseurl'] ) );
+		$expected_url    = esc_url_raw( trailingslashit( $storage_base ) . str_replace( '%2F', '/', rawurlencode( $artifact_key ) ) );
+
+		if ( ! $current_tenant || ! $artifact_tenant || ! hash_equals( $current_tenant, $artifact_tenant ) || $expected_url !== $artifact_url ) {
+			return $base_urls;
+		}
+
+		$base_urls[] = $storage_base;
+
+		return array_values( array_unique( array_filter( $base_urls ) ) );
+	}
+
+	/**
+	 * Upgrade one FileToWeb record to ProudCity's public schema contract on use.
+	 *
+	 * This is deliberately per-post and never queries for other previews.
+	 *
+	 * @param int $post_id Source post ID.
+	 * @return array
+	 */
+	public static function prepare_public_record( $post_id ) {
+		$post_id = absint( $post_id );
+		$record  = self::record_for_post( $post_id );
+
+		if ( ! $post_id || empty( $record ) ) {
+			return $record;
+		}
+
+		$compatible = self::core_compatible_record( $record );
+		if ( $compatible !== $record ) {
+			self::store_record( $post_id, $compatible );
+			self::clean_public_cache( $post_id );
+		}
+
+		return $compatible;
+	}
+
+	/**
 	 * Publish a complete immutable HTML preview bundle.
 	 *
 	 * @param int    $post_id Source post ID.
@@ -136,6 +217,8 @@ class Proud_HTML_Preview {
 		$bundle_dir       = trailingslashit( $basedir ) . dirname( $local_artifact_key );
 		$index_path       = trailingslashit( $basedir ) . $local_artifact_key;
 		$current          = self::record_for_post( $post_id );
+		$stored_current   = $current;
+		$current          = self::core_compatible_record( $current );
 		$legacy_artifacts = self::legacy_artifacts_for_record( $current );
 
 		if ( self::record_matches( $current, $source_url, $fingerprint, $artifact_key ) && is_readable( $index_path ) ) {
@@ -145,13 +228,18 @@ class Proud_HTML_Preview {
 				return self::publish_failure( __( 'FileToWeb preview files could not be enumerated in WordPress storage.', 'filetoweb-integration' ) );
 			}
 
-			if ( empty( $current['artifacts'] ) || $manifest !== $current['artifacts'] || $algorithm !== ( isset( $current['source_fingerprint_algorithm'] ) ? $current['source_fingerprint_algorithm'] : '' ) ) {
+			$needs_storage_sync = empty( $current['artifacts'] ) || $manifest !== $current['artifacts'] || $algorithm !== ( isset( $current['source_fingerprint_algorithm'] ) ? $current['source_fingerprint_algorithm'] : '' );
+
+			if ( $needs_storage_sync ) {
 				if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage ) ) {
 					return self::publish_failure( __( 'FileToWeb preview files could not be verified in WordPress storage.', 'filetoweb-integration' ) );
 				}
 
 				$current['artifacts']                    = $manifest;
 				$current['source_fingerprint_algorithm'] = $algorithm;
+			}
+
+			if ( $needs_storage_sync || $current !== $stored_current ) {
 				self::store_record( $post_id, $current );
 			}
 
@@ -215,19 +303,20 @@ class Proud_HTML_Preview {
 			return self::publish_failure( __( 'FileToWeb preview files could not be enumerated in WordPress storage.', 'filetoweb-integration' ) );
 		}
 
-		$record       = array(
-			'version'            => self::SCHEMA_VERSION,
-			'provider'           => self::PROVIDER,
-			'storage_backend'    => ! empty( $storage['stateless'] ) ? self::STORAGE_BACKEND_STATELESS : self::STORAGE_BACKEND_LOCAL,
-			'source_url'         => $source_url,
-			'source_fingerprint' => $fingerprint,
+		$record = array(
+			'version'                      => self::CORE_SCHEMA_VERSION,
+			self::RECORD_STORAGE_SCHEMA    => self::SCHEMA_VERSION,
+			'provider'                     => self::PROVIDER,
+			'storage_backend'              => ! empty( $storage['stateless'] ) ? self::STORAGE_BACKEND_STATELESS : self::STORAGE_BACKEND_LOCAL,
+			'source_url'                   => $source_url,
+			'source_fingerprint'           => $fingerprint,
 			'source_fingerprint_algorithm' => $algorithm,
-			'artifact_key'       => $artifact_key,
-			'artifact_url'       => esc_url_raw( $artifact_url ),
-			'local_artifact_key' => $local_artifact_key,
-			'artifacts'          => $manifest,
-			'token'              => $token,
-			'published_at'       => $published_at,
+			'artifact_key'                => $artifact_key,
+			'artifact_url'                => esc_url_raw( $artifact_url ),
+			'local_artifact_key'          => $local_artifact_key,
+			'artifacts'                   => $manifest,
+			'token'                       => $token,
+			'published_at'                => $published_at,
 		);
 		if ( $legacy_artifacts ) {
 			$record['legacy_artifacts'] = $legacy_artifacts;
@@ -298,9 +387,21 @@ class Proud_HTML_Preview {
 	 */
 	public static function is_durable_record( $record ) {
 		return is_array( $record )
-			&& self::SCHEMA_VERSION <= (int) ( isset( $record['version'] ) ? $record['version'] : 0 )
+			&& self::SCHEMA_VERSION <= self::record_storage_schema( $record )
 			&& self::STORAGE_BACKEND_STATELESS === ( isset( $record['storage_backend'] ) ? $record['storage_backend'] : '' )
 			&& ! empty( $record['artifact_url'] );
+	}
+
+	/**
+	 * Whether one record still needs FileToWeb's explicit storage migration.
+	 *
+	 * @param mixed $record Preview record.
+	 * @return bool
+	 */
+	public static function needs_storage_migration( $record ) {
+		return ! is_array( $record )
+			|| empty( $record['artifacts'] )
+			|| self::SCHEMA_VERSION > self::record_storage_schema( $record );
 	}
 
 	/**
@@ -464,8 +565,15 @@ class Proud_HTML_Preview {
 		}
 
 		if ( $record && ! empty( $record['artifacts'] ) ) {
-			$record_version = (int) ( isset( $record['version'] ) ? $record['version'] : 0 );
+			$record_version = self::record_storage_schema( $record );
 			if ( self::SCHEMA_VERSION <= $record_version ) {
+				$compatible = self::core_compatible_record( $record );
+				if ( $compatible !== $record ) {
+					self::store_record( $post_id, $compatible );
+					self::clean_public_cache( $post_id );
+					return true;
+				}
+
 				update_post_meta( $post_id, self::META_STORAGE_SCHEMA, (string) self::SCHEMA_VERSION );
 				return false;
 			}
@@ -562,8 +670,9 @@ class Proud_HTML_Preview {
 			return false;
 		}
 
-		$record['version']         = self::SCHEMA_VERSION;
-		$record['storage_backend'] = ! empty( $storage['stateless'] ) ? self::STORAGE_BACKEND_STATELESS : self::STORAGE_BACKEND_LOCAL;
+		$record['version']                            = self::CORE_SCHEMA_VERSION;
+		$record[ self::RECORD_STORAGE_SCHEMA ]        = self::SCHEMA_VERSION;
+		$record['storage_backend']                    = ! empty( $storage['stateless'] ) ? self::STORAGE_BACKEND_STATELESS : self::STORAGE_BACKEND_LOCAL;
 		self::store_record( $post_id, $record );
 		self::clean_public_cache( $post_id );
 
@@ -604,11 +713,12 @@ class Proud_HTML_Preview {
 				return false;
 			}
 
-			$superseded_artifacts         = self::superseded_artifacts_for_record( $record, $manifest );
-			$record['version']            = self::SCHEMA_VERSION;
-			$record['storage_backend']    = self::STORAGE_BACKEND_LOCAL;
-			$record['artifact_key']       = $index_key;
-			$record['artifact_url']       = self::storage_artifact_url( $index_key, $storage );
+			$superseded_artifacts                      = self::superseded_artifacts_for_record( $record, $manifest );
+			$record['version']                         = self::CORE_SCHEMA_VERSION;
+			$record[ self::RECORD_STORAGE_SCHEMA ]     = self::SCHEMA_VERSION;
+			$record['storage_backend']                 = self::STORAGE_BACKEND_LOCAL;
+			$record['artifact_key']                    = $index_key;
+			$record['artifact_url']                    = self::storage_artifact_url( $index_key, $storage );
 			$record['local_artifact_key'] = $index_key;
 			$record['artifacts']          = $manifest;
 			if ( $legacy_artifacts ) {
@@ -723,11 +833,12 @@ class Proud_HTML_Preview {
 			return false;
 		}
 
-		$superseded_artifacts         = self::superseded_artifacts_for_record( $record, $manifest );
-		$record['version']            = self::SCHEMA_VERSION;
-		$record['storage_backend']    = self::STORAGE_BACKEND_STATELESS;
-		$record['artifact_key']       = self::storage_artifact_key( $index_key, $storage );
-		$record['artifact_url']       = self::storage_artifact_url( $index_key, $storage );
+		$superseded_artifacts                      = self::superseded_artifacts_for_record( $record, $manifest );
+		$record['version']                         = self::CORE_SCHEMA_VERSION;
+		$record[ self::RECORD_STORAGE_SCHEMA ]     = self::SCHEMA_VERSION;
+		$record['storage_backend']                 = self::STORAGE_BACKEND_STATELESS;
+		$record['artifact_key']                    = self::storage_artifact_key( $index_key, $storage );
+		$record['artifact_url']                    = self::storage_artifact_url( $index_key, $storage );
 		$record['local_artifact_key'] = $index_key;
 		$record['artifacts']          = $manifest;
 		$record['published_at']       = current_time( 'mysql', true );
@@ -797,7 +908,7 @@ class Proud_HTML_Preview {
 			? $record['legacy_artifacts']
 			: array();
 
-		if ( self::TENANT_PREFIX_SCHEMA_VERSION > (int) ( isset( $record['version'] ) ? $record['version'] : 0 ) ) {
+		if ( self::TENANT_PREFIX_SCHEMA_VERSION > self::record_storage_schema( $record ) ) {
 			$current_artifacts = isset( $record['artifacts'] ) && is_array( $record['artifacts'] )
 				? $record['artifacts']
 				: array();
@@ -844,7 +955,7 @@ class Proud_HTML_Preview {
 		$artifacts = isset( $record['superseded_artifacts'] ) && is_array( $record['superseded_artifacts'] )
 			? $record['superseded_artifacts']
 			: array();
-		if ( self::TENANT_PREFIX_SCHEMA_VERSION <= (int) ( isset( $record['version'] ) ? $record['version'] : 0 ) ) {
+		if ( self::TENANT_PREFIX_SCHEMA_VERSION <= self::record_storage_schema( $record ) ) {
 			$previous = isset( $record['artifacts'] ) && is_array( $record['artifacts'] ) ? $record['artifacts'] : array();
 			$artifacts = array_merge( $artifacts, $previous );
 		}
@@ -1692,11 +1803,67 @@ class Proud_HTML_Preview {
 	 */
 	private static function record_matches( $record, $source_url, $fingerprint, $artifact_key ) {
 		return is_array( $record )
-			&& self::SCHEMA_VERSION <= (int) ( isset( $record['version'] ) ? $record['version'] : 0 )
+			&& self::SCHEMA_VERSION <= self::record_storage_schema( $record )
 			&& $source_url === ( isset( $record['source_url'] ) ? $record['source_url'] : '' )
 			&& $fingerprint === ( isset( $record['source_fingerprint'] ) ? $record['source_fingerprint'] : '' )
 			&& $artifact_key === ( isset( $record['artifact_key'] ) ? $record['artifact_key'] : '' )
 			&& ! empty( $record['token'] );
+	}
+
+	/**
+	 * Return FileToWeb's internal preview-storage schema for any record generation.
+	 *
+	 * Versions 2 and 3 were previously stored in ProudCity's public `version`
+	 * field. Version 1 records predate the separate FileToWeb marker.
+	 *
+	 * @param mixed $record Preview record.
+	 * @return int
+	 */
+	private static function record_storage_schema( $record ) {
+		if ( ! is_array( $record ) ) {
+			return 0;
+		}
+
+		if ( isset( $record[ self::RECORD_STORAGE_SCHEMA ] ) ) {
+			return absint( $record[ self::RECORD_STORAGE_SCHEMA ] );
+		}
+
+		$legacy_version = absint( isset( $record['version'] ) ? $record['version'] : 0 );
+
+		return self::CORE_SCHEMA_VERSION < $legacy_version ? $legacy_version : self::CORE_SCHEMA_VERSION;
+	}
+
+	/**
+	 * Keep FileToWeb's storage generation separate from ProudCity's public schema.
+	 *
+	 * @param mixed $record Preview record.
+	 * @return array
+	 */
+	private static function core_compatible_record( $record ) {
+		if ( ! is_array( $record ) || self::PROVIDER !== ( isset( $record['provider'] ) ? $record['provider'] : '' ) ) {
+			return is_array( $record ) ? $record : array();
+		}
+
+		$storage_schema = self::record_storage_schema( $record );
+		if ( self::SCHEMA_VERSION <= $storage_schema ) {
+			$record['version']                         = self::CORE_SCHEMA_VERSION;
+			$record[ self::RECORD_STORAGE_SCHEMA ]     = $storage_schema;
+		}
+
+		return $record;
+	}
+
+	/**
+	 * Return the first safe object-prefix segment.
+	 *
+	 * @param mixed $path Object prefix.
+	 * @return string
+	 */
+	private static function first_path_segment( $path ) {
+		$parts = explode( '/', trim( wp_normalize_path( (string) $path ), '/' ) );
+		$first = isset( $parts[0] ) ? (string) $parts[0] : '';
+
+		return $first && '.' !== $first && '..' !== $first && preg_match( '/^[A-Za-z0-9._-]+$/', $first ) ? $first : '';
 	}
 
 	/**
