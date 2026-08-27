@@ -1022,6 +1022,47 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertStringNotContainsString( 'https://city.example/wp-content/uploads/' . $asset, $recovered );
 	}
 
+	public function test_schema_one_bundle_with_a_missing_gcs_object_is_left_unchanged(): void {
+		$bundle = 'filetoweb-integration/previews/63/legacyfingerprint';
+		$asset  = $bundle . '/assets/logo.png';
+		$index  = $bundle . '/index.html';
+		$record = array(
+			'version'            => 1,
+			'provider'           => 'filetoweb',
+			'source_url'         => 'https://city.example/wp-content/uploads/legacy.pdf',
+			'source_fingerprint' => 'legacy-fingerprint',
+			'artifact_key'       => $index,
+			'artifact_url'       => 'https://storage.googleapis.com/proudcity/' . $index,
+			'artifacts'          => array(
+				array(
+					'artifact_key' => $asset,
+					'artifact_url' => 'https://storage.googleapis.com/proudcity/' . $asset,
+				),
+				array(
+					'artifact_key' => $index,
+					'artifact_url' => 'https://storage.googleapis.com/proudcity/' . $index,
+				),
+			),
+			'token'              => 'legacy-token',
+			'published_at'       => '2026-08-21 11:52:50',
+		);
+		$this->meta[63] = array(
+			Proud_HTML_Preview::META_KEY                  => $record,
+			Document_State::META_LOCAL_HTML_SOURCE_URL    => 'https://filetoweb.com/d/demo/continuous?chrome=0',
+		);
+		$this->stateless_client->objects = array(
+			$index => '<html><body><img src="https://storage.googleapis.com/proudcity/' . $asset . '"></body></html>',
+		);
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\expect( 'do_action' )->never();
+
+		$this->assertFalse( Proud_HTML_Preview::migrate_existing_post( 63 ) );
+		$this->assertSame( $record, $this->meta[63][ Proud_HTML_Preview::META_KEY ] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_STORAGE_SCHEMA, $this->meta[63] );
+		$this->assertFileDoesNotExist( $this->uploads_dir . '/' . $index );
+	}
+
 	public function test_explicit_disable_changes_provider_but_deactivation_does_not(): void {
 		Proud_HTML_Preview::settings_updated(
 			$this->options[ Settings::OPTION_SETTINGS ],
