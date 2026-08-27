@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.50
+
+- Return immediately from front-end content rewriting when rendered content has no PDF, uploads, local-preview, or explicit attachment candidate.
+- Replace the request-wide ready-document and preview maps with exact one-record metadata lookups that run only for candidate URLs.
+- Avoid attachment and permalink resolution for ordinary navigation, page, anchor, and external links, and memoize both successful and unsuccessful resolutions per request.
+- Add a regression test matching the reported 69-link homepage shape and assert that it performs no WordPress URL or document lookups.
+
 ## 0.1.49
 
 - Publish ProudCity preview records with the core schema version while tracking FileToWeb's storage schema separately.

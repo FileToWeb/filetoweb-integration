@@ -221,7 +221,7 @@ class LinkRewriterTest extends TestCase {
 			parent::tearDown();
 		}
 
-	public function test_rewrites_ready_pdf_links_and_builds_map_once(): void {
+	public function test_rewrites_ready_pdf_links_without_resolving_normal_links(): void {
 			$get_posts_calls = 0;
 			$local_path      = $this->local_html_file( 123 );
 
@@ -268,7 +268,93 @@ class LinkRewriterTest extends TestCase {
 
 			$this->assertStringContainsString( 'href="https://example.test/?filetoweb_local_html=123&ftw_token=token-123"', $rewritten );
 		$this->assertStringContainsString( 'href="https://example.test/services/"', $rewritten );
-			$this->assertSame( 2, $get_posts_calls );
+			$this->assertSame( 1, $get_posts_calls );
+	}
+
+	public function test_ordinary_page_links_do_not_run_wordpress_url_lookups(): void {
+		$get_posts_calls               = 0;
+		$attachment_url_lookup_calls   = 0;
+		$url_to_postid_calls           = 0;
+		$get_page_by_path_calls        = 0;
+
+		Functions\when( 'get_posts' )->alias(
+			function () use ( &$get_posts_calls ) {
+				++$get_posts_calls;
+				return array();
+			}
+		);
+		Functions\when( 'attachment_url_to_postid' )->alias(
+			function () use ( &$attachment_url_lookup_calls ) {
+				++$attachment_url_lookup_calls;
+				return 0;
+			}
+		);
+		Functions\when( 'url_to_postid' )->alias(
+			function () use ( &$url_to_postid_calls ) {
+				++$url_to_postid_calls;
+				return 0;
+			}
+		);
+		Functions\when( 'get_page_by_path' )->alias(
+			function () use ( &$get_page_by_path_calls ) {
+				++$get_page_by_path_calls;
+				return null;
+			}
+		);
+
+		$links = array();
+
+		for ( $index = 0; $index < 69; ++$index ) {
+			$links[] = '<a href="https://example.test/services/page-' . $index . '/">Service</a>';
+		}
+
+		$content = implode( ' ', $links )
+			. ' <a href="/">Home</a>'
+			. ' <a href="#contact">Contact</a>'
+			. ' <a href="https://external.example.org/news/">News</a>';
+
+		$this->assertSame( $content, Link_Rewriter::filter_content_pdf_links( $content ) );
+		$this->assertSame( 0, $get_posts_calls );
+		$this->assertSame( 0, $attachment_url_lookup_calls );
+		$this->assertSame( 0, $url_to_postid_calls );
+		$this->assertSame( 0, $get_page_by_path_calls );
+	}
+
+	public function test_google_preview_uses_one_targeted_lookup_per_request(): void {
+		$get_posts_calls = 0;
+		$lookup_args     = array();
+		$local_path      = $this->local_html_file( 123 );
+		$html_url        = 'https://filetoweb.com/d/AbCdEf1234567890GhIjKlMn/1';
+
+		Functions\when( 'get_posts' )->alias(
+			function ( $args = array() ) use ( &$get_posts_calls, &$lookup_args ) {
+				++$get_posts_calls;
+				$lookup_args = $args;
+				return array( 123 );
+			}
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $html_url, $local_path ) {
+				$values = array(
+					Document_State::META_STATUS           => 'ready',
+					Document_State::META_HTML_URL         => $html_url,
+					Document_State::META_LOCAL_HTML_PATH  => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN => 'token-123',
+				);
+
+				return 123 === $post_id && isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$content = '<iframe src="//docs.google.com/gview?url=' . rawurlencode( $html_url ) . '&amp;embedded=true"></iframe>';
+		$rewritten = Link_Rewriter::filter_content_pdf_links( $content );
+		Link_Rewriter::filter_content_pdf_links( $content );
+
+		$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=123&ftw_token=token-123"', $rewritten );
+		$this->assertSame( 1, $get_posts_calls );
+		$this->assertSame( 1, $lookup_args['posts_per_page'] );
+		$this->assertSame( Document_State::META_HTML_URL, $lookup_args['meta_query'][1]['key'] );
+		$this->assertSame( $html_url, $lookup_args['meta_query'][1]['value'] );
 	}
 
 		public function test_direct_attachment_resolution_wins_over_stale_url_map(): void {
@@ -321,16 +407,22 @@ class LinkRewriterTest extends TestCase {
 		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale/1', $rewritten );
 	}
 
-		public function test_ready_url_map_keeps_newest_duplicate_source_url(): void {
+		public function test_targeted_original_url_lookup_keeps_newest_duplicate_source_url(): void {
 			$local_path = $this->local_html_file( 456 );
-		Functions\when( 'get_posts' )->justReturn( array( 456, 123 ) );
+			$lookup_args = array();
+		Functions\when( 'get_posts' )->alias(
+			function ( $args = array() ) use ( &$lookup_args ) {
+				$lookup_args = $args;
+				return array( 456, 123 );
+			}
+		);
 			Functions\when( 'get_post_meta' )->alias(
 				function ( $post_id, $key ) use ( $local_path ) {
 					if ( 456 === $post_id ) {
 						$current_values = array(
 							Document_State::META_STATUS       => 'ready',
 							Document_State::META_HTML_URL     => 'https://filetoweb.com/d/current/1',
-							Document_State::META_ORIGINAL_URL => 'https://example.test/wp-content/uploads/shared.pdf',
+							Document_State::META_ORIGINAL_URL => 'https://cdn.example.org/shared.pdf',
 							Document_State::META_LOCAL_HTML_PATH  => $local_path,
 							Document_State::META_LOCAL_HTML_TOKEN => 'token-456',
 						);
@@ -342,7 +434,7 @@ class LinkRewriterTest extends TestCase {
 					$stale_values = array(
 						Document_State::META_STATUS       => 'ready',
 						Document_State::META_HTML_URL     => 'https://filetoweb.com/d/stale/1',
-						Document_State::META_ORIGINAL_URL => 'https://example.test/wp-content/uploads/shared.pdf',
+						Document_State::META_ORIGINAL_URL => 'https://cdn.example.org/shared.pdf',
 					);
 
 					return isset( $stale_values[ $key ] ) ? $stale_values[ $key ] : '';
@@ -352,11 +444,15 @@ class LinkRewriterTest extends TestCase {
 			}
 		);
 
-		$content = '<p><a href="https://example.test/wp-content/uploads/shared.pdf">PDF</a></p>';
+		$content = '<p><a href="https://cdn.example.org/shared.pdf">PDF</a></p>';
 		$rewritten = Link_Rewriter::filter_content_pdf_links( $content );
 
 			$this->assertStringContainsString( 'href="https://example.test/?filetoweb_local_html=456&ftw_token=token-456"', $rewritten );
 		$this->assertStringNotContainsString( 'https://filetoweb.com/d/stale/1', $rewritten );
+		$this->assertSame( 1, $lookup_args['posts_per_page'] );
+		$this->assertSame( 'ready', $lookup_args['meta_query'][0]['value'] );
+		$this->assertSame( Document_State::META_ORIGINAL_URL, $lookup_args['meta_query'][1]['key'] );
+		$this->assertSame( 'https://cdn.example.org/shared.pdf', $lookup_args['meta_query'][1]['value'] );
 	}
 
 	public function test_ready_replacement_url_filter_can_override_pdf_links(): void {
@@ -884,14 +980,14 @@ class LinkRewriterTest extends TestCase {
 		private function reset_rewriter_cache(): void {
 		$reflection = new ReflectionClass( Link_Rewriter::class );
 
-		foreach ( array( 'ready_url_map', 'preview_url_map', 'resolved_public_urls', 'document_viewer_post_id', 'meeting_viewer_post_id' ) as $property_name ) {
+		foreach ( array( 'resolved_preview_urls', 'resolved_public_urls', 'document_viewer_post_id', 'meeting_viewer_post_id' ) as $property_name ) {
 			$property = $reflection->getProperty( $property_name );
 
 			if ( PHP_VERSION_ID < 80100 ) {
 				$property->setAccessible( true );
 			}
 
-			if ( 'resolved_public_urls' === $property_name ) {
+			if ( in_array( $property_name, array( 'resolved_preview_urls', 'resolved_public_urls' ), true ) ) {
 				$property->setValue( null, array() );
 			} elseif ( in_array( $property_name, array( 'document_viewer_post_id', 'meeting_viewer_post_id' ), true ) ) {
 				$property->setValue( null, 0 );

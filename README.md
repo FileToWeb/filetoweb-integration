@@ -48,7 +48,7 @@ The plugin rewrites:
 
 - `wp_get_attachment_url()` output for ready PDF attachments
 - Proud Document `document` post meta on the front end
-- literal PDF and attachment-page links inside `the_content`
+- literal PDF and explicit attachment-ID links inside `the_content`
 - text widget content
 - Google Docs preview iframe URLs inside filtered content when they wrap a ready WordPress-local HTML copy
 - ProudCity single Meeting Google Docs preview iframes for ready Agenda, Agenda Packet, and Minutes PDFs

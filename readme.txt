@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.49
+Stable tag: 0.1.50
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -81,6 +81,12 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.50 =
+
+* Prevents ordinary navigation and page links from triggering FileToWeb document lookups during front-end rendering.
+* Replaces request-wide scans of every ready document with exact, bounded URL lookups only for PDF and preview candidates.
+* Caches successful and unsuccessful URL resolutions for the remainder of the request.
 
 = 0.1.49 =
 

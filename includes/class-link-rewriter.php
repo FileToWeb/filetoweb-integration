@@ -13,18 +13,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class Link_Rewriter {
 	/**
-	 * Original URL to WordPress-local ready URL map.
+	 * Per-request FileToWeb page URL to WordPress-local preview URL cache.
 	 *
-	 * @var array|null
+	 * @var array
 	 */
-	private static $ready_url_map = null;
-
-	/**
-	 * FileToWeb page URL to WordPress-local preview URL map.
-	 *
-	 * @var array|null
-	 */
-	private static $preview_url_map = null;
+	private static $resolved_preview_urls = array();
 
 	/**
 	 * Per-request lookup cache.
@@ -126,7 +119,14 @@ class Link_Rewriter {
 			return $content;
 		}
 
-		if ( false !== stripos( $content, '<a' ) && false !== stripos( $content, 'href=' ) ) {
+		$has_google_preview = false !== stripos( $content, 'docs.google.com/gview' );
+		$has_link_candidate = self::content_has_public_url_candidate( $content );
+
+		if ( ! $has_link_candidate && ! $has_google_preview ) {
+			return $content;
+		}
+
+		if ( $has_link_candidate ) {
 			$content = preg_replace_callback(
 				'~<a\b([^>]*?)\bhref=(["\'])(.*?)\2([^>]*)>~is',
 				array( __CLASS__, 'replace_content_link_href' ),
@@ -134,7 +134,7 @@ class Link_Rewriter {
 			);
 		}
 
-		if ( false !== stripos( $content, 'docs.google.com/gview' ) ) {
+		if ( $has_google_preview ) {
 			$content = preg_replace_callback(
 				'~\bsrc=(["\'])(?:https?:)?//docs\.google\.com/gview\?url=([^"\']+?)(?:&amp;|&#0?38;|&)embedded=true\1~i',
 				array( __CLASS__, 'replace_google_docs_preview_src' ),
@@ -281,6 +281,14 @@ class Link_Rewriter {
 		$host = strtolower( (string) parse_url( $absolute_url, PHP_URL_HOST ) );
 		$key  = Security::normalize_public_url_key( $absolute_url );
 
+		if ( ! $key ) {
+			return '';
+		}
+
+		if ( array_key_exists( $key, self::$resolved_public_urls ) ) {
+			return self::$resolved_public_urls[ $key ];
+		}
+
 		$local_html_post_id = self::local_html_post_id_for_public_url( $absolute_url );
 
 		if ( $local_html_post_id ) {
@@ -293,25 +301,28 @@ class Link_Rewriter {
 		}
 
 		if ( in_array( $host, Settings::allowed_filetoweb_hosts(), true ) ) {
-			return '';
+			self::$resolved_public_urls[ $key ] = '';
+			return self::$resolved_public_urls[ $key ];
 		}
 
-		if ( isset( self::$resolved_public_urls[ $key ] ) ) {
+		if ( ! self::is_public_url_candidate( $absolute_url ) ) {
+			self::$resolved_public_urls[ $key ] = '';
 			return self::$resolved_public_urls[ $key ];
 		}
 
 		$attachment_id = self::attachment_id_for_public_url( $absolute_url );
 		$html_url      = $attachment_id ? self::ready_attachment_public_url( $attachment_id, $absolute_url ) : '';
 
-		if ( $html_url ) {
+		if ( $attachment_id ) {
 			self::$resolved_public_urls[ $key ] = $html_url;
 			return self::$resolved_public_urls[ $key ];
 		}
 
-		$map = self::ready_url_map();
+		$post_id  = self::ready_post_id_for_original_url( $absolute_url );
+		$html_url = $post_id ? Document_State::ready_html_url( $post_id ) : '';
 
-		if ( isset( $map[ $key ] ) ) {
-			self::$resolved_public_urls[ $key ] = $map[ $key ];
+		if ( $html_url ) {
+			self::$resolved_public_urls[ $key ] = self::ready_replacement_url( $html_url, $post_id, 'original_url', $absolute_url );
 			return self::$resolved_public_urls[ $key ];
 		}
 
@@ -327,6 +338,10 @@ class Link_Rewriter {
 	 * @return string
 	 */
 	private static function replace_content_link_href( $matches ) {
+		if ( ! self::is_public_url_candidate( $matches[3] ) ) {
+			return $matches[0];
+		}
+
 		if ( self::is_current_meeting_material_url( $matches[3] ) ) {
 			return $matches[0];
 		}
@@ -634,101 +649,129 @@ class Link_Rewriter {
 	}
 
 	/**
-	 * Build original-url => ready-public-url map once per request.
+	 * Does rendered content contain an anchor URL that can belong to FileToWeb?
 	 *
-	 * @return array
+	 * This guard deliberately uses only string checks. Ordinary navigation and
+	 * page links must not trigger WordPress URL resolution or database queries.
+	 *
+	 * @param string $content Rendered content.
+	 * @return bool
 	 */
-	private static function ready_url_map() {
-		if ( null !== self::$ready_url_map ) {
-			return self::$ready_url_map;
+	private static function content_has_public_url_candidate( $content ) {
+		if ( false === stripos( $content, '<a' ) || false === stripos( $content, 'href=' ) ) {
+			return false;
 		}
 
-		self::$ready_url_map = array();
-
-		$limit = absint( apply_filters( 'filetoweb_integration_ready_url_map_limit', 1000 ) );
-		$limit = max( 1, min( 5000, $limit ) );
-
-		$posts = get_posts(
-			array(
-				'post_type'      => array( 'attachment', 'document' ),
-				'post_status'    => 'any',
-				'posts_per_page' => $limit,
-				'fields'         => 'ids',
-				'meta_key'       => Document_State::META_STATUS,
-				'meta_value'     => 'ready',
-				'orderby'        => 'ID',
-				'order'          => 'DESC',
-			)
-		);
-
-		foreach ( $posts as $post_id ) {
-				$html_url = Document_State::ready_html_url( $post_id );
-
-			if ( ! $html_url ) {
-				continue;
+		foreach ( array( '.pdf', '%2epdf', '/wp-content/uploads/', Local_HTML::QUERY_VAR_POST_ID, 'attachment_id=' ) as $marker ) {
+			if ( false !== stripos( $content, $marker ) ) {
+				return true;
 			}
+		}
 
-			$urls = array( get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true ) );
-
-			if ( 'attachment' === get_post_type( $post_id ) ) {
-				$urls[] = Source_Resolver::original_attachment_url( $post_id );
-				$urls[] = get_permalink( $post_id );
-			} elseif ( 'document' === get_post_type( $post_id ) ) {
-				$urls[] = Source_Resolver::admin_original_source_url( get_post( $post_id ) );
-			}
-
-			foreach ( $urls as $url ) {
-				$key = Security::normalize_public_url_key( $url );
-
-				if ( $key && ! isset( self::$ready_url_map[ $key ] ) ) {
-						self::$ready_url_map[ $key ] = self::ready_replacement_url( $html_url, $post_id, 'url_map', $url, false );
-					}
-				}
-			}
-
-		return self::$ready_url_map;
+		return false;
 	}
 
 	/**
-	 * Build public URL => preview URL map once per request.
+	 * Can a URL represent a FileToWeb-backed WordPress source?
 	 *
-	 * @return array
+	 * @param string $url Public or relative URL.
+	 * @return bool
 	 */
-	private static function preview_url_map() {
-		if ( null !== self::$preview_url_map ) {
-			return self::$preview_url_map;
+	private static function is_public_url_candidate( $url ) {
+		$url = html_entity_decode( trim( (string) $url ), ENT_QUOTES, 'UTF-8' );
+
+		if ( ! $url ) {
+			return false;
 		}
 
-		self::$preview_url_map = array();
+		$absolute_url = self::absolute_public_url( $url );
+
+		if ( ! $absolute_url ) {
+			return false;
+		}
+
+		$path      = rawurldecode( (string) parse_url( $absolute_url, PHP_URL_PATH ) );
+		$extension = strtolower( (string) pathinfo( $path, PATHINFO_EXTENSION ) );
+
+		if ( 'pdf' === $extension || ( ! $extension && false !== stripos( $path, '/wp-content/uploads/' ) ) ) {
+			return true;
+		}
+
+		$query = (string) parse_url( $absolute_url, PHP_URL_QUERY );
+
+		if ( ! $query ) {
+			return false;
+		}
+
+		if ( false !== stripos( rawurldecode( $query ), '.pdf' ) ) {
+			return true;
+		}
+
+		parse_str( $query, $params );
+
+		return ( ! empty( $params[ Local_HTML::QUERY_VAR_POST_ID ] ) || ! empty( $params['attachment_id'] ) )
+			&& self::is_wordpress_attachment_host( $absolute_url );
+	}
+
+	/**
+	 * Resolve the newest ready source whose stored original URL is exact.
+	 *
+	 * @param string $url Original source URL.
+	 * @return int
+	 */
+	private static function ready_post_id_for_original_url( $url ) {
+		return self::ready_post_id_for_meta_url( Document_State::META_ORIGINAL_URL, $url );
+	}
+
+	/**
+	 * Resolve one ready source by an exact URL-valued metadata field.
+	 *
+	 * This replaces the former request-wide scan of every ready document with a
+	 * bounded lookup performed only for a URL that already looks relevant.
+	 *
+	 * @param string $meta_key URL metadata key.
+	 * @param string $url Exact stored URL.
+	 * @return int
+	 */
+	private static function ready_post_id_for_meta_url( $meta_key, $url ) {
+		$url = esc_url_raw( $url );
+
+		if ( ! $url ) {
+			return 0;
+		}
 
 		$posts = get_posts(
 			array(
-				'post_type'      => array( 'attachment', 'document' ),
-				'post_status'    => 'any',
-				'posts_per_page' => 1000,
-				'fields'         => 'ids',
-				'meta_key'       => Document_State::META_STATUS,
-				'meta_value'     => 'ready',
+				'post_type'              => array( 'attachment', 'document' ),
+				'post_status'            => 'any',
+				'posts_per_page'         => 1,
+				'no_found_rows'          => true,
+				'orderby'                => 'ID',
+				'order'                  => 'DESC',
+				'suppress_filters'       => true,
+				'update_post_meta_cache' => true,
+				'update_post_term_cache' => false,
+				'meta_query'             => array(
+					array(
+						'key'   => Document_State::META_STATUS,
+						'value' => 'ready',
+					),
+					array(
+						'key'     => $meta_key,
+						'value'   => $url,
+						'compare' => '=',
+					),
+				),
 			)
 		);
 
-		foreach ( $posts as $post_id ) {
-			$owner_id = Source_Resolver::preview_owner_post_id( $post_id );
+		if ( empty( $posts ) ) {
+			return 0;
+		}
 
-			if ( Proud_HTML_Preview::is_public_paused( $owner_id ) ) {
-				continue;
-			}
+		$post = reset( $posts );
 
-			$html_url    = Document_State::ready_html_url( $post_id );
-			$preview_url = Local_HTML::local_url( $owner_id, false );
-
-				if ( $html_url && $preview_url ) {
-					self::$preview_url_map[ Security::normalize_public_url_key( $html_url ) ] = $preview_url;
-					self::$preview_url_map[ Security::normalize_public_url_key( $preview_url ) ] = $preview_url;
-				}
-			}
-
-		return self::$preview_url_map;
+		return absint( is_object( $post ) && isset( $post->ID ) ? $post->ID : $post );
 	}
 
 	/**
@@ -744,10 +787,34 @@ class Link_Rewriter {
 			return '';
 		}
 
-		$map = self::preview_url_map();
 		$key = Security::normalize_public_url_key( $url );
 
-		return isset( $map[ $key ] ) ? $map[ $key ] : '';
+		if ( ! $key ) {
+			return '';
+		}
+
+		if ( array_key_exists( $key, self::$resolved_preview_urls ) ) {
+			return self::$resolved_preview_urls[ $key ];
+		}
+
+		$local_html_post_id = self::local_html_post_id_for_public_url( $url );
+
+		if ( $local_html_post_id ) {
+			self::$resolved_preview_urls[ $key ] = Local_HTML::public_url_for_post( $local_html_post_id );
+			return self::$resolved_preview_urls[ $key ];
+		}
+
+		$post_id = self::ready_post_id_for_meta_url( Document_State::META_HTML_URL, $url );
+		$owner_id = $post_id ? Source_Resolver::preview_owner_post_id( $post_id ) : 0;
+
+		if ( ! $owner_id || Proud_HTML_Preview::is_public_paused( $owner_id ) ) {
+			self::$resolved_preview_urls[ $key ] = '';
+			return self::$resolved_preview_urls[ $key ];
+		}
+
+		self::$resolved_preview_urls[ $key ] = Local_HTML::local_url( $owner_id, false );
+
+		return self::$resolved_preview_urls[ $key ];
 	}
 
 	/**
@@ -865,19 +932,34 @@ class Link_Rewriter {
 	}
 
 	/**
-	 * Resolve WordPress attachment ID for direct upload URL or attachment page URL.
+	 * Resolve a WordPress attachment ID for a bounded URL candidate.
 	 *
 	 * @param string $url URL.
 	 * @return int
 	 */
 	private static function attachment_id_for_public_url( $url ) {
+		if ( ! self::is_public_url_candidate( $url ) ) {
+			return 0;
+		}
+
+		$query = (string) parse_url( $url, PHP_URL_QUERY );
+
+		if ( $query ) {
+			parse_str( $query, $params );
+			$attachment_id = ! empty( $params['attachment_id'] ) ? absint( $params['attachment_id'] ) : 0;
+
+			if ( $attachment_id && self::is_wordpress_attachment_host( $url ) && 'attachment' === get_post_type( $attachment_id ) ) {
+				return $attachment_id;
+			}
+		}
+
 		$attachment_id = self::attachment_id_for_upload_url( $url );
 
 		if ( $attachment_id ) {
 			return $attachment_id;
 		}
 
-		if ( function_exists( 'attachment_url_to_postid' ) ) {
+		if ( self::is_wordpress_attachment_host( $url ) && function_exists( 'attachment_url_to_postid' ) ) {
 			$attachment_id = attachment_url_to_postid( $url );
 
 			if ( $attachment_id ) {
@@ -885,15 +967,31 @@ class Link_Rewriter {
 			}
 		}
 
-		if ( function_exists( 'url_to_postid' ) ) {
-			$post_id = url_to_postid( $url );
+		return 0;
+	}
 
-			if ( $post_id && 'attachment' === get_post_type( $post_id ) ) {
-				return absint( $post_id );
-			}
+	/**
+	 * Is a URL hosted by WordPress or its configured uploads service?
+	 *
+	 * @param string $url URL.
+	 * @return bool
+	 */
+	private static function is_wordpress_attachment_host( $url ) {
+		$host = strtolower( (string) parse_url( $url, PHP_URL_HOST ) );
+
+		if ( ! $host ) {
+			return false;
 		}
 
-		return self::attachment_id_for_attachment_page_url( $url );
+		$allowed_hosts = array( strtolower( (string) parse_url( home_url( '/' ), PHP_URL_HOST ) ) );
+		$uploads       = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : array();
+		$uploads_host  = ! empty( $uploads['baseurl'] ) ? strtolower( (string) parse_url( $uploads['baseurl'], PHP_URL_HOST ) ) : '';
+
+		if ( $uploads_host ) {
+			$allowed_hosts[] = $uploads_host;
+		}
+
+		return in_array( $host, array_filter( array_unique( $allowed_hosts ) ), true );
 	}
 
 	/**
@@ -918,6 +1016,10 @@ class Link_Rewriter {
 			return 0;
 		}
 
+		if ( ! self::is_wordpress_attachment_host( $url ) ) {
+			return 0;
+		}
+
 		$post_id = absint( $params[ Local_HTML::QUERY_VAR_POST_ID ] );
 
 		return $post_id && Local_HTML::has_local_html( $post_id ) ? $post_id : 0;
@@ -936,7 +1038,7 @@ class Link_Rewriter {
 
 		$path = parse_url( $url, PHP_URL_PATH );
 
-		if ( ! $path || ! preg_match( '/\.pdf$/i', $path ) ) {
+		if ( ! $path ) {
 			return 0;
 		}
 
@@ -963,89 +1065,27 @@ class Link_Rewriter {
 
 		$attachments = get_posts(
 			array(
-				'fields'           => 'ids',
-				'meta_key'         => '_wp_attached_file',
-				'meta_value'       => $relative,
-				'numberposts'      => 1,
-				'orderby'          => 'ID',
-				'order'            => 'DESC',
-				'post_status'      => 'inherit',
-				'post_type'        => 'attachment',
-				'suppress_filters' => true,
+				'meta_key'               => '_wp_attached_file',
+				'meta_value'             => $relative,
+				'posts_per_page'          => 1,
+				'no_found_rows'           => true,
+				'orderby'                 => 'ID',
+				'order'                   => 'DESC',
+				'post_status'             => 'inherit',
+				'post_type'               => 'attachment',
+				'suppress_filters'        => true,
+				'update_post_meta_cache'  => true,
+				'update_post_term_cache'  => false,
 			)
 		);
 
-		return $attachments ? absint( $attachments[0] ) : 0;
-	}
-
-	/**
-	 * Resolve attachment ID from attachment page URL.
-	 *
-	 * @param string $url URL.
-	 * @return int
-	 */
-	private static function attachment_id_for_attachment_page_url( $url ) {
-		$path = parse_url( $url, PHP_URL_PATH );
-
-		if ( ! $path ) {
+		if ( empty( $attachments ) ) {
 			return 0;
 		}
 
-		$home_path = parse_url( home_url( '/' ), PHP_URL_PATH );
+		$attachment = reset( $attachments );
 
-		if ( $home_path && '/' !== $home_path && 0 === strpos( $path, $home_path ) ) {
-			$path = substr( $path, strlen( $home_path ) );
-		}
-
-		$path = trim( rawurldecode( $path ), '/' );
-
-		if ( ! $path || preg_match( '/\.pdf$/i', $path ) || ! function_exists( 'get_page_by_path' ) ) {
-			return 0;
-		}
-
-		$basename   = basename( $path );
-		$candidates = array( $path );
-
-		if ( $basename && $basename !== $path ) {
-			$candidates[] = $basename;
-		}
-
-		foreach ( array_unique( $candidates ) as $candidate ) {
-			$attachment = get_page_by_path( $candidate, OBJECT, 'attachment' );
-
-			if ( $attachment && 'attachment' === get_post_type( $attachment ) ) {
-				return absint( $attachment->ID );
-			}
-
-			$attachment_id = self::attachment_id_for_slug( $candidate );
-
-			if ( $attachment_id ) {
-				return $attachment_id;
-			}
-		}
-
-		return 0;
-	}
-
-	/**
-	 * Resolve attachment by slug.
-	 *
-	 * @param string $slug Slug.
-	 * @return int
-	 */
-	private static function attachment_id_for_slug( $slug ) {
-		$attachments = get_posts(
-			array(
-				'fields'           => 'ids',
-				'name'             => sanitize_title( $slug ),
-				'numberposts'      => 1,
-				'post_status'      => 'inherit',
-				'post_type'        => 'attachment',
-				'suppress_filters' => true,
-			)
-		);
-
-		return $attachments ? absint( $attachments[0] ) : 0;
+		return absint( is_object( $attachment ) && isset( $attachment->ID ) ? $attachment->ID : $attachment );
 	}
 
 	/**
