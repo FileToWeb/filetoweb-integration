@@ -79,6 +79,28 @@ class ApiClientTest extends TestCase {
 		$this->assertTrue( $result['ok'] );
 	}
 
+	public function test_initial_url_import_allows_the_bounded_45_second_window(): void {
+		Functions\expect( 'wp_remote_request' )
+			->once()
+			->with(
+				'https://filetoweb.com/v1/documents',
+				\Mockery::on(
+					function ( $args ) {
+						return 'POST' === $args['method'] && 45 === $args['timeout'];
+					}
+				)
+			)
+			->andReturn( array( 'body' => '{"document":{"status":"processing"}}' ) );
+		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"document":{"status":"processing"}}' );
+
+		$result = Api_Client::upsert_document( array( 'external_id' => 'wordpress:test:attachment:1' ) );
+
+		$this->assertTrue( $result['ok'] );
+	}
+
 	public function test_auth_context_uses_the_stored_bearer_key(): void {
 		Functions\expect( 'wp_remote_request' )
 			->once()

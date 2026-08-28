@@ -514,6 +514,47 @@ class ProudHtmlPreviewTest extends TestCase {
 		);
 	}
 
+	public function test_oakwood_assets_publish_as_one_complete_stateless_bundle(): void {
+		if ( ! in_array( 'ftwgs', stream_get_wrappers(), true ) ) {
+			$this->assertTrue( stream_wrapper_register( 'ftwgs', FtwGsDirectoryStreamWrapper::class ) );
+		}
+
+		FtwGsDirectoryStreamWrapper::$root = $this->uploads_dir;
+		$this->use_stream_uploads           = true;
+
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) {
+				$bodies = array(
+					'https://filetoweb.com/d/oakwood/assets/agenda.png' => 'AGENDA',
+					'https://filetoweb.com/d/oakwood/assets/agenda.csv' => "Date,Item\n2026-03-02,Agenda",
+					'https://filetoweb.com/d/oakwood/assets/seal.svg' => '<svg xmlns="http://www.w3.org/2000/svg"><image href="seal.png"/></svg>',
+					'https://filetoweb.com/d/oakwood/assets/seal.png' => 'SEAL',
+				);
+
+				return array(
+					'code' => isset( $bodies[ $url ] ) ? 200 : 404,
+					'body' => isset( $bodies[ $url ] ) ? $bodies[ $url ] : '',
+				);
+			}
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			75,
+			'<html><body><img src="/d/oakwood/assets/agenda.png"><a href="/d/oakwood/assets/agenda.csv">CSV</a><img src="/d/oakwood/assets/seal.svg"></body></html>',
+			'https://filetoweb.com/d/oakwood/continuous?chrome=0',
+			'https://storage.googleapis.com/proudcity/delawarecountyin/agenda.pdf',
+			'oakwood-assets-fingerprint'
+		);
+
+		$this->assertIsArray( $record, Proud_HTML_Preview::last_publish_error() );
+		$this->assertCount( 5, $record['artifacts'] );
+		$bundle_dir = dirname( $this->uploads_dir . '/proudcity/delawarecountyin/' . $record['artifact_key'] );
+		$this->assertCount( 4, glob( $bundle_dir . '/assets/*' ) );
+		$html = file_get_contents( $bundle_dir . '/index.html' );
+		$this->assertStringNotContainsString( 'filetoweb.com/d/oakwood/assets/', $html );
+		$this->assertStringContainsString( 'storage.googleapis.com/proudcity/delawarecountyin/', $html );
+	}
+
 	public function test_private_stateless_stream_preview_uses_authenticated_storage_verification(): void {
 		if ( ! in_array( 'ftwgs', stream_get_wrappers(), true ) ) {
 			$this->assertTrue( stream_wrapper_register( 'ftwgs', FtwGsDirectoryStreamWrapper::class ) );
@@ -779,9 +820,391 @@ class ProudHtmlPreviewTest extends TestCase {
 		);
 
 		$this->assertFalse( $record );
-		$this->assertSame( 'One or more FileToWeb preview assets could not be written to WordPress storage.', Proud_HTML_Preview::last_publish_error() );
+		$this->assertSame( 'A FileToWeb preview asset could not be published: missing.png (the download returned HTTP 404).', Proud_HTML_Preview::last_publish_error() );
 		$this->assertArrayNotHasKey( 48, $this->meta );
 		$this->assertFileDoesNotExist( $this->uploads_dir . '/filetoweb-integration/previews/48/missingassetfingerprint/index.html' );
+	}
+
+	public function test_oakwood_march_agenda_mirrors_png_and_csv_download(): void {
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) {
+				$this->requests[] = $url;
+				$bodies           = array(
+					'https://filetoweb.com/d/march/assets/page-11-crop-1.png' => 'PNGDATA',
+					'https://filetoweb.com/d/march/assets/page-11-data-1.csv' => "zone,street\n1,Far Hills Ave\n",
+				);
+
+				return array(
+					'code' => isset( $bodies[ $url ] ) ? 200 : 404,
+					'body' => isset( $bodies[ $url ] ) ? $bodies[ $url ] : '',
+				);
+			}
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			25525,
+			'<html><body><img src="/d/march/assets/page-11-crop-1.png" alt="Map"><a href="/d/march/assets/page-11-data-1.csv" download>Download map data</a></body></html>',
+			'https://filetoweb.com/d/march/continuous?chrome=0',
+			'https://storage.googleapis.com/proudcity/oakwoodoh/meeting-packet.pdf',
+			'march-agenda-fingerprint'
+		);
+
+		$this->assertIsArray( $record );
+		$this->assertCount( 3, $record['artifacts'] );
+		$stored = file_get_contents( $this->uploads_dir . '/' . $record['artifact_key'] );
+		$this->assertStringContainsString( '-page-11-crop-1.png', $stored );
+		$this->assertStringContainsString( '-page-11-data-1.csv', $stored );
+		$this->assertStringNotContainsString( '/d/march/assets/', $stored );
+		$this->assertCount( 1, glob( dirname( $this->uploads_dir . '/' . $record['artifact_key'] ) . '/assets/*.csv' ) );
+	}
+
+	public function test_oakwood_personnel_svg_is_sanitized_with_nested_png(): void {
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) {
+				$this->requests[] = $url;
+				$bodies           = array(
+					'https://filetoweb.com/d/personnel/assets/page-1-img-1.png' => 'SEALPNG',
+					'https://filetoweb.com/d/personnel/assets/page-4-seal.svg' => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 593 428" role="presentation" aria-hidden="true"><image href="page-4-img-1.png" x="0" y="-112" width="593" height="750" preserveAspectRatio="none"/></svg>',
+					'https://filetoweb.com/d/personnel/assets/page-4-img-1.png' => 'WATERMARKPNG',
+				);
+
+				return array(
+					'code' => isset( $bodies[ $url ] ) ? 200 : 404,
+					'body' => isset( $bodies[ $url ] ) ? $bodies[ $url ] : '',
+				);
+			}
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			25268,
+			'<html><body><img src="/d/personnel/assets/page-1-img-1.png" alt="Oakwood seal"><img src="/d/personnel/assets/page-4-seal.svg" alt=""></body></html>',
+			'https://filetoweb.com/d/personnel/continuous?chrome=0',
+			'https://storage.googleapis.com/proudcity/oakwoodoh/personnel-regulations.pdf',
+			'personnel-fingerprint'
+		);
+
+		$this->assertIsArray( $record );
+		$this->assertCount( 4, $record['artifacts'] );
+		$bundle_dir = dirname( $this->uploads_dir . '/' . $record['artifact_key'] );
+		$svg_files  = glob( $bundle_dir . '/assets/*.svg' );
+		$this->assertCount( 1, $svg_files );
+		$svg = file_get_contents( $svg_files[0] );
+		$this->assertStringContainsString( 'role="presentation"', $svg );
+		$this->assertStringContainsString( 'preserveAspectRatio="none"', $svg );
+		$this->assertStringContainsString( '-page-4-img-1.png', $svg );
+		$this->assertStringNotContainsString( 'href="page-4-img-1.png"', $svg );
+		$this->assertCount( 2, glob( $bundle_dir . '/assets/*.png' ) );
+	}
+
+	public function test_active_svg_elements_are_rejected_instead_of_published(): void {
+		Functions\when( 'wp_remote_get' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"><animate attributeName="href" to="javascript:alert(1)"/></rect></svg>',
+			)
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			53,
+			'<html><body><img src="/d/demo/assets/active.svg"></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/active.pdf',
+			'active-svg-fingerprint'
+		);
+
+		$this->assertFalse( $record );
+		$this->assertFalse( Proud_HTML_Preview::last_publish_retryable() );
+		$this->assertStringContainsString( 'active.svg', Proud_HTML_Preview::last_publish_error() );
+	}
+
+	public function test_namespaced_active_svg_element_is_rejected(): void {
+		Functions\when( 'wp_remote_get' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => '<svg xmlns="http://www.w3.org/2000/svg" xmlns:x="http://www.w3.org/2000/svg"><x:script>alert(1)</x:script></svg>',
+			)
+		);
+
+		$this->assertFalse(
+			Proud_HTML_Preview::publish(
+				57,
+				'<html><body><img src="/d/demo/assets/namespaced.svg"></body></html>',
+				'https://filetoweb.com/d/demo/continuous?chrome=0',
+				'https://city.example/wp-content/uploads/namespaced.pdf',
+				'namespaced-svg-fingerprint'
+			)
+		);
+	}
+
+	public function test_legacy_xlink_image_is_normalized_to_local_href(): void {
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) {
+				if ( 'https://filetoweb.com/d/demo/assets/legacy.svg' === $url ) {
+					return array(
+						'code' => 200,
+						'body' => '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="seal.png"/></svg>',
+					);
+				}
+
+				return array( 'code' => 200, 'body' => 'PNG' );
+			}
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			60,
+			'<html><body><img src="/d/demo/assets/legacy.svg"></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/legacy-xlink.pdf',
+			'legacy-xlink-fingerprint'
+		);
+
+		$this->assertIsArray( $record );
+		$svg = file_get_contents( glob( dirname( $this->uploads_dir . '/' . $record['artifact_key'] ) . '/assets/*.svg' )[0] );
+		$this->assertStringNotContainsString( 'xlink:href', $svg );
+		$this->assertStringContainsString( 'href="https://city.example/wp-content/uploads/', $svg );
+	}
+
+	public function test_external_xlink_image_is_rejected(): void {
+		Functions\when( 'wp_remote_get' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="https://tracking.example/pixel.png"/></svg>',
+			)
+		);
+
+		$this->assertFalse(
+			Proud_HTML_Preview::publish(
+				61,
+				'<html><body><img src="/d/demo/assets/external-xlink.svg"></body></html>',
+				'https://filetoweb.com/d/demo/continuous?chrome=0',
+				'https://city.example/wp-content/uploads/external-xlink.pdf',
+				'external-xlink-fingerprint'
+			)
+		);
+	}
+
+	public function test_namespaced_event_attribute_is_removed(): void {
+		Functions\when( 'wp_remote_get' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => '<svg xmlns="http://www.w3.org/2000/svg" xmlns:e="https://evil.example/ns" e:onload="alert(1)"><rect width="10" height="10"/></svg>',
+			)
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			62,
+			'<html><body><img src="/d/demo/assets/event.svg"></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/event.pdf',
+			'event-svg-fingerprint'
+		);
+
+		$this->assertIsArray( $record );
+		$svg = file_get_contents( glob( dirname( $this->uploads_dir . '/' . $record['artifact_key'] ) . '/assets/*.svg' )[0] );
+		$this->assertStringNotContainsString( 'onload', $svg );
+	}
+
+	public function test_malformed_svg_is_rejected(): void {
+		Functions\when( 'wp_remote_get' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => '<svg xmlns="http://www.w3.org/2000/svg"><image></svg>',
+			)
+		);
+
+		$this->assertFalse(
+			Proud_HTML_Preview::publish(
+				58,
+				'<html><body><img src="/d/demo/assets/malformed.svg"></body></html>',
+				'https://filetoweb.com/d/demo/continuous?chrome=0',
+				'https://city.example/wp-content/uploads/malformed.pdf',
+				'malformed-svg-fingerprint'
+			)
+		);
+	}
+
+	public function test_svg_external_css_reference_is_removed(): void {
+		Functions\when( 'wp_remote_get' )->justReturn(
+			array(
+				'code' => 200,
+				'body' => '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10" fill="url(https://tracking.example/pixel.svg)"/></svg>',
+			)
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			54,
+			'<html><body><img src="/d/demo/assets/static.svg"></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/static.pdf',
+			'static-svg-fingerprint'
+		);
+
+		$this->assertIsArray( $record );
+		$svg = file_get_contents( glob( dirname( $this->uploads_dir . '/' . $record['artifact_key'] ) . '/assets/*.svg' )[0] );
+		$this->assertStringNotContainsString( 'tracking.example', $svg );
+		$this->assertStringNotContainsString( 'fill=', $svg );
+	}
+
+	public function test_optional_svg_cannot_hide_a_missing_required_dependency(): void {
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) {
+				if ( 'https://filetoweb.com/d/demo/assets/seal.svg' === $url ) {
+					return array( 'code' => 200, 'body' => '<svg xmlns="http://www.w3.org/2000/svg"><image href="missing.png"/></svg>' );
+				}
+
+				return array( 'code' => 404, 'body' => '' );
+			}
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			55,
+			'<html><body><a href="/d/demo/assets/seal.svg">Download</a><img src="/d/demo/assets/seal.svg"></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/required.pdf',
+			'required-svg-fingerprint'
+		);
+
+		$this->assertFalse( $record );
+		$this->assertStringContainsString( 'missing.png', Proud_HTML_Preview::last_publish_error() );
+	}
+
+	public function test_transient_nested_svg_asset_failure_remains_retryable(): void {
+		$error = new class {
+			public function get_error_message() {
+				return 'cURL error 28: Operation timed out';
+			}
+		};
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) use ( $error ) {
+				if ( 'https://filetoweb.com/d/demo/assets/seal.svg' === $url ) {
+					return array( 'code' => 200, 'body' => '<svg xmlns="http://www.w3.org/2000/svg"><image href="seal.png"/></svg>' );
+				}
+
+				return $error;
+			}
+		);
+		Functions\when( 'is_wp_error' )->alias(
+			function ( $response ) use ( $error ) {
+				return $response === $error;
+			}
+		);
+
+		$this->assertFalse(
+			Proud_HTML_Preview::publish(
+				59,
+				'<html><body><img src="/d/demo/assets/seal.svg"></body></html>',
+				'https://filetoweb.com/d/demo/continuous?chrome=0',
+				'https://city.example/wp-content/uploads/transient.pdf',
+				'transient-svg-fingerprint'
+			)
+		);
+		$this->assertTrue( Proud_HTML_Preview::last_publish_retryable() );
+	}
+
+	public function test_preview_asset_graph_is_bounded(): void {
+		Functions\when( 'wp_remote_get' )->justReturn( array( 'code' => 200, 'body' => 'PNG' ) );
+		$images = '';
+		for ( $index = 0; $index <= Proud_HTML_Preview::MAX_ASSET_COUNT; ++$index ) {
+			$images .= '<img src="/d/demo/assets/image-' . $index . '.png">';
+		}
+
+		$record = Proud_HTML_Preview::publish(
+			56,
+			'<html><body>' . $images . '</body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/bounded.pdf',
+			'bounded-assets-fingerprint'
+		);
+
+		$this->assertFalse( $record );
+		$this->assertFalse( Proud_HTML_Preview::last_publish_retryable() );
+		$this->assertStringContainsString( 'asset count limit', Proud_HTML_Preview::last_publish_error() );
+	}
+
+	public function test_optional_download_budget_cannot_starve_required_visual_assets(): void {
+		Functions\when( 'wp_remote_get' )->justReturn( array( 'code' => 200, 'body' => 'DATA' ) );
+		$downloads = '';
+		for ( $index = 0; $index <= Proud_HTML_Preview::MAX_OPTIONAL_ASSET_COUNT; ++$index ) {
+			$downloads .= '<a href="/d/demo/assets/download-' . $index . '.csv">CSV</a>';
+		}
+
+		$record = Proud_HTML_Preview::publish(
+			63,
+			'<html><body>' . $downloads . '<img src="/d/demo/assets/required.png"></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/optional-budget.pdf',
+			'optional-budget-fingerprint'
+		);
+
+		$this->assertIsArray( $record );
+		$bundle_dir = dirname( $this->uploads_dir . '/' . $record['artifact_key'] );
+		$this->assertCount( 1, glob( $bundle_dir . '/assets/*.png' ) );
+		$this->assertCount( Proud_HTML_Preview::MAX_OPTIONAL_ASSET_COUNT, glob( $bundle_dir . '/assets/*.csv' ) );
+		$html = file_get_contents( $bundle_dir . '/index.html' );
+		$this->assertStringContainsString( 'required.png', $html );
+		$this->assertStringContainsString( 'data-filetoweb-asset-unavailable="true"', $html );
+	}
+
+	public function test_optional_timeout_stops_later_optional_fetches_but_keeps_required_preview(): void {
+		$error = new class {
+			public function get_error_message() {
+				return 'cURL error 28: Operation timed out';
+			}
+		};
+		$requests = array();
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url, $args ) use ( $error, &$requests ) {
+				$requests[] = array( $url, $args['timeout'] );
+
+				if ( 'https://filetoweb.com/d/demo/assets/required.png' === $url ) {
+					return array( 'code' => 200, 'body' => 'PNG' );
+				}
+
+				return $error;
+			}
+		);
+		Functions\when( 'is_wp_error' )->alias(
+			function ( $response ) use ( $error ) {
+				return $response === $error;
+			}
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			64,
+			'<html><body><a href="/d/demo/assets/first.csv">First CSV</a><a href="/d/demo/assets/second.csv">Second CSV</a><img src="/d/demo/assets/required.png"></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/optional-timeout.pdf',
+			'optional-timeout-fingerprint'
+		);
+
+		$this->assertIsArray( $record );
+		$this->assertSame(
+			array(
+				array( 'https://filetoweb.com/d/demo/assets/required.png', 20 ),
+				array( 'https://filetoweb.com/d/demo/assets/first.csv', 5 ),
+			),
+			$requests
+		);
+		$bundle_dir = dirname( $this->uploads_dir . '/' . $record['artifact_key'] );
+		$this->assertCount( 1, glob( $bundle_dir . '/assets/*.png' ) );
+		$html = file_get_contents( $bundle_dir . '/index.html' );
+		$this->assertSame( 2, substr_count( $html, 'data-filetoweb-asset-unavailable="true"' ) );
+	}
+
+	public function test_missing_optional_download_does_not_suppress_preview(): void {
+		$record = Proud_HTML_Preview::publish(
+			52,
+			'<html><body><main>Visible agenda</main><a href="/d/demo/assets/export.xlsx">Download workbook</a></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/agenda.pdf',
+			'optional-download-fingerprint'
+		);
+
+		$this->assertIsArray( $record );
+		$stored = file_get_contents( $this->uploads_dir . '/' . $record['artifact_key'] );
+		$this->assertStringContainsString( 'Visible agenda', $stored );
+		$this->assertStringContainsString( 'data-filetoweb-asset-unavailable="true"', $stored );
+		$this->assertStringNotContainsString( '/d/demo/assets/export.xlsx', $stored );
 	}
 
 	public function test_stateless_failure_does_not_publish_the_pointer(): void {

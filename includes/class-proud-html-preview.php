@@ -28,6 +28,11 @@ class Proud_HTML_Preview {
 	const STORAGE_BACKEND_LOCAL    = 'local';
 	const STORAGE_BACKEND_STATELESS = 'wp-stateless';
 	const BUNDLE_ROOT              = 'filetoweb-integration/previews';
+	const MAX_ASSET_COUNT          = 200;
+	const MAX_ASSET_DEPTH          = 6;
+	const MAX_ASSET_BYTES          = 52428800;
+	const MAX_OPTIONAL_ASSET_COUNT = 20;
+	const MAX_OPTIONAL_ASSET_BYTES = 10485760;
 
 	/**
 	 * Customer-safe reason the latest publication attempt failed.
@@ -35,6 +40,53 @@ class Proud_HTML_Preview {
 	 * @var string
 	 */
 	private static $last_publish_error = '';
+
+	/**
+	 * Whether the latest publication failure is safe to retry automatically.
+	 *
+	 * @var bool
+	 */
+	private static $last_publish_retryable = false;
+
+	/**
+	 * Internal detail for the latest asset publication failure.
+	 *
+	 * @var string
+	 */
+	private static $last_asset_error = '';
+
+	/**
+	 * Required-asset failure aggregation for retry classification.
+	 *
+	 * @var bool
+	 */
+	private static $has_asset_failure = false;
+
+	/**
+	 * Whether every required-asset failure observed so far is transient.
+	 *
+	 * @var bool
+	 */
+	private static $asset_failures_retryable = true;
+
+	/**
+	 * Per-publication asset graph limits.
+	 *
+	 * @var int
+	 */
+	private static $asset_count = 0;
+
+	/** @var int */
+	private static $asset_bytes = 0;
+
+	/** @var int */
+	private static $optional_asset_count = 0;
+
+	/** @var int */
+	private static $optional_asset_bytes = 0;
+
+	/** @var bool */
+	private static $optional_asset_fetches_disabled = false;
 
 	/**
 	 * Register preview publication lifecycle hooks.
@@ -184,7 +236,16 @@ class Proud_HTML_Preview {
 	 * @return array|false Preview record or false.
 	 */
 	public static function publish( $post_id, $html, $viewer_url, $source_url, $fingerprint, $content_versioned = false ) {
-		self::$last_publish_error = '';
+		self::$last_publish_error       = '';
+		self::$last_publish_retryable   = false;
+		self::$last_asset_error         = '';
+		self::$has_asset_failure        = false;
+		self::$asset_failures_retryable = true;
+		self::$asset_count             = 0;
+		self::$asset_bytes             = 0;
+		self::$optional_asset_count    = 0;
+		self::$optional_asset_bytes    = 0;
+		self::$optional_asset_fetches_disabled = false;
 
 		$post_id     = absint( $post_id );
 		$html        = is_string( $html ) ? trim( $html ) : '';
@@ -264,7 +325,11 @@ class Proud_HTML_Preview {
 
 		if ( ! $complete ) {
 			self::remove_directory( $temp_dir );
-			return self::publish_failure( __( 'One or more FileToWeb preview assets could not be written to WordPress storage.', 'filetoweb-integration' ) );
+			$message = self::$last_asset_error
+				? sprintf( __( 'A FileToWeb preview asset could not be published: %s', 'filetoweb-integration' ), self::$last_asset_error )
+				: __( 'One or more FileToWeb preview assets could not be written to WordPress storage.', 'filetoweb-integration' );
+
+			return self::publish_failure( $message, self::$has_asset_failure && self::$asset_failures_retryable );
 		}
 
 		$html       = self::sanitize_html( $html );
@@ -347,13 +412,24 @@ class Proud_HTML_Preview {
 	}
 
 	/**
+	 * Whether the latest publication failure is safe to retry automatically.
+	 *
+	 * @return bool
+	 */
+	public static function last_publish_retryable() {
+		return self::$last_publish_retryable;
+	}
+
+	/**
 	 * Store a customer-safe publication failure.
 	 *
 	 * @param string $message Failure message.
+	 * @param bool   $retryable Whether retrying later may succeed without configuration changes.
 	 * @return false
 	 */
-	private static function publish_failure( $message ) {
-		self::$last_publish_error = sanitize_text_field( $message );
+	private static function publish_failure( $message, $retryable = false ) {
+		self::$last_publish_error     = sanitize_text_field( $message );
+		self::$last_publish_retryable = (bool) $retryable;
 
 		return false;
 	}
@@ -1188,8 +1264,10 @@ class Proud_HTML_Preview {
 	 * @return string
 	 */
 	private static function mirror_assets( $html, $viewer_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
+		$html = self::mirror_link_assets( $html, $viewer_url, $bundle_dir, $bundle_url, $mirrored, $complete );
+
 		$html = preg_replace_callback(
-			'~\b(?P<attr>src|href|poster)\s*=\s*(?:(?P<quote>["\'])(?P<quoted>[^"\']+)(?P=quote)|(?P<unquoted>[^\s>]+))~i',
+			'~(?<![-:\w])(?P<attr>src|poster)\s*=\s*(?:(?P<quote>["\'])(?P<quoted>[^"\']+)(?P=quote)|(?P<unquoted>[^\s>]+))~i',
 			function ( $match ) use ( $viewer_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
 				$value  = isset( $match['quoted'] ) && '' !== $match['quoted'] ? $match['quoted'] : $match['unquoted'];
 				$quote  = isset( $match['quote'] ) && $match['quote'] ? $match['quote'] : '"';
@@ -1227,7 +1305,78 @@ class Proud_HTML_Preview {
 			$html
 		);
 
-		return self::rewrite_css_urls( $html, $viewer_url, $bundle_dir, $bundle_url, $mirrored, $complete );
+		$html = self::rewrite_css_urls( $html, $viewer_url, $bundle_dir, $bundle_url, $mirrored, $complete );
+
+		return self::mirror_anchor_assets( $html, $viewer_url, $bundle_dir, $bundle_url, $mirrored, $complete );
+	}
+
+	/**
+	 * Mirror stylesheet and other link resources required by the visual preview.
+	 *
+	 * @param string $html HTML.
+	 * @param string $viewer_url Viewer URL.
+	 * @param string $bundle_dir Temporary bundle directory.
+	 * @param string $bundle_url Final public bundle URL.
+	 * @param array  $mirrored URL map.
+	 * @param bool   $complete Whether every required FileToWeb asset was mirrored.
+	 * @return string
+	 */
+	private static function mirror_link_assets( $html, $viewer_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
+		return preg_replace_callback(
+			'~<link\b(?P<before>[^>]*?)(?<![-:\w])href\s*=\s*(?:(?P<quote>["\'])(?P<quoted>[^"\']+)(?P=quote)|(?P<unquoted>[^\s>]+))(?P<after>[^>]*)>~i',
+			function ( $match ) use ( $viewer_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
+				$value  = isset( $match['quoted'] ) && '' !== $match['quoted'] ? $match['quoted'] : $match['unquoted'];
+				$remote = self::resolve_asset_url( $value, $viewer_url );
+
+				if ( ! $remote ) {
+					return $match[0];
+				}
+
+				$local = self::mirror_asset( $remote, $bundle_dir, $bundle_url, $mirrored, $complete );
+				if ( ! $local ) {
+					$complete = false;
+					return $match[0];
+				}
+
+				return '<link' . $match['before'] . 'href="' . esc_url_raw( $local ) . '"' . $match['after'] . '>';
+			},
+			$html
+		);
+	}
+
+	/**
+	 * Mirror downloadable anchor assets without making an optional download
+	 * suppress the entire visual preview when that download is unavailable.
+	 *
+	 * @param string $html HTML.
+	 * @param string $viewer_url Viewer URL.
+	 * @param string $bundle_dir Temporary bundle directory.
+	 * @param string $bundle_url Final public bundle URL.
+	 * @param array  $mirrored URL map.
+	 * @param bool   $complete Whether every required FileToWeb asset was mirrored.
+	 * @return string
+	 */
+	private static function mirror_anchor_assets( $html, $viewer_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
+		return preg_replace_callback(
+			'~<a\b(?P<before>[^>]*?)(?<![-:\w])href\s*=\s*(?:(?P<quote>["\'])(?P<quoted>[^"\']+)(?P=quote)|(?P<unquoted>[^\s>]+))(?P<after>[^>]*)>~i',
+			function ( $match ) use ( $viewer_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
+				$value  = isset( $match['quoted'] ) && '' !== $match['quoted'] ? $match['quoted'] : $match['unquoted'];
+				$remote = self::resolve_asset_url( $value, $viewer_url );
+
+				if ( ! $remote ) {
+					return $match[0];
+				}
+
+				$local = self::mirror_asset( $remote, $bundle_dir, $bundle_url, $mirrored, $complete, false );
+				if ( $local ) {
+					return '<a' . $match['before'] . 'href="' . esc_url_raw( $local ) . '"' . $match['after'] . '>';
+				}
+
+				// Keep the document usable even when an auxiliary download is not.
+				return '<a' . $match['before'] . 'href="#" aria-disabled="true" data-filetoweb-asset-unavailable="true"' . $match['after'] . '>';
+			},
+			$html
+		);
 	}
 
 	/**
@@ -1238,9 +1387,21 @@ class Proud_HTML_Preview {
 	 * @param string $bundle_url Bundle URL.
 	 * @param array  $mirrored URL map.
 	 * @param bool   $complete Whether every required FileToWeb asset was mirrored.
+	 * @param bool   $required Whether this asset is required for visual rendering.
+	 * @param int    $depth Current asset dependency depth.
 	 * @return string
 	 */
-	private static function mirror_asset( $remote_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
+	private static function mirror_asset( $remote_url, $bundle_dir, $bundle_url, &$mirrored, &$complete, $required = true, $depth = 0 ) {
+		if ( ( $required && ! $complete ) || $depth > self::MAX_ASSET_DEPTH ) {
+			if ( $depth > self::MAX_ASSET_DEPTH ) {
+				self::record_asset_error( $remote_url, __( 'the preview asset dependency depth limit was exceeded', 'filetoweb-integration' ), $required, false );
+			}
+			return '';
+		}
+		if ( ! $required && self::$optional_asset_fetches_disabled ) {
+			return '';
+		}
+
 		if ( isset( $mirrored[ $remote_url ] ) ) {
 			return $mirrored[ $remote_url ];
 		}
@@ -1249,8 +1410,22 @@ class Proud_HTML_Preview {
 		$basename = sanitize_file_name( basename( rawurldecode( $path ) ) );
 		$ext      = strtolower( pathinfo( $basename, PATHINFO_EXTENSION ) );
 
-		if ( ! $basename || ! in_array( $ext, array( 'css', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'woff', 'woff2', 'ttf', 'otf' ), true ) ) {
+		if ( ! $basename || ! in_array( $ext, array( 'css', 'csv', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'svg', 'woff', 'woff2', 'ttf', 'otf' ), true ) ) {
+			self::record_asset_error( $remote_url, __( 'the file type is not supported', 'filetoweb-integration' ), $required, false );
 			return '';
+		}
+
+		if ( $required ) {
+			if ( self::$asset_count >= self::MAX_ASSET_COUNT ) {
+				self::record_asset_error( $remote_url, __( 'the preview asset count limit was exceeded', 'filetoweb-integration' ), true, false );
+				return '';
+			}
+			++self::$asset_count;
+		} else {
+			if ( self::$optional_asset_count >= self::MAX_OPTIONAL_ASSET_COUNT ) {
+				return '';
+			}
+			++self::$optional_asset_count;
 		}
 
 		$filename = substr( hash( 'sha256', $remote_url ), 0, 16 ) . '-' . $basename;
@@ -1259,6 +1434,7 @@ class Proud_HTML_Preview {
 		$url      = trailingslashit( $bundle_url ) . 'assets/' . rawurlencode( $filename );
 
 		if ( ! wp_mkdir_p( $dir ) ) {
+			self::record_asset_error( $remote_url, __( 'WordPress could not create the asset directory', 'filetoweb-integration' ), $required, false );
 			return '';
 		}
 
@@ -1266,7 +1442,7 @@ class Proud_HTML_Preview {
 		$response = wp_remote_get(
 			$remote_url,
 			array(
-				'timeout'            => 20,
+				'timeout'            => $required ? 20 : 5,
 				'redirection'        => 0,
 				'reject_unsafe_urls' => true,
 			)
@@ -1274,28 +1450,248 @@ class Proud_HTML_Preview {
 
 		if ( is_wp_error( $response ) ) {
 			unset( $mirrored[ $remote_url ] );
+			$message = $response->get_error_message();
+			$retryable = Api_Client::is_retryable_error( $message );
+			if ( ! $required ) {
+				self::$optional_asset_fetches_disabled = true;
+			}
+			self::record_asset_error( $remote_url, $message, $required, $retryable );
 			return '';
 		}
 
 		$code = absint( wp_remote_retrieve_response_code( $response ) );
 		$body = (string) wp_remote_retrieve_body( $response );
 
-		if ( $code < 200 || $code >= 300 || '' === $body || strlen( $body ) > 5 * 1024 * 1024 ) {
+		$body_size = strlen( $body );
+		$bundle_limit_exceeded = $required
+			? self::$asset_bytes + $body_size > self::MAX_ASSET_BYTES
+			: self::$optional_asset_bytes + $body_size > self::MAX_OPTIONAL_ASSET_BYTES;
+		if ( $code < 200 || $code >= 300 || '' === $body || $body_size > 5 * 1024 * 1024 || $bundle_limit_exceeded ) {
 			unset( $mirrored[ $remote_url ] );
+			if ( $code < 200 || $code >= 300 ) {
+				$reason    = sprintf( __( 'the download returned HTTP %d', 'filetoweb-integration' ), $code );
+				$retryable = in_array( $code, array( 408, 425, 429 ), true ) || $code >= 500;
+			} elseif ( '' === $body ) {
+				$reason    = __( 'the downloaded file was empty', 'filetoweb-integration' );
+				$retryable = true;
+			} elseif ( $body_size > 5 * 1024 * 1024 ) {
+				$reason    = __( 'the downloaded file exceeded 5 MB', 'filetoweb-integration' );
+				$retryable = false;
+			} else {
+				$reason    = $required
+					? __( 'the preview bundle exceeded the 50 MB asset limit', 'filetoweb-integration' )
+					: __( 'the optional download bundle exceeded the 10 MB asset limit', 'filetoweb-integration' );
+				$retryable = false;
+			}
+			if ( ! $required ) {
+				self::$optional_asset_fetches_disabled = true;
+			}
+			self::record_asset_error( $remote_url, $reason, $required, $retryable );
 			return '';
+		}
+		if ( $required ) {
+			self::$asset_bytes += $body_size;
+		} else {
+			self::$optional_asset_bytes += $body_size;
 		}
 
 		if ( 'css' === $ext ) {
-			$body = self::rewrite_css_urls( $body, $remote_url, $bundle_dir, $bundle_url, $mirrored, $complete );
+			$body = self::rewrite_css_urls( $body, $remote_url, $bundle_dir, $bundle_url, $mirrored, $complete, $required, $depth + 1 );
 			$body = self::sanitize_css( $body );
+			if ( self::contains_filetoweb_asset_reference( $body, $remote_url ) ) {
+				unset( $mirrored[ $remote_url ] );
+				if ( ! $required ) {
+					self::$optional_asset_fetches_disabled = true;
+				}
+				self::record_asset_error( $remote_url, __( 'the stylesheet contains an unavailable asset dependency', 'filetoweb-integration' ), $required, self::$asset_failures_retryable );
+				return '';
+			}
+		} elseif ( 'svg' === $ext ) {
+			$body = self::sanitize_svg_asset( $body, $remote_url, $bundle_dir, $bundle_url, $mirrored, $complete, $required, $depth + 1 );
+			if ( '' === $body ) {
+				unset( $mirrored[ $remote_url ] );
+				if ( ! $required ) {
+					self::$optional_asset_fetches_disabled = true;
+				}
+				$retryable = self::$has_asset_failure && self::$asset_failures_retryable;
+				self::record_asset_error( $remote_url, __( 'the SVG could not be safely published with all of its image dependencies', 'filetoweb-integration' ), $required, $retryable );
+				return '';
+			}
 		}
 
 		if ( false === file_put_contents( $path, $body ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_file_put_contents
 			unset( $mirrored[ $remote_url ] );
+			if ( ! $required ) {
+				self::$optional_asset_fetches_disabled = true;
+			}
+			self::record_asset_error( $remote_url, __( 'WordPress could not write the downloaded file', 'filetoweb-integration' ), $required, false );
 			return '';
 		}
 
 		return $url;
+	}
+
+	/**
+	 * Sanitize a generated SVG and mirror its nested FileToWeb image assets.
+	 *
+	 * SVG is accepted only as an image resource, never inline HTML. Active
+	 * elements, event handlers, and non-FileToWeb external references are
+	 * removed before the file is written to WordPress storage.
+	 *
+	 * @param string $svg SVG bytes.
+	 * @param string $remote_url SVG source URL.
+	 * @param string $bundle_dir Temporary bundle directory.
+	 * @param string $bundle_url Final public bundle URL.
+	 * @param array  $mirrored URL map.
+	 * @param bool   $complete Whether every required FileToWeb asset was mirrored.
+	 * @param bool   $required Whether the SVG is required for visual rendering.
+	 * @param int    $depth Current asset dependency depth.
+	 * @return string
+	 */
+	private static function sanitize_svg_asset( $svg, $remote_url, $bundle_dir, $bundle_url, &$mirrored, &$complete, $required, $depth ) {
+		$svg = is_string( $svg ) ? trim( $svg ) : '';
+		if ( '' === $svg || ! class_exists( '\\DOMDocument' ) || false !== stripos( $svg, '<!DOCTYPE' ) || false !== stripos( $svg, '<!ENTITY' ) ) {
+			return '';
+		}
+
+		$previous = libxml_use_internal_errors( true );
+		$dom      = new \DOMDocument();
+		$loaded   = $dom->loadXML( $svg, LIBXML_NONET );
+		$root     = $loaded ? $dom->documentElement : null;
+
+		if ( ! $root || 'svg' !== strtolower( $root->localName ) || ! in_array( (string) $root->namespaceURI, array( '', 'http://www.w3.org/2000/svg' ), true ) ) {
+			libxml_clear_errors();
+			libxml_use_internal_errors( $previous );
+			return '';
+		}
+
+		$allowed_elements = array(
+			'svg', 'g', 'defs', 'title', 'desc', 'path', 'rect', 'circle', 'ellipse', 'line',
+			'polyline', 'polygon', 'text', 'tspan', 'image', 'clippath', 'mask',
+			'lineargradient', 'radialgradient', 'stop',
+		);
+		$allowed_attributes = array(
+			'xmlns', 'xlink', 'viewbox', 'role', 'aria-hidden', 'aria-label', 'id', 'class',
+			'width', 'height', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry',
+			'd', 'points', 'transform', 'preserveaspectratio', 'fill', 'fill-opacity',
+			'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-dasharray',
+			'stroke-dashoffset', 'stroke-opacity', 'opacity', 'clip-path', 'mask',
+			'gradientunits', 'gradienttransform', 'offset', 'stop-color', 'stop-opacity',
+			'font-family', 'font-size', 'font-style', 'font-weight', 'text-anchor',
+			'dominant-baseline', 'vector-effect', 'href',
+		);
+
+		$xpath    = new \DOMXPath( $dom );
+		$elements = $xpath->query( '//*' );
+		if ( $elements ) {
+			foreach ( $elements as $element ) {
+				$element_name = strtolower( $element->localName );
+				if ( ! in_array( $element_name, $allowed_elements, true ) || ! in_array( (string) $element->namespaceURI, array( '', 'http://www.w3.org/2000/svg' ), true ) ) {
+					libxml_clear_errors();
+					libxml_use_internal_errors( $previous );
+					return '';
+				}
+
+				$remove          = array();
+				$normalized_href = null;
+				foreach ( $element->attributes as $attribute ) {
+					$name  = strtolower( $attribute->localName );
+					$value = trim( $attribute->value );
+
+					if ( 0 === strpos( $name, 'on' ) || ! in_array( $name, $allowed_attributes, true ) ) {
+						$remove[] = $attribute;
+						continue;
+					}
+
+					$is_namespace_declaration = 'http://www.w3.org/2000/xmlns/' === (string) $attribute->namespaceURI;
+					$is_xlink_href            = 'href' === $name && 'http://www.w3.org/1999/xlink' === (string) $attribute->namespaceURI;
+					if ( $attribute->namespaceURI && ! $is_namespace_declaration && ! $is_xlink_href ) {
+						$remove[] = $attribute;
+						continue;
+					}
+
+					if ( false !== stripos( $value, 'url(' ) ) {
+						if ( ! preg_match( '~^url\(\s*#[A-Za-z0-9_.:-]+\s*\)$~', $value ) ) {
+							$remove[] = $attribute;
+						}
+						continue;
+					}
+
+					if ( 'href' === $name ) {
+						if ( 'image' !== $element_name ) {
+							$remove[] = $attribute;
+							continue;
+						}
+
+						if ( '' === $value || '#' === substr( $value, 0, 1 ) ) {
+							$remove[]        = $attribute;
+							$normalized_href = $value;
+							continue;
+						}
+
+						if ( preg_match( '~^data:image/(?:png|jpe?g|gif|webp|avif);base64,~i', $value ) ) {
+							$remove[]        = $attribute;
+							$normalized_href = $value;
+							continue;
+						}
+
+						$nested_remote = self::resolve_asset_url( $value, $remote_url );
+						$nested_local  = $nested_remote ? self::mirror_asset( $nested_remote, $bundle_dir, $bundle_url, $mirrored, $complete, $required, $depth ) : '';
+						if ( ! $nested_local ) {
+							if ( $required ) {
+								$complete = false;
+							}
+							libxml_clear_errors();
+							libxml_use_internal_errors( $previous );
+							return '';
+						}
+
+						$remove[]        = $attribute;
+						$normalized_href = esc_url_raw( $nested_local );
+					}
+				}
+
+				foreach ( $remove as $attribute ) {
+					if ( $attribute->ownerElement === $element ) {
+						$element->removeAttributeNode( $attribute );
+					}
+				}
+
+				if ( null !== $normalized_href ) {
+					$element->setAttribute( 'href', $normalized_href );
+				}
+			}
+		}
+
+		$output = $dom->saveXML( $root );
+		libxml_clear_errors();
+		libxml_use_internal_errors( $previous );
+
+		return is_string( $output ) ? trim( $output ) : '';
+	}
+
+	/**
+	 * Keep one customer-safe asset failure detail without exposing full URLs.
+	 *
+	 * @param string $remote_url Remote asset URL.
+	 * @param string $reason Failure reason.
+	 * @param bool   $required Whether the asset is required for rendering.
+	 * @param bool   $retryable Whether retrying later may recover the asset.
+	 */
+	private static function record_asset_error( $remote_url, $reason, $required = true, $retryable = false ) {
+		if ( ! $required ) {
+			return;
+		}
+
+		self::$has_asset_failure        = true;
+		self::$asset_failures_retryable = self::$asset_failures_retryable && (bool) $retryable;
+		if ( self::$last_asset_error ) {
+			return;
+		}
+
+		$path     = (string) parse_url( $remote_url, PHP_URL_PATH );
+		$filename = sanitize_file_name( basename( rawurldecode( $path ) ) );
+		self::$last_asset_error = sprintf( '%s (%s).', $filename ? $filename : __( 'unknown asset', 'filetoweb-integration' ), sanitize_text_field( $reason ) );
 	}
 
 	/**
@@ -1307,16 +1703,18 @@ class Proud_HTML_Preview {
 	 * @param string $bundle_url Bundle URL.
 	 * @param array  $mirrored URL map.
 	 * @param bool   $complete Whether every required FileToWeb asset was mirrored.
+	 * @param bool   $required Whether CSS dependencies are required for visual rendering.
+	 * @param int    $depth Current asset dependency depth.
 	 * @return string
 	 */
-	private static function rewrite_css_urls( $css, $base_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
+	private static function rewrite_css_urls( $css, $base_url, $bundle_dir, $bundle_url, &$mirrored, &$complete, $required = true, $depth = 0 ) {
 		return preg_replace_callback(
 			'~url\(\s*(?P<quote>["\']?)(?P<value>[^)"\']+)(?P=quote)\s*\)~i',
-			function ( $match ) use ( $base_url, $bundle_dir, $bundle_url, &$mirrored, &$complete ) {
+			function ( $match ) use ( $base_url, $bundle_dir, $bundle_url, &$mirrored, &$complete, $required, $depth ) {
 				$remote = self::resolve_asset_url( trim( $match['value'] ), $base_url );
-				$local  = $remote ? self::mirror_asset( $remote, $bundle_dir, $bundle_url, $mirrored, $complete ) : '';
+				$local  = $remote ? self::mirror_asset( $remote, $bundle_dir, $bundle_url, $mirrored, $complete, $required, $depth ) : '';
 
-				if ( $remote && ! $local ) {
+				if ( $required && $remote && ! $local ) {
 					$complete = false;
 				}
 

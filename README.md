@@ -13,6 +13,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - ProudCity Document EPUB downloads are available as an opt-in setting and are off by default.
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
 - Ready FileToWeb output is published as a sanitized, fingerprinted bundle under WordPress uploads during sync/poll/admin actions, not during citizen page loads.
+- Completed previews that encounter a transient fetch or storage error use a bounded, per-document publication retry without resubmitting or reconverting the PDF.
 - True WP Stateless installations preserve the bundle's complete nested Google Cloud Storage object paths when making preview artifacts public.
 - Each completed bundle publishes a provider-neutral `_proud_html_preview` record with a complete artifact manifest that updated ProudCity core/theme releases can serve after this plugin is deactivated and clean up after uninstall. On WP Stateless sites, bundle paths and generated asset URLs use the exact tenant-prefixed GCS namespace and are verified directly through authenticated storage.
 - Public front-end PDF links are replaced with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.
@@ -66,7 +67,7 @@ On ProudCity releases that support `_proud_html_preview`, completed Proud Docume
 - Source URLs are checked for public HTTP/HTTPS hosts before HEAD requests or API submission.
 - FileToWeb response fields are explicitly allowlisted and sanitized before storage.
 - Result/editor URLs must use trusted FileToWeb hosts and are shown to admins, not used as the default public runtime URL.
-- Published preview bundles remove scripts, event handlers, unsafe elements/schemes, and mirror supported image, font, and stylesheet assets into WordPress uploads.
+- Published preview bundles remove scripts, event handlers, unsafe elements/schemes, and mirror supported images, fonts, stylesheets, CSV downloads, and strictly allowlisted SVG dependencies into WordPress uploads with bounded asset-graph limits.
 - Preview publication fails closed to the original PDF if WordPress cannot parse and sanitize the generated HTML.
 - ProudCity's provider-neutral endpoint validates the provider, token, source identity, artifact path, and trusted uploads/GCS URL before serving a bundle with a restrictive Content Security Policy.
 - Admin actions use nonces and capability checks.

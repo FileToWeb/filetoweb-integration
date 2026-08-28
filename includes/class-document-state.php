@@ -29,6 +29,8 @@ class Document_State {
 		const META_NEXT_POLL_AT                 = '_filetoweb_next_poll_at';
 		const META_LAST_POLLED_AT               = '_filetoweb_last_polled_at';
 		const META_POLL_ATTEMPTS                = '_filetoweb_poll_attempts';
+		const META_PREVIEW_RETRY_ATTEMPTS       = '_filetoweb_preview_retry_attempts';
+		const META_NEXT_PREVIEW_RETRY_AT        = '_filetoweb_next_preview_retry_at';
 		const META_ORIGINAL_URL                 = '_filetoweb_original_url';
 		const META_LOCAL_HTML_PATH              = '_filetoweb_local_html_path';
 		const META_LOCAL_HTML_TOKEN             = '_filetoweb_local_html_token';
@@ -70,6 +72,8 @@ class Document_State {
 				self::META_NEXT_POLL_AT,
 				self::META_LAST_POLLED_AT,
 				self::META_POLL_ATTEMPTS,
+				self::META_PREVIEW_RETRY_ATTEMPTS,
+				self::META_NEXT_PREVIEW_RETRY_AT,
 				self::META_ORIGINAL_URL,
 				self::META_LOCAL_HTML_PATH,
 				self::META_LOCAL_HTML_TOKEN,

@@ -13,6 +13,7 @@ class LocalHtmlTest extends TestCase {
 	private $meta        = array();
 	private $post_types  = array();
 	private $requests    = array();
+	private $scheduled   = array();
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -20,6 +21,7 @@ class LocalHtmlTest extends TestCase {
 
 		$this->uploads_dir = sys_get_temp_dir() . '/ftw-local-html-' . uniqid();
 		$this->requests    = array();
+		$this->scheduled   = array();
 		$this->post_types  = array();
 		$GLOBALS['filetoweb_test_preview_url_calls'] = array();
 		$GLOBALS['filetoweb_test_preview_urls']      = array();
@@ -107,6 +109,35 @@ class LocalHtmlTest extends TestCase {
 				return true;
 			}
 		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) {
+				unset( $this->meta[ $post_id ][ $key ] );
+				return true;
+			}
+		);
+		Functions\when( 'get_post' )->alias(
+			function ( $post_id ) {
+				return isset( $this->meta[ $post_id ] ) ? (object) array( 'ID' => $post_id, 'post_status' => 'publish' ) : null;
+			}
+		);
+		Functions\when( 'wp_next_scheduled' )->alias(
+			function ( $hook, $args = array() ) {
+				$key = $hook . ':' . serialize( $args );
+				return isset( $this->scheduled[ $key ] ) ? $this->scheduled[ $key ] : false;
+			}
+		);
+		Functions\when( 'wp_schedule_single_event' )->alias(
+			function ( $when, $hook, $args = array() ) {
+				$this->scheduled[ $hook . ':' . serialize( $args ) ] = $when;
+				return true;
+			}
+		);
+		Functions\when( 'wp_clear_scheduled_hook' )->alias(
+			function ( $hook, $args = array() ) {
+				unset( $this->scheduled[ $hook . ':' . serialize( $args ) ] );
+				return true;
+			}
+		);
 		Functions\when( 'clean_post_cache' )->justReturn( null );
 		Functions\when( 'apply_filters' )->alias(
 			function ( $tag, $value ) {
@@ -138,6 +169,7 @@ class LocalHtmlTest extends TestCase {
 				$this->assertNotEmpty( $args['reject_unsafe_urls'] );
 
 				if ( 'https://filetoweb.com/d/demo/continuous?chrome=0' === $url ) {
+					$this->assertSame( 45, $args['timeout'] );
 					return array(
 						'body' => '<!doctype html><html><head><script>bad()</script></head><body><div class="ftw-tabbar">filename.pdf</div><main><img src="/d/demo/assets/page-1/logo.png" alt="Logo">Converted content</main></body></html>',
 					);
@@ -404,9 +436,143 @@ class LocalHtmlTest extends TestCase {
 
 		$this->assertSame( 'failed', Local_HTML::refresh_for_post( 123 ) );
 		$this->assertSame(
-			'One or more FileToWeb preview assets could not be written to WordPress storage.',
+			'A FileToWeb preview asset could not be published: missing.png (the download returned HTTP 404).',
 			$this->meta[123][ Document_State::META_LAST_ERROR ]
 		);
+	}
+
+	public function test_timed_out_ready_preview_retries_without_resubmitting_pdf(): void {
+		$error = new class {
+			public function get_error_message() {
+				return 'cURL error 28: Operation timed out after 20002 milliseconds with 0 bytes received';
+			}
+		};
+
+		Functions\when( 'wp_remote_get' )->justReturn( $error );
+		Functions\when( 'is_wp_error' )->alias(
+			function ( $response ) use ( $error ) {
+				return $response === $error;
+			}
+		);
+
+		Local_HTML::refresh_after_poll(
+			123,
+			array( 'continuous_url' => 'https://filetoweb.com/d/demo/continuous' )
+		);
+
+		$this->assertSame( 'failed', Local_HTML::poll_refresh_result( 123 ) );
+		$this->assertSame( 1, $this->meta[123][ Document_State::META_PREVIEW_RETRY_ATTEMPTS ] );
+		$this->assertArrayHasKey( Document_State::META_NEXT_PREVIEW_RETRY_AT, $this->meta[123] );
+		$this->assertArrayHasKey( Local_HTML::HOOK_RETRY_PREVIEW . ':' . serialize( array( 123 ) ), $this->scheduled );
+		$this->assertSame( 'ready', $this->meta[123][ Document_State::META_STATUS ] );
+
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) {
+				if ( 'https://filetoweb.com/d/demo/continuous?chrome=0' === $url ) {
+					return array( 'body' => '<html><body><main>Recovered preview</main></body></html>' );
+				}
+
+				return array( 'body' => '' );
+			}
+		);
+
+		Local_HTML::retry_preview( 123 );
+
+		$this->assertArrayNotHasKey( Document_State::META_PREVIEW_RETRY_ATTEMPTS, $this->meta[123] );
+		$this->assertArrayNotHasKey( Document_State::META_NEXT_PREVIEW_RETRY_AT, $this->meta[123] );
+		$this->assertSame( '', $this->meta[123][ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( array(), $this->scheduled );
+		$record = $this->meta[123][ Proud_HTML_Preview::META_KEY ];
+		$this->assertStringContainsString( 'Recovered preview', file_get_contents( $this->uploads_dir . '/' . $record['artifact_key'] ) );
+	}
+
+	public function test_failed_editor_refresh_retry_fetches_fresh_html_instead_of_accepting_stale_cache(): void {
+		$this->assertSame( 'updated', Local_HTML::refresh_for_post( 123 ) );
+
+		$error = new class {
+			public function get_error_message() {
+				return 'cURL error 28: Operation timed out';
+			}
+		};
+		Functions\when( 'wp_remote_get' )->justReturn( $error );
+		Functions\when( 'is_wp_error' )->alias(
+			function ( $response ) use ( $error ) {
+				return $response === $error;
+			}
+		);
+
+		Local_HTML::refresh_after_poll( 123, array( 'continuous_url' => 'https://filetoweb.com/d/demo/continuous' ), true );
+		$this->assertSame( 'failed', Local_HTML::poll_refresh_result( 123 ) );
+		$this->assertNotEmpty( $this->scheduled );
+
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url, $args ) {
+				$this->assertSame( 'no-cache', $args['headers']['Cache-Control'] );
+				return array( 'body' => '<html><body><main>Editor-only replacement</main></body></html>' );
+			}
+		);
+
+		Local_HTML::retry_preview( 123 );
+
+		$record = $this->meta[123][ Proud_HTML_Preview::META_KEY ];
+		$html   = file_get_contents( $this->uploads_dir . '/' . $record['artifact_key'] );
+		$this->assertStringContainsString( 'Editor-only replacement', $html );
+		$this->assertStringNotContainsString( 'Converted content', $html );
+		$this->assertSame( array(), $this->scheduled );
+	}
+
+	public function test_permanent_asset_failure_does_not_schedule_preview_retry(): void {
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url ) {
+				if ( 'https://filetoweb.com/d/demo/continuous?chrome=0' === $url ) {
+					return array(
+						'code' => 200,
+						'body' => '<html><body><img src="/d/demo/assets/missing.png"></body></html>',
+					);
+				}
+
+				return array( 'code' => 404, 'body' => '' );
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+
+		Local_HTML::refresh_after_poll( 123, array( 'continuous_url' => 'https://filetoweb.com/d/demo/continuous' ), true );
+
+		$this->assertSame( 'failed', Local_HTML::poll_refresh_result( 123 ) );
+		$this->assertSame( array(), $this->scheduled );
+		$this->assertArrayNotHasKey( Document_State::META_PREVIEW_RETRY_ATTEMPTS, $this->meta[123] );
+	}
+
+	public function test_preview_retry_is_bounded_and_deleted_posts_are_removed_from_queue(): void {
+		$error = new class {
+			public function get_error_message() {
+				return 'cURL error 28: Operation timed out';
+			}
+		};
+
+		Functions\when( 'wp_remote_get' )->justReturn( $error );
+		Functions\when( 'is_wp_error' )->alias(
+			function ( $response ) use ( $error ) {
+				return $response === $error;
+			}
+		);
+
+		for ( $attempt = 1; $attempt <= 5; ++$attempt ) {
+			wp_clear_scheduled_hook( Local_HTML::HOOK_RETRY_PREVIEW, array( 123 ) );
+			Local_HTML::refresh_after_poll( 123, array( 'continuous_url' => 'https://filetoweb.com/d/demo/continuous' ) );
+			$this->assertSame( min( $attempt, 4 ), $this->meta[123][ Document_State::META_PREVIEW_RETRY_ATTEMPTS ] );
+		}
+
+		$this->assertArrayNotHasKey( Local_HTML::HOOK_RETRY_PREVIEW . ':' . serialize( array( 123 ) ), $this->scheduled );
+		Local_HTML::stop_preview_retry( 123 );
+		$this->assertArrayNotHasKey( Document_State::META_PREVIEW_RETRY_ATTEMPTS, $this->meta[123] );
+		$this->assertArrayNotHasKey( Document_State::META_NEXT_PREVIEW_RETRY_AT, $this->meta[123] );
 	}
 
 	public function test_current_legacy_cache_preserves_failed_preview_migration_error(): void {

@@ -12,8 +12,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Local_HTML {
-	const QUERY_VAR_POST_ID = 'filetoweb_local_html';
-	const QUERY_VAR_TOKEN   = 'ftw_token';
+	const QUERY_VAR_POST_ID    = 'filetoweb_local_html';
+	const QUERY_VAR_TOKEN      = 'ftw_token';
+	const HOOK_RETRY_PREVIEW   = 'filetoweb_integration_retry_preview';
+	const PREVIEW_RETRY_DELAYS = array( 60, 300, 900, 3600 );
 
 	/**
 	 * Per-request publication results produced by status polling.
@@ -23,12 +25,23 @@ class Local_HTML {
 	private static $poll_refresh_results = array();
 
 	/**
+	 * Whether the latest failed publication is safe to retry automatically.
+	 *
+	 * @var bool
+	 */
+	private static $last_refresh_retryable = false;
+
+	/**
 	 * Register hooks.
 	 */
 	public static function init() {
 		add_action( 'template_redirect', array( __CLASS__, 'maybe_serve_local_html' ), -100 );
 		add_action( 'filetoweb_integration_after_sync_post', array( __CLASS__, 'refresh_after_sync' ), 20, 3 );
 		add_action( 'filetoweb_integration_after_poll_post', array( __CLASS__, 'refresh_after_poll' ), 20, 3 );
+		add_action( self::HOOK_RETRY_PREVIEW, array( __CLASS__, 'retry_preview' ) );
+		add_action( 'trashed_post', array( __CLASS__, 'stop_preview_retry' ) );
+		add_action( 'before_delete_post', array( __CLASS__, 'stop_preview_retry' ) );
+		add_action( 'delete_attachment', array( __CLASS__, 'stop_preview_retry' ) );
 	}
 
 	/**
@@ -40,7 +53,8 @@ class Local_HTML {
 	 */
 	public static function refresh_after_sync( $post_id, $source, $document ) {
 		unset( $source );
-		self::refresh_for_post( $post_id, $document );
+		$result = self::refresh_for_post( $post_id, $document );
+		self::handle_refresh_result( $post_id, $result );
 	}
 
 	/**
@@ -52,8 +66,49 @@ class Local_HTML {
 	 */
 	public static function refresh_after_poll( $post_id, $document, $force_latest = false ) {
 		$post_id = absint( $post_id );
+		if ( $force_latest ) {
+			self::clear_preview_retry( $post_id );
+		}
 
 		self::$poll_refresh_results[ $post_id ] = self::refresh_for_post( $post_id, $document, $force_latest );
+		self::handle_refresh_result( $post_id, self::$poll_refresh_results[ $post_id ] );
+	}
+
+	/**
+	 * Retry publication for a ready conversion without resubmitting its PDF.
+	 *
+	 * @param int $post_id Source post ID.
+	 */
+	public static function retry_preview( $post_id ) {
+		$post_id = absint( $post_id );
+		delete_post_meta( $post_id, Document_State::META_NEXT_PREVIEW_RETRY_AT );
+
+		$post = $post_id ? get_post( $post_id ) : null;
+		if ( ! $post || in_array( isset( $post->post_status ) ? $post->post_status : '', array( 'trash', 'auto-draft' ), true ) || 'ready' !== get_post_meta( $post_id, Document_State::META_STATUS, true ) ) {
+			self::clear_preview_retry( $post_id );
+			return;
+		}
+
+		$result = self::refresh_for_post( $post_id, null, true );
+		self::handle_refresh_result( $post_id, $result );
+	}
+
+	/**
+	 * Remove a deleted or trashed post from the preview retry queue.
+	 *
+	 * @param int $post_id Source post ID.
+	 */
+	public static function stop_preview_retry( $post_id ) {
+		self::clear_preview_retry( absint( $post_id ) );
+	}
+
+	/**
+	 * Clear every queued preview retry during plugin deactivation.
+	 */
+	public static function clear_all_preview_retries() {
+		if ( function_exists( 'wp_unschedule_hook' ) ) {
+			wp_unschedule_hook( self::HOOK_RETRY_PREVIEW );
+		}
 	}
 
 	/**
@@ -86,7 +141,8 @@ class Local_HTML {
 	 * @return string Status.
 	 */
 	public static function refresh_for_post( $post_id, $document = null, $force_latest = false ) {
-		$post_id = absint( $post_id );
+		$post_id                     = absint( $post_id );
+		self::$last_refresh_retryable = false;
 
 		if ( ! $post_id || 'ready' !== get_post_meta( $post_id, Document_State::META_STATUS, true ) ) {
 			return 'skipped';
@@ -119,12 +175,14 @@ class Local_HTML {
 				}
 			}
 			Native_Page::maybe_auto_create_draft( $post_id );
+			update_post_meta( $post_id, Document_State::META_LAST_ERROR, '' );
 			return 'current';
 		}
 
 		$response = self::fetch_html( $viewer_url, $force_latest );
 
 		if ( ! $response['ok'] ) {
+			self::$last_refresh_retryable = ! empty( $response['retryable'] );
 			update_post_meta( $post_id, Document_State::META_LAST_ERROR, $response['error'] );
 			return 'failed';
 		}
@@ -142,6 +200,7 @@ class Local_HTML {
 			$record = Proud_HTML_Preview::publish( $post_id, $html, $viewer_url, $source_url, $fingerprint, $force_latest );
 
 			if ( ! $record ) {
+				self::$last_refresh_retryable = Proud_HTML_Preview::last_publish_retryable();
 				$error = Proud_HTML_Preview::last_publish_error();
 				update_post_meta( $post_id, Document_State::META_LAST_ERROR, $error ? $error : __( 'FileToWeb local HTML cache could not be written.', 'filetoweb-integration' ) );
 				return 'failed';
@@ -165,8 +224,73 @@ class Local_HTML {
 		}
 
 		Native_Page::maybe_auto_create_draft( $post_id );
+		update_post_meta( $post_id, Document_State::META_LAST_ERROR, '' );
 
 		return 'updated';
+	}
+
+	/**
+	 * Keep preview publication retries independent from conversion polling.
+	 *
+	 * @param int    $post_id Source post ID.
+	 * @param string $result Refresh result.
+	 */
+	private static function handle_refresh_result( $post_id, $result ) {
+		if ( in_array( $result, array( 'updated', 'current' ), true ) ) {
+			self::clear_preview_retry( $post_id );
+			return;
+		}
+
+		if ( 'failed' === $result && self::$last_refresh_retryable ) {
+			self::schedule_preview_retry( $post_id );
+		} elseif ( 'failed' === $result ) {
+			self::clear_preview_retry( $post_id );
+		}
+	}
+
+	/**
+	 * Schedule a bounded publication retry for one ready document.
+	 *
+	 * @param int $post_id Source post ID.
+	 */
+	private static function schedule_preview_retry( $post_id ) {
+		$post_id = absint( $post_id );
+		$args    = array( $post_id );
+		if ( ! $post_id || wp_next_scheduled( self::HOOK_RETRY_PREVIEW, $args ) ) {
+			return;
+		}
+
+		$attempts = absint( get_post_meta( $post_id, Document_State::META_PREVIEW_RETRY_ATTEMPTS, true ) );
+		if ( $attempts >= count( self::PREVIEW_RETRY_DELAYS ) ) {
+			return;
+		}
+
+		$delay     = self::PREVIEW_RETRY_DELAYS[ $attempts ];
+		$jitter    = $post_id % max( 1, min( 60, (int) floor( $delay / 10 ) ) );
+		$when      = time() + $delay + $jitter;
+		$scheduled = wp_schedule_single_event( $when, self::HOOK_RETRY_PREVIEW, $args );
+		if ( false === $scheduled || is_wp_error( $scheduled ) ) {
+			return;
+		}
+
+		update_post_meta( $post_id, Document_State::META_PREVIEW_RETRY_ATTEMPTS, $attempts + 1 );
+		update_post_meta( $post_id, Document_State::META_NEXT_PREVIEW_RETRY_AT, $when );
+	}
+
+	/**
+	 * Clear one post's publication retry state.
+	 *
+	 * @param int $post_id Source post ID.
+	 */
+	private static function clear_preview_retry( $post_id ) {
+		$post_id = absint( $post_id );
+		if ( ! $post_id ) {
+			return;
+		}
+
+		wp_clear_scheduled_hook( self::HOOK_RETRY_PREVIEW, array( $post_id ) );
+		delete_post_meta( $post_id, Document_State::META_PREVIEW_RETRY_ATTEMPTS );
+		delete_post_meta( $post_id, Document_State::META_NEXT_PREVIEW_RETRY_AT );
 	}
 
 	/**
@@ -440,14 +564,16 @@ class Local_HTML {
 
 		if ( ! $url ) {
 			return array(
-				'ok'    => false,
-				'error' => __( 'FileToWeb local HTML URL is not allowed.', 'filetoweb-integration' ),
-				'html'  => '',
+				'ok'        => false,
+				'error'     => __( 'FileToWeb local HTML URL is not allowed.', 'filetoweb-integration' ),
+				'html'      => '',
+				'retryable' => false,
 			);
 		}
 
-		$args = array(
-			'timeout'            => 20,
+		$timeout = apply_filters( 'filetoweb_integration_preview_timeout', 45, $url );
+		$args    = array(
+			'timeout'            => max( 10, min( 60, absint( $timeout ) ) ),
 			'redirection'        => 0,
 			'reject_unsafe_urls' => true,
 		);
@@ -465,10 +591,12 @@ class Local_HTML {
 		);
 
 		if ( is_wp_error( $response ) ) {
+			$message = $response->get_error_message();
 			return array(
-				'ok'    => false,
-				'error' => $response->get_error_message(),
-				'html'  => '',
+				'ok'        => false,
+				'error'     => $message,
+				'html'      => '',
+				'retryable' => Api_Client::is_retryable_error( $message ),
 			);
 		}
 
@@ -476,16 +604,18 @@ class Local_HTML {
 
 		if ( $code < 200 || $code >= 300 ) {
 			return array(
-				'ok'    => false,
-				'error' => sprintf( __( 'FileToWeb local HTML fetch returned HTTP %d.', 'filetoweb-integration' ), $code ),
-				'html'  => '',
+				'ok'        => false,
+				'error'     => sprintf( __( 'FileToWeb local HTML fetch returned HTTP %d.', 'filetoweb-integration' ), $code ),
+				'html'      => '',
+				'retryable' => in_array( $code, array( 408, 425, 429 ), true ) || $code >= 500,
 			);
 		}
 
 		return array(
-			'ok'    => true,
-			'error' => '',
-			'html'  => (string) wp_remote_retrieve_body( $response ),
+			'ok'        => true,
+			'error'     => '',
+			'html'      => (string) wp_remote_retrieve_body( $response ),
+			'retryable' => false,
 		);
 	}
 

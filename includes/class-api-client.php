@@ -217,7 +217,8 @@ class Api_Client {
 	 * @return int
 	 */
 	private static function request_timeout( $method, $path ) {
-		$timeout = apply_filters( 'filetoweb_integration_api_timeout', 20, $method, $path );
+		$default = 'POST' === strtoupper( (string) $method ) && '/documents' === (string) $path ? 45 : 20;
+		$timeout = apply_filters( 'filetoweb_integration_api_timeout', $default, $method, $path );
 
 		return max( 5, min( 45, absint( $timeout ) ) );
 	}

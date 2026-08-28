@@ -53,6 +53,7 @@ class Plugin {
 	 */
 	public static function deactivate() {
 		Cron::clear();
+		Local_HTML::clear_all_preview_retries();
 		Proud_HTML_Preview::disable_automatic_migration( true );
 	}
 }

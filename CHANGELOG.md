@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.51
+
+- Publish FileToWeb CSV downloads and strictly allowlisted SVG preview assets, including nested SVG image dependencies, into the same durable WordPress preview bundle.
+- Keep unavailable optional downloads from suppressing a complete visual preview and report the exact required asset that prevented publication.
+- Retry only classified transient preview-publication failures independently after conversion is ready, with bounded per-document backoff and no PDF resubmission or conversion-credit use.
+- Bound each preview asset graph by dependency depth, file count, per-file size, and total downloaded bytes.
+- Use bounded 45-second timeouts for initial URL imports and generated-HTML retrieval while continuing to fail safely to the original PDF.
+
 ## 0.1.50
 
 - Return immediately from front-end content rewriting when rendered content has no PDF, uploads, local-preview, or explicit attachment candidate.

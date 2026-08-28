@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.50
+Stable tag: 0.1.51
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -81,6 +81,14 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.51 =
+
+* Publishes FileToWeb CSV downloads and strictly allowlisted SVG preview assets, including SVG image dependencies, into WordPress storage.
+* Keeps a missing optional download from suppressing an otherwise complete visual preview and reports the exact required asset that failed.
+* Retries only classified transient preview-publication failures independently after conversion is ready, without resubmitting the PDF or consuming conversion credits.
+* Bounds each preview asset graph by dependency depth, file count, per-file size, and total downloaded bytes.
+* Uses bounded 45-second timeouts for initial URL imports and generated-HTML retrieval while preserving the original PDF on failure.
 
 = 0.1.50 =
 
