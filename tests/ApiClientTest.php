@@ -79,6 +79,28 @@ class ApiClientTest extends TestCase {
 		$this->assertTrue( $result['ok'] );
 	}
 
+	public function test_external_id_lookup_uses_the_stable_encoded_wordpress_identity(): void {
+		Functions\expect( 'wp_remote_request' )
+			->once()
+			->with(
+				'https://filetoweb.com/v1/documents/by-external-id/wordpress%3Atest%3Aattachment%3A25963',
+				\Mockery::on(
+					function ( $args ) {
+						return 'GET' === $args['method'] && 20 === $args['timeout'];
+					}
+				)
+			)
+			->andReturn( array() );
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"document":{"id":"doc-july","status":"ready"}}' );
+
+		$result = Api_Client::get_document_by_external_id( 'wordpress:test:attachment:25963' );
+
+		$this->assertTrue( $result['ok'] );
+		$this->assertSame( 'doc-july', $result['body']['document']['id'] );
+	}
+
 	public function test_initial_url_import_allows_the_bounded_45_second_window(): void {
 		Functions\expect( 'wp_remote_request' )
 			->once()
@@ -182,6 +204,23 @@ class ApiClientTest extends TestCase {
 		$this->assertTrue( $result['retryable'] );
 		$this->assertStringNotContainsString( 'gemini', strtolower( $result['error'] ) );
 		$this->assertStringNotContainsString( 'vertex', strtolower( $result['error'] ) );
+	}
+
+	public function test_document_mutation_conflict_is_safe_and_retryable(): void {
+		Functions\expect( 'wp_remote_request' )->once()->andReturn( array() );
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 409 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn(
+			'{"error":{"code":"document_mutation_conflict","message":"DocumentMutationLockedError from internal worker","retryable":false}}'
+		);
+
+		$result = Api_Client::reprocess_document( 'doc-locked' );
+
+		$this->assertFalse( $result['ok'] );
+		$this->assertTrue( $result['retryable'] );
+		$this->assertSame( 'document_mutation_conflict', $result['error_code'] );
+		$this->assertSame( 'FileToWeb is still finishing another operation for this document. It will retry automatically.', $result['error'] );
+		$this->assertStringNotContainsString( 'DocumentMutationLockedError', $result['error'] );
 	}
 
 	public function test_legacy_internal_error_is_replaced_before_admin_storage(): void {

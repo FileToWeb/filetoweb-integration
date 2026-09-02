@@ -388,6 +388,506 @@ class SyncTest extends TestCase {
 		$this->assertContains( Document_State::META_NEXT_POLL_AT, $deleted_keys );
 	}
 
+	public function test_timed_out_import_recovers_by_external_id_without_a_second_post(): void {
+		$stored        = array();
+		$requests      = array();
+		$attachment_id = 25963;
+		$fingerprint   = hash_file( 'sha256', __FILE__ );
+
+		Functions\when( 'untrailingslashit' )->alias(
+			function ( $value ) {
+				return rtrim( (string) $value, '/' );
+			}
+		);
+		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
+		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://city.example/uploads/july-financials.pdf' );
+		Functions\when( 'get_attached_file' )->justReturn( __FILE__ );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored, $attachment_id ) {
+				return $attachment_id === $post_id && array_key_exists( $key, $stored ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored, $attachment_id ) {
+				$this->assertSame( $attachment_id, $post_id );
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				unset( $stored[ $key ] );
+				return true;
+			}
+		);
+		Functions\when( 'is_wp_error' )->alias(
+			function ( $response ) {
+				return is_object( $response ) && method_exists( $response, 'get_error_message' );
+			}
+		);
+		Functions\when( 'wp_remote_request' )->alias(
+			function ( $url, $args ) use ( &$requests, $fingerprint ) {
+				$requests[] = array( $url, $args['method'] );
+
+				if ( 1 === count( $requests ) ) {
+					return new class() {
+						public function get_error_message() {
+							return 'cURL error 28: Operation timed out after 20002 milliseconds with 0 bytes received';
+						}
+					};
+				}
+
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'          => 'doc-july',
+								'external_id' => 'wordpress:fe457a395a16:attachment:25963',
+								'status'      => 'ready',
+								'html_url'    => 'https://filetoweb.com/d/AbCdEf1234567890GhIjKlMn/1',
+								'page_count'  => 56,
+								'source'      => array(
+									'fingerprint'           => $fingerprint,
+									'fingerprint_algorithm' => 'sha256',
+								),
+							),
+						)
+					),
+				);
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_body' )->alias(
+			function ( $response ) {
+				return $response['body'];
+			}
+		);
+		Functions\when( 'do_action' )->justReturn( null );
+
+		$timed_out = Sync::sync_attachment_now( $attachment_id, 'attachment_save' );
+		$recovered = Sync::sync_attachment_now( $attachment_id, 'cron_retry' );
+
+		$this->assertSame( 'pending', $timed_out['status'] );
+		$this->assertSame( 'ready', $recovered['status'] );
+		$this->assertSame( 'wordpress:fe457a395a16:attachment:25963', $stored[ Document_State::META_EXTERNAL_ID ] );
+		$this->assertSame( 'doc-july', $stored[ Document_State::META_DOCUMENT_ID ] );
+		$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( '', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( array( 'https://filetoweb.com/v1/documents', 'POST' ), $requests[0] );
+		$this->assertSame(
+			array( 'https://filetoweb.com/v1/documents/by-external-id/wordpress%3Afe457a395a16%3Aattachment%3A25963', 'GET' ),
+			$requests[1]
+		);
+		$this->assertCount( 2, $requests );
+	}
+
+	public function test_timed_out_import_does_not_recover_a_stale_external_id_conversion(): void {
+		$stored        = array();
+		$requests      = array();
+		$attachment_id = 25963;
+		$fingerprint   = hash_file( 'sha256', __FILE__ );
+
+		Functions\when( 'untrailingslashit' )->alias(
+			function ( $value ) {
+				return rtrim( (string) $value, '/' );
+			}
+		);
+		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
+		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://city.example/uploads/july-financials.pdf' );
+		Functions\when( 'get_attached_file' )->justReturn( __FILE__ );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored, $attachment_id ) {
+				return $attachment_id === $post_id && array_key_exists( $key, $stored ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored, $attachment_id ) {
+				$this->assertSame( $attachment_id, $post_id );
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				unset( $stored[ $key ] );
+				return true;
+			}
+		);
+		Functions\when( 'is_wp_error' )->alias(
+			function ( $response ) {
+				return is_object( $response ) && method_exists( $response, 'get_error_message' );
+			}
+		);
+		Functions\when( 'wp_remote_request' )->alias(
+			function ( $url, $args ) use ( &$requests, $fingerprint ) {
+				$requests[] = array( $url, $args['method'] );
+
+				if ( 1 === count( $requests ) ) {
+					return new class() {
+						public function get_error_message() {
+							return 'cURL error 28: Operation timed out after 20002 milliseconds with 0 bytes received';
+						}
+					};
+				}
+
+				if ( 2 === count( $requests ) ) {
+					return array(
+						'code' => 200,
+						'body' => json_encode(
+							array(
+								'document' => array(
+									'id'          => 'doc-old-pdf',
+									'external_id' => 'wordpress:fe457a395a16:attachment:25963',
+									'status'      => 'ready',
+									'html_url'    => 'https://filetoweb.com/d/OldConversion/1',
+									'page_count'  => 12,
+									'source'      => array(
+										'fingerprint'           => str_repeat( 'a', 64 ),
+										'fingerprint_algorithm' => 'sha256',
+									),
+								),
+							)
+						),
+					);
+				}
+
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'          => 'doc-current-pdf',
+								'external_id' => 'wordpress:fe457a395a16:attachment:25963',
+								'status'      => 'processing',
+								'page_count'  => 56,
+								'source'      => array(
+									'fingerprint'           => $fingerprint,
+									'fingerprint_algorithm' => 'sha256',
+								),
+							),
+						)
+					),
+				);
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias(
+			function ( $response ) {
+				return $response['code'];
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_body' )->alias(
+			function ( $response ) {
+				return $response['body'];
+			}
+		);
+		Functions\when( 'do_action' )->justReturn( null );
+
+		$timed_out = Sync::sync_attachment_now( $attachment_id, 'attachment_save' );
+		$recovered = Sync::sync_attachment_now( $attachment_id, 'cron_retry' );
+
+		$this->assertSame( 'pending', $timed_out['status'] );
+		$this->assertSame( 'processing', $recovered['status'] );
+		$this->assertSame( 'doc-current-pdf', $stored[ Document_State::META_DOCUMENT_ID ] );
+		$this->assertSame( 'processing', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame(
+			array(
+				array( 'https://filetoweb.com/v1/documents', 'POST' ),
+				array( 'https://filetoweb.com/v1/documents/by-external-id/wordpress%3Afe457a395a16%3Aattachment%3A25963', 'GET' ),
+				array( 'https://filetoweb.com/v1/documents', 'POST' ),
+			),
+			$requests
+		);
+	}
+
+	public function test_processing_document_becomes_ready_and_clears_old_timeout(): void {
+		$stored = array(
+			Document_State::META_DOCUMENT_ID => 'doc-processing',
+			Document_State::META_STATUS      => 'processing',
+			Document_State::META_LAST_ERROR  => 'cURL error 28: Operation timed out',
+		);
+		$responses = array( 'processing', 'ready' );
+
+		Functions\when( 'untrailingslashit' )->alias(
+			function ( $value ) {
+				return rtrim( (string) $value, '/' );
+			}
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				return array_key_exists( $key, $stored ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				unset( $stored[ $key ] );
+				return true;
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_request' )->alias(
+			function () use ( &$responses ) {
+				$status = array_shift( $responses );
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'         => 'doc-processing',
+								'status'     => $status,
+								'html_url'   => 'ready' === $status ? 'https://filetoweb.com/d/AbCdEf1234567890GhIjKlMn/1' : '',
+								'page_count' => 56,
+							),
+						)
+					),
+				);
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias( function ( $response ) { return $response['code']; } );
+		Functions\when( 'wp_remote_retrieve_body' )->alias( function ( $response ) { return $response['body']; } );
+		Functions\when( 'do_action' )->justReturn( null );
+
+		$this->assertSame( 'updated', Sync::poll_post( 25963 ) );
+		$this->assertSame( 'processing', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'updated', Sync::poll_post( 25963 ) );
+		$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( '', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( '', $stored[ Document_State::META_ERROR_REFERENCE ] );
+		$this->assertArrayNotHasKey( Document_State::META_NEXT_POLL_AT, $stored );
+	}
+
+	public function test_terminal_failure_can_be_retried_and_reconciled_to_ready(): void {
+		$stored = array(
+			Document_State::META_DOCUMENT_ID     => 'doc-provider-failure',
+			Document_State::META_STATUS          => 'failed',
+			Document_State::META_LAST_ERROR      => 'FileToWeb could not finish processing this PDF. Please try again.',
+			Document_State::META_ERROR_REFERENCE => 'FTW-C588003D2859',
+		);
+		$responses = array( 'processing', 'ready' );
+
+		Functions\when( 'untrailingslashit' )->alias( function ( $value ) { return rtrim( (string) $value, '/' ); } );
+		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				return array_key_exists( $key, $stored ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				unset( $stored[ $key ] );
+				return true;
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_request' )->alias(
+			function () use ( &$responses ) {
+				$status = array_shift( $responses );
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'         => 'doc-provider-failure',
+								'status'     => $status,
+								'html_url'   => 'ready' === $status ? 'https://filetoweb.com/d/AbCdEf1234567890GhIjKlMn/1' : '',
+								'page_count' => 56,
+							),
+						)
+					),
+				);
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias( function ( $response ) { return $response['code']; } );
+		Functions\when( 'wp_remote_retrieve_body' )->alias( function ( $response ) { return $response['body']; } );
+		Functions\when( 'do_action' )->justReturn( null );
+
+		$this->assertSame( 'processing', Sync::retry_processing( 25907 )['status'] );
+		$this->assertSame( 'processing', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'updated', Sync::poll_post( 25907 ) );
+		$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( '', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( '', $stored[ Document_State::META_ERROR_REFERENCE ] );
+	}
+
+	public function test_retryable_mutation_conflict_stays_pending(): void {
+		$stored = array(
+			Document_State::META_DOCUMENT_ID => 'doc-locked',
+			Document_State::META_STATUS      => 'failed',
+		);
+
+		Functions\when( 'untrailingslashit' )->alias( function ( $value ) { return rtrim( (string) $value, '/' ); } );
+		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				return array_key_exists( $key, $stored ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		$requests = array();
+		Functions\when( 'wp_remote_request' )->alias(
+			function ( $url, $args ) use ( &$requests ) {
+				$requests[] = $args['method'];
+
+				if ( 1 === count( $requests ) ) {
+					return array(
+						'code' => 409,
+						'body' => '{"error":{"code":"document_mutation_conflict","message":"locked","retryable":false}}',
+					);
+				}
+
+				$status = 2 === count( $requests ) ? 'failed' : 'processing';
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'     => 'doc-locked',
+								'status' => $status,
+							),
+						)
+					),
+				);
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias( function ( $response ) { return $response['code']; } );
+		Functions\when( 'wp_remote_retrieve_body' )->alias( function ( $response ) { return $response['body']; } );
+		Functions\when( 'do_action' )->justReturn( null );
+
+		$result = Sync::retry_processing( 25907 );
+
+		$this->assertSame( 'pending', $result['status'] );
+		$this->assertSame( 'pending', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'document_mutation_conflict', $stored[ Document_State::META_ERROR_CODE ] );
+		$this->assertSame( '1', $stored[ Document_State::META_ERROR_RETRYABLE ] );
+		$this->assertArrayHasKey( Document_State::META_NEXT_POLL_AT, $stored );
+
+		$this->assertSame( 'updated', Sync::poll_post( 25907 ) );
+		$this->assertSame( 'processing', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( array( 'POST', 'GET', 'POST' ), $requests );
+	}
+
+	public function test_item_lock_prevents_overlapping_manual_and_cron_submission(): void {
+		$previous_wpdb = isset( $GLOBALS['wpdb'] ) ? $GLOBALS['wpdb'] : null;
+		$stored        = array();
+
+		$GLOBALS['wpdb'] = new class() {
+			public function prepare( $query, $value ) {
+				return str_replace( '%s', "'" . addslashes( $value ) . "'", $query );
+			}
+
+			public function get_var( $query ) {
+				return false !== strpos( $query, 'GET_LOCK' ) ? '0' : '1';
+			}
+		};
+
+		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
+		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://city.example/uploads/locked.pdf' );
+		Functions\when( 'get_attached_file' )->justReturn( __FILE__ );
+		Functions\when( 'get_post_meta' )->justReturn( '' );
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\expect( 'wp_remote_request' )->never();
+
+		$result = Sync::sync_attachment_now( 25249, 'cron_retry' );
+
+		$GLOBALS['wpdb'] = $previous_wpdb;
+
+		$this->assertSame( 'pending', $result['status'] );
+		$this->assertTrue( $result['busy'] );
+		$this->assertArrayHasKey( Document_State::META_NEXT_POLL_AT, $stored );
+	}
+
+	public function test_polling_a_proud_document_uses_its_current_attachment_document_id(): void {
+		$meta = array(
+			456 => array(
+				'document_meta'                  => '{"fid":457,"mime":"application/pdf"}',
+				Document_State::META_DOCUMENT_ID => 'doc-june-stale',
+				Document_State::META_STATUS      => 'processing',
+			),
+			457 => array(
+				Document_State::META_DOCUMENT_ID => 'doc-july-current',
+				Document_State::META_STATUS      => 'processing',
+			),
+		);
+		$requested_url = '';
+
+		Functions\when( 'untrailingslashit' )->alias( function ( $value ) { return rtrim( (string) $value, '/' ); } );
+		Functions\when( 'get_post_type' )->alias(
+			function ( $post_id ) {
+				return 456 === (int) $post_id ? 'document' : ( 457 === (int) $post_id ? 'attachment' : '' );
+			}
+		);
+		Functions\when( 'get_post_status' )->alias(
+			function ( $post_id ) {
+				return 456 === (int) $post_id ? 'publish' : 'inherit';
+			}
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$meta ) {
+				return isset( $meta[ $post_id ] ) && array_key_exists( $key, $meta[ $post_id ] ) ? $meta[ $post_id ][ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$meta ) {
+				$meta[ $post_id ][ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$meta ) {
+				unset( $meta[ $post_id ][ $key ] );
+				return true;
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_request' )->alias(
+			function ( $url ) use ( &$requested_url ) {
+				$requested_url = $url;
+				return array(
+					'code' => 200,
+					'body' => '{"document":{"id":"doc-july-current","status":"ready","html_url":"https://filetoweb.com/d/AbCdEf1234567890GhIjKlMn/1","page_count":56}}',
+				);
+			}
+		);
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias( function ( $response ) { return $response['code']; } );
+		Functions\when( 'wp_remote_retrieve_body' )->alias( function ( $response ) { return $response['body']; } );
+		Functions\when( 'do_action' )->justReturn( null );
+
+		$this->assertSame( 'updated', Sync::poll_post( 456 ) );
+		$this->assertSame( 'https://filetoweb.com/v1/documents/doc-july-current', $requested_url );
+		$this->assertSame( 'ready', $meta[457][ Document_State::META_STATUS ] );
+		$this->assertSame( 'doc-july-current', $meta[456][ Document_State::META_DOCUMENT_ID ] );
+		$this->assertSame( 'ready', $meta[456][ Document_State::META_STATUS ] );
+	}
+
 	private function mock_successful_document_response( $status ) {
 		Functions\when( 'is_wp_error' )->justReturn( false );
 		Functions\when( 'wp_remote_request' )->justReturn(

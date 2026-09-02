@@ -116,7 +116,23 @@ class Sync {
 			return array( 'status' => 'skipped' );
 		}
 
-		return self::sync_source_to_filetoweb( $attachment_id, $source, $trigger );
+		$result = Cron::with_item_lock(
+			$attachment_id,
+			function () use ( $attachment_id, $source, $trigger ) {
+				return self::sync_source_to_filetoweb( $attachment_id, $source, $trigger );
+			},
+			null
+		);
+
+		if ( null === $result ) {
+			self::schedule_next_poll( $attachment_id );
+			return array(
+				'status' => 'pending',
+				'busy'   => true,
+			);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -138,10 +154,20 @@ class Sync {
 		}
 
 		$sync_post_id = ! empty( $source['sync_post_id'] ) ? absint( $source['sync_post_id'] ) : absint( $post_id );
-		$result       = self::sync_source_to_filetoweb( $sync_post_id, $source, $trigger );
+		$result       = Cron::with_item_lock(
+			$sync_post_id,
+			function () use ( $sync_post_id, $source, $trigger ) {
+				return self::sync_source_to_filetoweb( $sync_post_id, $source, $trigger );
+			},
+			null
+		);
 
-		if ( $sync_post_id !== absint( $post_id ) ) {
-			Document_State::copy_state( $sync_post_id, $post_id );
+		if ( null === $result ) {
+			self::schedule_next_poll( $sync_post_id );
+			$result = array(
+				'status' => 'pending',
+				'busy'   => true,
+			);
 		}
 
 		return $result;
@@ -155,6 +181,42 @@ class Sync {
 	 * @return string
 	 */
 	public static function poll_post( $post_id, $force_latest_preview = false ) {
+		$requested_post_id = absint( $post_id );
+		$post_id           = Source_Resolver::preview_owner_post_id( $requested_post_id );
+		$result            = Cron::with_item_lock(
+			$post_id,
+			function () use ( $post_id, $force_latest_preview ) {
+				return self::poll_post_unlocked( $post_id, $force_latest_preview );
+			},
+			null
+		);
+
+		if ( null === $result ) {
+			if ( self::is_syncable_post( $post_id ) ) {
+				self::schedule_next_poll(
+					$post_id,
+					absint( get_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, true ) )
+				);
+			}
+
+			return 'busy';
+		}
+
+		if ( $requested_post_id !== $post_id ) {
+			Document_State::copy_state( $post_id, $requested_post_id );
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Poll one post after its per-document lock has been acquired.
+	 *
+	 * @param int  $post_id Post ID.
+	 * @param bool $force_latest_preview Whether to bypass the local preview cache after polling.
+	 * @return string
+	 */
+	private static function poll_post_unlocked( $post_id, $force_latest_preview = false ) {
 		if ( ! Settings::configured() ) {
 			return 'skipped';
 		}
@@ -170,7 +232,9 @@ class Sync {
 			return 'skipped';
 		}
 
-		$attempts = self::record_poll_attempt( $post_id );
+		$retry_processing = 'pending' === get_post_meta( $post_id, Document_State::META_STATUS, true )
+			&& 'retry_processing' === get_post_meta( $post_id, Document_State::META_LAST_TRIGGER, true );
+		$attempts          = self::record_poll_attempt( $post_id );
 		$response = Api_Client::get_document( $document_id );
 
 		if ( ! $response['ok'] ) {
@@ -202,6 +266,12 @@ class Sync {
 			$document = $response['body']['document'];
 			$status   = Security::sanitize_status( isset( $document['status'] ) ? $document['status'] : '' );
 
+			if ( 'failed' === $status && $retry_processing ) {
+				$retry_result = self::retry_processing_unlocked( $post_id );
+
+				return 'failed' === ( isset( $retry_result['status'] ) ? $retry_result['status'] : '' ) ? 'failed' : 'updated';
+			}
+
 			Document_State::write_polled_state( $post_id, $document );
 			do_action( 'filetoweb_integration_after_poll_post', $post_id, $document, (bool) $force_latest_preview );
 
@@ -216,6 +286,125 @@ class Sync {
 
 		self::schedule_next_poll( $post_id, $attempts );
 		return 'skipped';
+	}
+
+	/**
+	 * Explicitly retry a terminal FileToWeb document without overlapping cron.
+	 *
+	 * @param int $post_id Post that owns the FileToWeb state.
+	 * @return array
+	 */
+	public static function retry_processing( $post_id ) {
+		$requested_post_id = absint( $post_id );
+		$post_id           = Source_Resolver::preview_owner_post_id( $requested_post_id );
+		$result            = Cron::with_item_lock(
+			$post_id,
+			function () use ( $post_id ) {
+				return self::retry_processing_unlocked( $post_id );
+			},
+			null
+		);
+
+		if ( null === $result ) {
+			self::schedule_next_poll(
+				$post_id,
+				absint( get_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, true ) )
+			);
+
+			return array(
+				'status' => 'pending',
+				'busy'   => true,
+			);
+		}
+
+		if ( $requested_post_id !== $post_id ) {
+			Document_State::copy_state( $post_id, $requested_post_id );
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Retry processing after its per-document lock has been acquired.
+	 *
+	 * @param int $post_id Post that owns the FileToWeb state.
+	 * @return array
+	 */
+	private static function retry_processing_unlocked( $post_id ) {
+		if ( ! Settings::configured() || ! self::is_syncable_post( $post_id ) ) {
+			return array( 'status' => 'skipped' );
+		}
+
+		$document_id = Security::sanitize_identifier( get_post_meta( $post_id, Document_State::META_DOCUMENT_ID, true ) );
+
+		if ( ! $document_id ) {
+			return array(
+				'status' => 'failed',
+				'error'  => __( 'FileToWeb document ID is missing.', 'filetoweb-integration' ),
+			);
+		}
+
+		update_post_meta( $post_id, Document_State::META_LAST_TRIGGER, 'retry_processing' );
+		$response = Api_Client::reprocess_document( $document_id );
+
+		if ( ! $response['ok'] ) {
+			$retryable = ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $response['error'] );
+
+			if ( $retryable ) {
+				Document_State::mark_pending_retry(
+					$post_id,
+					$response['error'],
+					isset( $response['error_code'] ) ? $response['error_code'] : '',
+					isset( $response['reference'] ) ? $response['reference'] : '',
+					true
+				);
+				self::schedule_next_poll(
+					$post_id,
+					absint( get_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, true ) )
+				);
+
+				return array(
+					'status' => 'pending',
+					'error'  => $response['error'],
+				);
+			}
+
+			Document_State::mark_failed(
+				$post_id,
+				$response['error'],
+				isset( $response['error_code'] ) ? $response['error_code'] : '',
+				isset( $response['reference'] ) ? $response['reference'] : '',
+				false
+			);
+			self::clear_next_poll( $post_id );
+
+			return array(
+				'status' => 'failed',
+				'error'  => $response['error'],
+			);
+		}
+
+		if ( ! empty( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
+			$document = $response['body']['document'];
+			$status   = Security::sanitize_status( isset( $document['status'] ) ? $document['status'] : '' );
+
+			Document_State::write_polled_state( $post_id, $document );
+			update_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, 0 );
+			update_post_meta( $post_id, Document_State::META_LAST_POLLED_AT, 0 );
+			do_action( 'filetoweb_integration_after_poll_post', $post_id, $document, false );
+
+			if ( in_array( $status, self::pending_statuses(), true ) ) {
+				self::schedule_next_poll( $post_id );
+			} else {
+				self::clear_next_poll( $post_id );
+			}
+
+			return array( 'status' => $status );
+		}
+
+		self::schedule_next_poll( $post_id );
+
+		return array( 'status' => 'pending' );
 	}
 
 	/**
@@ -700,7 +889,18 @@ class Sync {
 			return array( 'status' => 'skipped' );
 		}
 
-		$trigger = self::sanitize_trigger( $trigger );
+		$trigger             = self::sanitize_trigger( $trigger );
+		$stored_document_id  = Security::sanitize_identifier( get_post_meta( $post_id, Document_State::META_DOCUMENT_ID, true ) );
+		$stored_external_id  = (string) get_post_meta( $post_id, Document_State::META_EXTERNAL_ID, true );
+		$stored_fingerprint  = (string) get_post_meta( $post_id, Document_State::META_SOURCE_FINGERPRINT, true );
+		$stored_error        = (string) get_post_meta( $post_id, Document_State::META_LAST_ERROR, true );
+		$external_id_matches = $stored_external_id && hash_equals( $stored_external_id, (string) $source['external_id'] );
+		$fingerprint_matches = ! $stored_fingerprint || hash_equals( $stored_fingerprint, (string) $source['fingerprint'] );
+		$recover_by_external = ! $stored_document_id
+			&& $fingerprint_matches
+			&& ( $external_id_matches || Api_Client::is_retryable_error( $stored_error ) );
+
+		Document_State::mark_submitting( $post_id, $source, $trigger );
 
 		$payload = array(
 			'external_id' => $source['external_id'],
@@ -722,60 +922,34 @@ class Sync {
 			),
 		);
 
+		if ( $recover_by_external ) {
+			$recovery = Api_Client::get_document_by_external_id( $source['external_id'] );
+
+			if (
+				! empty( $recovery['ok'] )
+				&& ! empty( $recovery['body']['document'] )
+				&& is_array( $recovery['body']['document'] )
+				&& self::recovered_document_matches_source( $recovery['body']['document'], $source )
+			) {
+				return self::apply_sync_document( $post_id, $source, $recovery['body']['document'] );
+			}
+
+			$recovery_not_found = 'document_not_found' === ( isset( $recovery['error_code'] ) ? $recovery['error_code'] : '' )
+				|| 404 === absint( isset( $recovery['status'] ) ? $recovery['status'] : 0 );
+
+			if ( empty( $recovery['ok'] ) && ! $recovery_not_found ) {
+				return self::apply_sync_error( $post_id, $recovery );
+			}
+		}
+
 		$response = Api_Client::upsert_document( $payload );
 
 		if ( ! $response['ok'] ) {
-			if ( ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $response['error'] ) ) {
-				Document_State::mark_pending_retry(
-					$post_id,
-					$response['error'],
-					isset( $response['error_code'] ) ? $response['error_code'] : '',
-					isset( $response['reference'] ) ? $response['reference'] : '',
-					true
-				);
-				self::schedule_next_poll(
-					$post_id,
-					absint( get_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, true ) )
-				);
-				return array(
-					'status' => 'pending',
-					'error'  => $response['error'],
-				);
-			}
-
-			Document_State::mark_failed(
-				$post_id,
-				$response['error'],
-				isset( $response['error_code'] ) ? $response['error_code'] : '',
-				isset( $response['reference'] ) ? $response['reference'] : '',
-				! empty( $response['retryable'] )
-			);
-			self::clear_next_poll( $post_id );
-			return array(
-				'status' => 'failed',
-				'error'  => $response['error'],
-			);
+			return self::apply_sync_error( $post_id, $response );
 		}
 
 		if ( isset( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
-			$document = $response['body']['document'];
-			$status   = Security::sanitize_status( isset( $document['status'] ) ? $document['status'] : '' );
-
-			Document_State::write_from_api( $post_id, $document, $source );
-			update_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, 0 );
-			update_post_meta( $post_id, Document_State::META_LAST_POLLED_AT, 0 );
-
-			if ( in_array( $status, self::pending_statuses(), true ) ) {
-				self::schedule_next_poll( $post_id );
-			} else {
-				self::clear_next_poll( $post_id );
-			}
-
-			do_action( 'filetoweb_integration_after_sync_post', $post_id, $source, $document );
-
-			return array(
-				'status' => $status,
-			);
+			return self::apply_sync_document( $post_id, $source, $response['body']['document'] );
 		}
 
 		self::schedule_next_poll(
@@ -784,6 +958,103 @@ class Sync {
 		);
 
 		return array( 'status' => 'queued' );
+	}
+
+	/**
+	 * Verify that an external-ID recovery result belongs to the current PDF.
+	 *
+	 * WordPress keeps the same attachment ID when a file is replaced. The
+	 * external ID therefore is not enough to distinguish an older conversion
+	 * from the current source after an ambiguous request timeout.
+	 *
+	 * @param array $document FileToWeb API document.
+	 * @param array $source Current WordPress source.
+	 * @return bool
+	 */
+	private static function recovered_document_matches_source( $document, $source ) {
+		$remote_source = isset( $document['source'] ) && is_array( $document['source'] ) ? $document['source'] : array();
+		$remote_value  = isset( $remote_source['fingerprint'] ) ? (string) $remote_source['fingerprint'] : '';
+		$remote_method = isset( $remote_source['fingerprint_algorithm'] ) ? sanitize_key( (string) $remote_source['fingerprint_algorithm'] ) : '';
+		$local_value   = isset( $source['fingerprint'] ) ? (string) $source['fingerprint'] : '';
+		$local_method  = isset( $source['fingerprint_algorithm'] ) ? sanitize_key( (string) $source['fingerprint_algorithm'] ) : '';
+
+		return '' !== $remote_value
+			&& '' !== $remote_method
+			&& '' !== $local_value
+			&& '' !== $local_method
+			&& hash_equals( $local_value, $remote_value )
+			&& hash_equals( $local_method, $remote_method );
+	}
+
+	/**
+	 * Persist a document returned by either lookup or upsert.
+	 *
+	 * @param int   $post_id Post that owns FileToWeb state.
+	 * @param array $source Resolved source.
+	 * @param array $document FileToWeb API document.
+	 * @return array
+	 */
+	private static function apply_sync_document( $post_id, $source, $document ) {
+		$status = Security::sanitize_status( isset( $document['status'] ) ? $document['status'] : '' );
+
+		Document_State::write_from_api( $post_id, $document, $source );
+		update_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, 0 );
+		update_post_meta( $post_id, Document_State::META_LAST_POLLED_AT, 0 );
+
+		if ( in_array( $status, self::pending_statuses(), true ) ) {
+			self::schedule_next_poll( $post_id );
+		} else {
+			self::clear_next_poll( $post_id );
+		}
+
+		do_action( 'filetoweb_integration_after_sync_post', $post_id, $source, $document );
+
+		return array( 'status' => $status );
+	}
+
+	/**
+	 * Persist a safe transient or terminal API failure.
+	 *
+	 * @param int   $post_id Post that owns FileToWeb state.
+	 * @param array $response API error response.
+	 * @return array
+	 */
+	private static function apply_sync_error( $post_id, $response ) {
+		$error     = isset( $response['error'] ) ? $response['error'] : __( 'FileToWeb could not complete this request.', 'filetoweb-integration' );
+		$retryable = ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $error );
+
+		if ( $retryable ) {
+			Document_State::mark_pending_retry(
+				$post_id,
+				$error,
+				isset( $response['error_code'] ) ? $response['error_code'] : '',
+				isset( $response['reference'] ) ? $response['reference'] : '',
+				true
+			);
+			self::schedule_next_poll(
+				$post_id,
+				absint( get_post_meta( $post_id, Document_State::META_POLL_ATTEMPTS, true ) )
+			);
+
+			return array(
+				'status' => 'pending',
+				'error'  => $error,
+			);
+		}
+
+		Document_State::mark_failed(
+			$post_id,
+			$error,
+			isset( $response['error_code'] ) ? $response['error_code'] : '',
+			isset( $response['reference'] ) ? $response['reference'] : '',
+			false
+		);
+		self::clear_next_poll( $post_id );
+
+		return array(
+			'status' => 'failed',
+			'error'  => $error,
+		);
 	}
 
 	/**

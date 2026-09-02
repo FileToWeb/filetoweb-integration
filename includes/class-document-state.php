@@ -216,6 +216,35 @@ class Document_State {
 	}
 
 	/**
+	 * Persist the stable source identity before starting a remote import.
+	 *
+	 * A client timeout can happen after FileToWeb accepted the request. Keeping
+	 * this identity lets a later worker find that same document instead of
+	 * assuming the submission failed and creating unrelated work.
+	 *
+	 * @param int    $post_id Post ID.
+	 * @param array  $source Resolved source.
+	 * @param string $trigger Sync trigger.
+	 */
+	public static function mark_submitting( $post_id, $source, $trigger ) {
+		if ( ! is_array( $source ) ) {
+			return;
+		}
+
+		update_post_meta( $post_id, self::META_EXTERNAL_ID, self::sanitize_external_id( self::array_get( $source, 'external_id' ) ) );
+		update_post_meta( $post_id, self::META_SOURCE_FINGERPRINT, self::sanitize_fingerprint( self::array_get( $source, 'fingerprint' ) ) );
+		update_post_meta( $post_id, self::META_SOURCE_FINGERPRINT_ALGORITHM, sanitize_key( self::array_get( $source, 'fingerprint_algorithm' ) ) );
+		update_post_meta( $post_id, self::META_ORIGINAL_URL, esc_url_raw( self::array_get( $source, 'source_url' ) ) );
+		update_post_meta( $post_id, self::META_STATUS, 'pending' );
+		update_post_meta( $post_id, self::META_LAST_ERROR, '' );
+		update_post_meta( $post_id, self::META_ERROR_CODE, '' );
+		update_post_meta( $post_id, self::META_ERROR_REFERENCE, '' );
+		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, '' );
+		update_post_meta( $post_id, self::META_LAST_TRIGGER, sanitize_key( $trigger ) );
+		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
+	}
+
+	/**
 	 * Mark a post for retry after a transient API/network error.
 	 *
 	 * @param int    $post_id Post ID.

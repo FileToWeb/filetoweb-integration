@@ -413,7 +413,8 @@ class Link_Rewriter {
 	 * @return string
 	 */
 	private static function ready_document_public_url( $post_id ) {
-		$html_url = Document_State::ready_html_url( $post_id );
+		$owner_id = Source_Resolver::preview_owner_post_id( $post_id );
+		$html_url = Document_State::ready_html_url( $owner_id );
 
 		if ( ! $html_url ) {
 			return '';
@@ -493,7 +494,8 @@ class Link_Rewriter {
 	 */
 	private static function ready_document_epub_download_url( $post_id ) {
 		$post_id  = absint( $post_id );
-		$html_url = $post_id ? Document_State::ready_html_url( $post_id ) : '';
+		$owner_id = $post_id ? Source_Resolver::preview_owner_post_id( $post_id ) : 0;
+		$html_url = $owner_id ? Document_State::ready_html_url( $owner_id ) : '';
 
 		if ( ! $html_url ) {
 			return '';

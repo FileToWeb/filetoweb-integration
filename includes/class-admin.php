@@ -210,16 +210,17 @@ class Admin {
 	 * @param \WP_Post $post Post.
 	 */
 	public static function render_status_meta_box( $post ) {
-		$status      = get_post_meta( $post->ID, Document_State::META_STATUS, true );
-		$error       = get_post_meta( $post->ID, Document_State::META_LAST_ERROR, true );
-		$error_ref   = get_post_meta( $post->ID, Document_State::META_ERROR_REFERENCE, true );
-		$html_url    = Security::sanitize_filetoweb_url( get_post_meta( $post->ID, Document_State::META_HTML_URL, true ) );
-		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $post->ID, Document_State::META_EDITOR_URL, true ) );
-		$document_id = get_post_meta( $post->ID, Document_State::META_DOCUMENT_ID, true );
-		$external_id = get_post_meta( $post->ID, Document_State::META_EXTERNAL_ID, true );
+		$owner_id    = Source_Resolver::preview_owner_post_id( $post->ID );
+		$status      = get_post_meta( $owner_id, Document_State::META_STATUS, true );
+		$error       = get_post_meta( $owner_id, Document_State::META_LAST_ERROR, true );
+		$error_ref   = get_post_meta( $owner_id, Document_State::META_ERROR_REFERENCE, true );
+		$html_url    = Security::sanitize_filetoweb_url( get_post_meta( $owner_id, Document_State::META_HTML_URL, true ) );
+		$editor_url  = Security::sanitize_filetoweb_url( get_post_meta( $owner_id, Document_State::META_EDITOR_URL, true ) );
+		$document_id = get_post_meta( $owner_id, Document_State::META_DOCUMENT_ID, true );
+		$external_id = get_post_meta( $owner_id, Document_State::META_EXTERNAL_ID, true );
 		$original    = Source_Resolver::admin_original_source_url( $post );
-		$page_count  = absint( get_post_meta( $post->ID, Document_State::META_PAGE_COUNT, true ) );
-		$last_synced = get_post_meta( $post->ID, Document_State::META_LAST_SYNCED_AT, true );
+		$page_count  = absint( get_post_meta( $owner_id, Document_State::META_PAGE_COUNT, true ) );
+		$last_synced = get_post_meta( $owner_id, Document_State::META_LAST_SYNCED_AT, true );
 
 		self::render_status_summary( $status );
 
@@ -290,11 +291,9 @@ class Admin {
 			}
 		}
 
-		$owner_post_id = Source_Resolver::preview_owner_post_id( $post->ID );
-
-		if ( self::can_sync_post( $post->ID ) && self::can_sync_post( $owner_post_id ) ) {
+		if ( self::can_sync_post( $post->ID ) && self::can_sync_post( $owner_id ) ) {
 			self::render_public_replacement_controls(
-				$owner_post_id,
+				$owner_id,
 				self::admin_action_url( 'pause_public', $post->ID ),
 				self::admin_action_url( 'restore_public', $post->ID )
 			);
@@ -652,27 +651,27 @@ class Admin {
 			$result  = 'attachment' === get_post_type( $post_id ) ? Sync::sync_attachment_now( $post_id, 'manual_sync' ) : Sync::sync_document_now( $post_id, 'manual_sync' );
 			$message = sprintf( __( 'FileToWeb sync %s.', 'filetoweb-integration' ), isset( $result['status'] ) ? $result['status'] : 'complete' );
 		} elseif ( 'retry_processing' === $action ) {
-			$document_id = Security::sanitize_identifier( get_post_meta( $post_id, Document_State::META_DOCUMENT_ID, true ) );
-			$result      = $document_id ? Api_Client::reprocess_document( $document_id ) : array( 'ok' => false, 'error' => __( 'FileToWeb document ID is missing.', 'filetoweb-integration' ) );
+			$owner_id = Source_Resolver::preview_owner_post_id( $post_id );
 
-			if ( ! empty( $result['ok'] ) && ! empty( $result['body']['document'] ) && is_array( $result['body']['document'] ) ) {
-				Document_State::write_polled_state( $post_id, $result['body']['document'] );
-				$message = __( 'FileToWeb processing has been queued again.', 'filetoweb-integration' );
+			if ( ! self::can_sync_post( $owner_id ) ) {
+				wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
+			}
+
+			$result = Sync::retry_processing( $owner_id );
+
+			if ( 'failed' === ( isset( $result['status'] ) ? $result['status'] : '' ) ) {
+				$message     = __( 'FileToWeb could not queue the retry. Review the error and try again.', 'filetoweb-integration' );
+				$notice_type = 'error';
+			} elseif ( ! empty( $result['busy'] ) ) {
+				$message = __( 'Another FileToWeb check is already running for this PDF. It will retry automatically.', 'filetoweb-integration' );
 			} else {
-				Document_State::mark_failed(
-					$post_id,
-					isset( $result['error'] ) ? $result['error'] : __( 'FileToWeb retry failed.', 'filetoweb-integration' ),
-					isset( $result['error_code'] ) ? $result['error_code'] : '',
-					isset( $result['reference'] ) ? $result['reference'] : '',
-					! empty( $result['retryable'] )
-				);
-				$message = __( 'FileToWeb could not queue the retry. Review the error and try again.', 'filetoweb-integration' );
+				$message = __( 'FileToWeb processing has been queued again.', 'filetoweb-integration' );
 			}
 		} elseif ( 'refresh_preview' === $action ) {
 			$refresh_post_id = Source_Resolver::preview_owner_post_id( $post_id );
 
-			if ( $refresh_post_id !== $post_id && ! get_post_meta( $refresh_post_id, Document_State::META_DOCUMENT_ID, true ) ) {
-				Document_State::copy_state( $post_id, $refresh_post_id );
+			if ( ! self::can_sync_post( $refresh_post_id ) ) {
+				wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
 			}
 
 			Local_HTML::clear_poll_refresh_result( $refresh_post_id );
@@ -696,7 +695,14 @@ class Admin {
 					: sprintf( __( 'FileToWeb could not refresh the embedded preview. Status check: %s.', 'filetoweb-integration' ), $poll_result );
 			}
 		} else {
-			$result  = Sync::poll_post( $post_id );
+			$owner_id = Source_Resolver::preview_owner_post_id( $post_id );
+
+			if ( ! self::can_sync_post( $owner_id ) ) {
+				wp_die( esc_html__( 'Unauthorized', 'filetoweb-integration' ) );
+			}
+
+			$result = Sync::poll_post( $owner_id );
+
 			$message = sprintf( __( 'FileToWeb status check %s.', 'filetoweb-integration' ), $result );
 		}
 
@@ -783,10 +789,10 @@ class Admin {
 			return;
 		}
 
-		$status     = get_post_meta( $post_id, Document_State::META_STATUS, true );
-		$page_count = absint( get_post_meta( $post_id, Document_State::META_PAGE_COUNT, true ) );
-		$local_url  = Local_HTML::local_url( $post_id );
 		$owner_id   = Source_Resolver::preview_owner_post_id( $post_id );
+		$status     = get_post_meta( $owner_id, Document_State::META_STATUS, true );
+		$page_count = absint( get_post_meta( $owner_id, Document_State::META_PAGE_COUNT, true ) );
+		$local_url  = Local_HTML::local_url( $owner_id );
 
 		echo self::status_badge( $status ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 
@@ -815,9 +821,10 @@ class Admin {
 			return $actions;
 		}
 
-		$status      = get_post_meta( $post->ID, Document_State::META_STATUS, true );
+		$owner_id    = Source_Resolver::preview_owner_post_id( $post->ID );
+		$status      = get_post_meta( $owner_id, Document_State::META_STATUS, true );
 		$state       = self::status_state( $status );
-		$document_id = get_post_meta( $post->ID, Document_State::META_DOCUMENT_ID, true );
+		$document_id = get_post_meta( $owner_id, Document_State::META_DOCUMENT_ID, true );
 
 		if ( 'not_synced' === $state ) {
 			$actions['filetoweb_sync'] = '<a href="' . esc_url( self::admin_action_url( 'sync_now', $post->ID ) ) . '">' . esc_html__( 'Sync with FileToWeb', 'filetoweb-integration' ) . '</a>';

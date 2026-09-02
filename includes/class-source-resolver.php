@@ -225,7 +225,7 @@ class Source_Resolver {
 		}
 
 		$meta          = self::parse_document_meta( get_post_meta( $post_id, 'document_meta', true ) );
-		$attachment_id = is_array( $meta ) && ! empty( $meta['fid'] ) ? absint( $meta['fid'] ) : 0;
+		$attachment_id = self::document_attachment_id( $meta );
 
 		return $attachment_id && 'attachment' === get_post_type( $attachment_id ) ? $attachment_id : $post_id;
 	}

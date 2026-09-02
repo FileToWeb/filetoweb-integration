@@ -119,13 +119,64 @@ class CronTest extends TestCase {
 		$this->assertStringContainsString( 'RELEASE_LOCK', $GLOBALS['wpdb']->queries[1] );
 	}
 
-	private function fake_wpdb( $lock_available ) {
-		return new class( $lock_available ) {
+	public function test_legacy_database_reuses_outer_poll_lock_for_item_work(): void {
+		$GLOBALS['wpdb'] = $this->fake_wpdb( true, '5.6.51' );
+		$called          = false;
+
+		$result = Cron::with_poll_lock(
+			function () use ( &$called ) {
+				return Cron::with_item_lock(
+					25963,
+					function () use ( &$called ) {
+						$called = true;
+						return 'complete';
+					}
+				);
+			}
+		);
+
+		$this->assertTrue( $called );
+		$this->assertSame( 'complete', $result );
+		$this->assertCount( 2, $GLOBALS['wpdb']->queries );
+		$this->assertStringContainsString( 'GET_LOCK', $GLOBALS['wpdb']->queries[0] );
+		$this->assertStringContainsString( 'RELEASE_LOCK', $GLOBALS['wpdb']->queries[1] );
+	}
+
+	public function test_modern_database_holds_poll_and_item_locks_together(): void {
+		$GLOBALS['wpdb'] = $this->fake_wpdb( true, '8.0.43' );
+
+		$result = Cron::with_poll_lock(
+			function () {
+				return Cron::with_item_lock(
+					25963,
+					function () {
+						return 'complete';
+					}
+				);
+			}
+		);
+
+		$this->assertSame( 'complete', $result );
+		$this->assertCount( 4, $GLOBALS['wpdb']->queries );
+		$this->assertStringContainsString( 'GET_LOCK', $GLOBALS['wpdb']->queries[0] );
+		$this->assertStringContainsString( 'GET_LOCK', $GLOBALS['wpdb']->queries[1] );
+		$this->assertStringContainsString( 'RELEASE_LOCK', $GLOBALS['wpdb']->queries[2] );
+		$this->assertStringContainsString( 'RELEASE_LOCK', $GLOBALS['wpdb']->queries[3] );
+	}
+
+	private function fake_wpdb( $lock_available, $version = '8.0.43' ) {
+		return new class( $lock_available, $version ) {
 			public $queries = array();
 			private $lock_available;
+			private $version;
 
-			public function __construct( $lock_available ) {
+			public function __construct( $lock_available, $version ) {
 				$this->lock_available = $lock_available;
+				$this->version        = $version;
+			}
+
+			public function db_version() {
+				return $this->version;
 			}
 
 			public function prepare( $query, $value ) {

@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.51
+Stable tag: 0.1.52
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -81,6 +81,13 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.52 =
+
+* Recovers timed-out imports through their stable WordPress external ID before making another idempotent submission.
+* Keeps delayed conversions pending with bounded backoff and automatically retries temporary document-mutation conflicts.
+* Uses the current PDF attachment for Proud Document status, actions, and public previews instead of stale parent-post metadata.
+* Prevents cron and manual work from overlapping for the same attachment across WordPress replicas.
 
 = 0.1.51 =
 

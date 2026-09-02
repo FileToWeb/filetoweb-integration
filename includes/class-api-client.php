@@ -42,6 +42,16 @@ class Api_Client {
 	}
 
 	/**
+	 * Fetch document status through its stable WordPress source identity.
+	 *
+	 * @param string $external_id Stable FileToWeb external ID.
+	 * @return array
+	 */
+	public static function get_document_by_external_id( $external_id ) {
+		return self::request( 'GET', '/documents/by-external-id/' . rawurlencode( $external_id ), null );
+	}
+
+	/**
 	 * Explicitly retry a failed FileToWeb document.
 	 *
 	 * @param string $document_id FileToWeb document ID.
@@ -169,10 +179,15 @@ class Api_Client {
 		if ( $code < 200 || $code >= 300 ) {
 			$api_error = self::extract_api_error( $decoded, $raw_body, $code );
 
+			if ( self::is_retryable_response( $code, $api_error['code'] ) ) {
+				$api_error['retryable'] = true;
+			}
+
 			if ( $code >= 500 ) {
 				$api_error['message']   = __( 'FileToWeb could not complete this request. Please try again later.', 'filetoweb-integration' );
 				$api_error['code']      = $api_error['code'] ? $api_error['code'] : 'service_unavailable';
-				$api_error['retryable'] = true;
+			} elseif ( 409 === $code && 'document_mutation_conflict' === $api_error['code'] ) {
+				$api_error['message'] = __( 'FileToWeb is still finishing another operation for this document. It will retry automatically.', 'filetoweb-integration' );
 			}
 
 			return self::error(
@@ -207,6 +222,22 @@ class Api_Client {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Whether an HTTP/API response represents temporary request contention.
+	 *
+	 * @param int    $status_code HTTP response status.
+	 * @param string $error_code Structured FileToWeb error code.
+	 * @return bool
+	 */
+	private static function is_retryable_response( $status_code, $error_code ) {
+		$status_code = absint( $status_code );
+		$error_code  = sanitize_key( (string) $error_code );
+
+		return $status_code >= 500
+			|| in_array( $status_code, array( 408, 425, 429 ), true )
+			|| ( 409 === $status_code && 'document_mutation_conflict' === $error_code );
 	}
 
 	/**

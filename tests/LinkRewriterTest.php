@@ -576,7 +576,7 @@ class LinkRewriterTest extends TestCase {
 		$this->assertSame( $content, Link_Rewriter::filter_content_pdf_links( $content ) );
 	}
 
-		public function test_rewrites_ready_proud_document_viewer_and_preserves_download(): void {
+	public function test_rewrites_ready_proud_document_viewer_and_preserves_download(): void {
 		$this->post_types[456]        = 'document';
 		$this->queried_object_id      = 456;
 		$this->is_document_singular   = true;
@@ -615,6 +615,54 @@ class LinkRewriterTest extends TestCase {
 		$this->assertStringContainsString( 'download="agenda.pdf"', $rewritten );
 			$this->assertStringNotContainsString( 'Download EPUB', $rewritten );
 			$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=456&ftw_token=token-456"', $rewritten );
+		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
+	}
+
+	public function test_proud_document_viewer_uses_current_attachment_state_when_parent_is_stale(): void {
+		$this->post_types[456]      = 'document';
+		$this->post_types[457]      = 'attachment';
+		$this->queried_object_id    = 456;
+		$this->is_document_singular = true;
+		$source_url                 = 'https://example.test/wp-content/uploads/july.pdf';
+		$local_path                 = $this->local_html_file( 457 );
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $source_url, $local_path ) {
+				if ( 456 === $post_id ) {
+					$parent = array(
+						'document'                       => $source_url,
+						'document_filename'              => 'july.pdf',
+						'document_meta'                  => '{"fid":457,"mime":"application/pdf"}',
+						Document_State::META_STATUS      => 'processing',
+						Document_State::META_DOCUMENT_ID => 'doc-june-stale',
+					);
+
+					return isset( $parent[ $key ] ) ? $parent[ $key ] : '';
+				}
+
+				if ( 457 === $post_id ) {
+					$current = array(
+						Document_State::META_STATUS           => 'ready',
+						Document_State::META_DOCUMENT_ID      => 'doc-july-current',
+						Document_State::META_HTML_URL         => 'https://filetoweb.com/d/AbCdEf1234567890GhIjKlMn/1',
+						Document_State::META_LOCAL_HTML_PATH  => $local_path,
+						Document_State::META_LOCAL_HTML_TOKEN => 'token-457',
+					);
+
+					return isset( $current[ $key ] ) ? $current[ $key ] : '';
+				}
+
+				return '';
+			}
+		);
+
+		$html = '<a href="' . $source_url . '" download="july.pdf">Download</a>'
+			. '<iframe id="doc-preview" src="//docs.google.com/gview?url=' . rawurlencode( $source_url ) . '&amp;embedded=true"></iframe>';
+		$rewritten = Link_Rewriter::filter_document_viewer_output( $html );
+
+		$this->assertStringContainsString( 'href="' . $source_url . '"', $rewritten );
+		$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=457&ftw_token=token-457"', $rewritten );
+		$this->assertStringNotContainsString( 'doc-june-stale', $rewritten );
 		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
 	}
 

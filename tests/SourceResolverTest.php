@@ -55,6 +55,17 @@ class SourceResolverTest extends TestCase {
 		$this->assertSame( 10172, Source_Resolver::preview_owner_post_id( 10171 ) );
 	}
 
+	public function test_preview_owner_accepts_alternate_attachment_id_key(): void {
+		Functions\when( 'get_post_type' )->alias(
+			function ( $post_id ) {
+				return 10171 === $post_id ? 'document' : ( 10172 === $post_id ? 'attachment' : '' );
+			}
+		);
+		Functions\when( 'get_post_meta' )->justReturn( '{"attachment_id":10172,"mime":"application/pdf"}' );
+
+		$this->assertSame( 10172, Source_Resolver::preview_owner_post_id( 10171 ) );
+	}
+
 	public function test_preview_owner_keeps_attachmentless_document(): void {
 		Functions\when( 'get_post_type' )->alias(
 			function ( $post_id ) {

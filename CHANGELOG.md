@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.52
+
+- Recover accepted imports after a WordPress HTTP timeout by looking up their stable external ID before making another idempotent submission.
+- Keep polling delayed conversions with bounded backoff, clear obsolete errors when the document becomes ready, and automatically retry temporary document-mutation conflicts.
+- Read Proud Document status, actions, and public preview URLs from the currently attached PDF so replaced attachments cannot display or retry an older document's FileToWeb record.
+- Serialize cron and manual work per attachment with a cross-pod database lock to prevent overlapping submissions and retries.
+
 ## 0.1.51
 
 - Publish FileToWeb CSV downloads and strictly allowlisted SVG preview assets, including nested SVG image dependencies, into the same durable WordPress preview bundle.

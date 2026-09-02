@@ -297,6 +297,62 @@ class AdminStatusTest extends TestCase {
 		$this->assertStringContainsString( 'Retry FileToWeb sync', implode( ' ', $failed ) );
 	}
 
+	public function test_proud_document_status_follows_its_current_attachment_instead_of_stale_parent_state(): void {
+		$this->can_sync = true;
+
+		Functions\when( 'get_post_type' )->alias(
+			function ( $post ) {
+				$post_id = is_object( $post ) ? $post->ID : $post;
+				return 456 === (int) $post_id ? 'document' : ( 457 === (int) $post_id ? 'attachment' : '' );
+			}
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) {
+				if ( 456 === (int) $post_id ) {
+					$parent = array(
+						'document'                             => 'https://example.com/uploads/july.pdf',
+						'document_meta'                        => '{"fid":457,"mime":"application/pdf"}',
+						Document_State::META_STATUS            => 'processing',
+						Document_State::META_DOCUMENT_ID       => 'doc-june-stale',
+						Document_State::META_EXTERNAL_ID       => 'wordpress:test:attachment:456',
+						Document_State::META_ERROR_REFERENCE   => 'FTW-C588003D2859',
+					);
+
+					return isset( $parent[ $key ] ) ? $parent[ $key ] : '';
+				}
+
+				if ( 457 === (int) $post_id ) {
+					$current = array(
+						Document_State::META_STATUS       => 'ready',
+						Document_State::META_DOCUMENT_ID  => 'doc-july-current',
+						Document_State::META_EXTERNAL_ID  => 'wordpress:test:attachment:457',
+						Document_State::META_PAGE_COUNT   => 56,
+						Document_State::META_HTML_URL     => 'https://filetoweb.com/d/AbCdEf1234567890GhIjKlMn/1',
+					);
+
+					return isset( $current[ $key ] ) ? $current[ $key ] : '';
+				}
+
+				return '';
+			}
+		);
+
+		$post            = new stdClass();
+		$post->ID        = 456;
+		$post->post_type = 'document';
+
+		ob_start();
+		Admin::render_status_meta_box( $post );
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'Ready', $html );
+		$this->assertStringContainsString( 'doc-july-current', $html );
+		$this->assertStringContainsString( 'wordpress:test:attachment:457', $html );
+		$this->assertStringContainsString( '56', $html );
+		$this->assertStringNotContainsString( 'doc-june-stale', $html );
+		$this->assertStringNotContainsString( 'FTW-C588003D2859', $html );
+	}
+
 	public function test_error_notice_is_rendered_with_error_styling(): void {
 		$transients = array();
 
