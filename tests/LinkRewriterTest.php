@@ -69,6 +69,7 @@ class LinkRewriterTest extends TestCase {
 		parent::setUp();
 		Monkey\setUp();
 		$this->reset_rewriter_cache();
+		$GLOBALS['filetoweb_test_resolving_source'] = false;
 		$this->post_types           = array();
 		$this->queried_object_id    = 0;
 			$this->is_document_singular = false;
@@ -81,6 +82,7 @@ class LinkRewriterTest extends TestCase {
 
 		Functions\when( 'esc_url_raw' )->returnArg();
 		Functions\when( '__' )->returnArg();
+		Functions\when( 'esc_attr' )->returnArg();
 		Functions\when( 'wp_unslash' )->returnArg();
 		Functions\when( 'esc_url' )->returnArg();
 		Functions\when( 'is_admin' )->justReturn( false );
@@ -208,8 +210,10 @@ class LinkRewriterTest extends TestCase {
 			Functions\when( 'post_type_exists' )->justReturn( true );
 		}
 
-		protected function tearDown(): void {
-			if ( $this->uploads_dir && is_dir( $this->uploads_dir ) ) {
+	protected function tearDown(): void {
+		unset( $GLOBALS['filetoweb_test_resolving_source'] );
+
+		if ( $this->uploads_dir && is_dir( $this->uploads_dir ) ) {
 				foreach ( glob( $this->uploads_dir . '/filetoweb-integration/*' ) as $file ) {
 					unlink( $file );
 				}
@@ -810,6 +814,115 @@ class LinkRewriterTest extends TestCase {
 		$this->is_document_singular = true;
 
 		$this->assertNull( Link_Rewriter::filter_document_meta( null, 456, 'document', true ) );
+	}
+
+	public function test_proudcity_source_resolution_guard_preserves_stateless_document_url(): void {
+		$this->post_types[456] = 'document';
+		$GLOBALS['filetoweb_test_resolving_source'] = true;
+		$stateless_url = 'https://storage.googleapis.com/proudcity/oakwoodoh/uploads/2026/09/agenda.pdf';
+
+		$this->assertSame(
+			$stateless_url,
+			Link_Rewriter::filter_document_meta( $stateless_url, 456, 'document', true )
+		);
+	}
+
+	public function test_proud_document_embed_preview_uses_attachment_owned_ready_html(): void {
+		$this->post_types[456] = 'document';
+		$this->post_types[457] = 'attachment';
+		$source_url            = 'https://storage.googleapis.com/proudcity/oakwoodoh/uploads/2026/09/agenda.pdf';
+		$local_path            = $this->local_html_file( 457 );
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $source_url, $local_path ) {
+				if ( 456 === $post_id ) {
+					$document = array(
+						'document'          => $source_url,
+						'document_filename' => 'agenda.pdf',
+						'document_meta'     => '{"fid":457,"mime":"application/pdf"}',
+					);
+
+					return isset( $document[ $key ] ) ? $document[ $key ] : '';
+				}
+
+				if ( 457 === $post_id ) {
+					$attachment = array(
+						Document_State::META_STATUS           => 'ready',
+						Document_State::META_HTML_URL         => 'https://filetoweb.com/d/demo/1',
+						Document_State::META_LOCAL_HTML_PATH  => $local_path,
+						Document_State::META_LOCAL_HTML_TOKEN => 'token-457',
+					);
+
+					return isset( $attachment[ $key ] ) ? $attachment[ $key ] : '';
+				}
+
+				return '';
+			}
+		);
+
+		$preview_html = '<iframe src="//docs.google.com/gview?url=' . rawurlencode( $source_url ) . '&amp;embedded=true" title="Agenda" id="doc-preview" style="width:100%; height:400px;" frameborder="0"></iframe>';
+		$rewritten    = Link_Rewriter::filter_document_embed_preview( $preview_html, 456, $source_url );
+
+		$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=457&ftw_token=token-457"', $rewritten );
+		$this->assertStringContainsString( 'title="Agenda"', $rewritten );
+		$this->assertStringNotContainsString( 'docs.google.com/gview', $rewritten );
+	}
+
+	public function test_proud_document_embed_preview_can_fill_empty_core_markup(): void {
+		$this->post_types[456] = 'document';
+		$source_url            = 'https://example.test/wp-content/uploads/agenda.pdf';
+		$local_path            = $this->local_html_file( 456 );
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $source_url, $local_path ) {
+				if ( 456 !== $post_id ) {
+					return '';
+				}
+
+				$values = array(
+					'document'                            => $source_url,
+					'document_filename'                   => 'agenda.pdf',
+					'document_meta'                       => '{"mime":"application/pdf"}',
+					Document_State::META_STATUS           => 'ready',
+					Document_State::META_HTML_URL         => 'https://filetoweb.com/d/demo/1',
+					Document_State::META_LOCAL_HTML_PATH  => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN => 'token-456',
+				);
+
+				return isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$rewritten = Link_Rewriter::filter_document_embed_preview( '', 456, $source_url );
+
+		$this->assertStringContainsString( 'src="https://example.test/?filetoweb_local_html=456&ftw_token=token-456"', $rewritten );
+		$this->assertStringContainsString( 'title="Accessible document preview"', $rewritten );
+	}
+
+	public function test_proud_document_embed_preview_preserves_default_while_pending(): void {
+		$this->post_types[456] = 'document';
+		$source_url            = 'https://example.test/wp-content/uploads/agenda.pdf';
+
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $source_url ) {
+				$values = array(
+					'document'                         => $source_url,
+					'document_filename'                => 'agenda.pdf',
+					'document_meta'                    => '{"mime":"application/pdf"}',
+					Document_State::META_STATUS        => 'processing',
+					Document_State::META_HTML_URL      => 'https://filetoweb.com/d/demo/1',
+				);
+
+				return 456 === $post_id && isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$preview_html = '<iframe src="//docs.google.com/gview?url=' . rawurlencode( $source_url ) . '&amp;embedded=true" id="doc-preview"></iframe>';
+
+		$this->assertSame(
+			$preview_html,
+			Link_Rewriter::filter_document_embed_preview( $preview_html, 456, $source_url )
+		);
 	}
 
 		public function test_rewrites_ready_meeting_viewer_and_preserves_download(): void {

@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.53
+Stable tag: 0.1.54
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -81,6 +81,12 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.54 =
+
+* Lets ProudCity request the original Document source URL without FileToWeb replacing it, while preserving WP Stateless GCS URL rewriting.
+* Adds a dedicated ProudCity Embed Document preview hook that uses FileToWeb's attachment-aware ready URL resolution without changing the PDF download target.
+* Keeps the existing ProudCity viewer unchanged when a FileToWeb preview is not ready or public replacement is disabled.
 
 = 0.1.53 =
 

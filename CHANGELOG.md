@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.54
+
+- Let ProudCity request the original Document source URL without FileToWeb replacing it, while preserving WP Stateless GCS URL rewriting.
+- Add a dedicated ProudCity Embed Document preview hook that uses FileToWeb's attachment-aware ready URL resolution without changing the PDF download target.
+- Keep the existing ProudCity viewer unchanged when a FileToWeb preview is not ready or public replacement is disabled.
+
 ## 0.1.53
 
 - Make scheduled status polling read-only so only an administrator's explicit **Retry processing** action can call FileToWeb's reprocess endpoint.

@@ -46,6 +46,7 @@ class Link_Rewriter {
 	public static function init() {
 		add_filter( 'wp_get_attachment_url', array( __CLASS__, 'filter_attachment_url' ), 20, 2 );
 		add_filter( 'get_post_metadata', array( __CLASS__, 'filter_document_meta' ), 20, 4 );
+		add_filter( 'proud_document_embed_preview', array( __CLASS__, 'filter_document_embed_preview' ), 10, 3 );
 		add_filter( 'the_content', array( __CLASS__, 'filter_content_pdf_links' ), 20 );
 		add_filter( 'widget_text', array( __CLASS__, 'filter_content_pdf_links' ), 20 );
 		add_filter( 'widget_text_content', array( __CLASS__, 'filter_content_pdf_links' ), 20 );
@@ -87,7 +88,14 @@ class Link_Rewriter {
 	 * @return mixed
 	 */
 	public static function filter_document_meta( $value, $object_id, $meta_key, $single ) {
-		if ( 'document' !== $meta_key || Source_Resolver::is_reading_original_source() || ! self::is_public_replacement_context() ) {
+		if ( 'document' !== $meta_key ) {
+			return $value;
+		}
+
+		$proudcity_is_resolving_source = function_exists( '\\Proud\\Core\\proud_html_preview_is_resolving_source' )
+			&& call_user_func( '\\Proud\\Core\\proud_html_preview_is_resolving_source' );
+
+		if ( Source_Resolver::is_reading_original_source() || $proudcity_is_resolving_source || ! self::is_public_replacement_context() ) {
 			return $value;
 		}
 
@@ -106,6 +114,41 @@ class Link_Rewriter {
 		}
 
 		return $value;
+	}
+
+	/**
+	 * Replace the ProudCity Embed Document widget preview with ready FileToWeb HTML.
+	 *
+	 * ProudCity supplies the original document URL separately, so its Download
+	 * action remains a PDF while this filter controls only the preview iframe.
+	 *
+	 * @param string $preview_html Default ProudCity viewer markup.
+	 * @param int    $post_id Proud Document post ID.
+	 * @param string $src Original document URL.
+	 * @return string
+	 */
+	public static function filter_document_embed_preview( $preview_html, $post_id, $src ) {
+		if ( ! is_string( $preview_html ) || ! self::is_public_replacement_context() ) {
+			return $preview_html;
+		}
+
+		$viewer_url = self::ready_document_viewer_url( absint( $post_id ) );
+
+		if ( ! $viewer_url ) {
+			return $preview_html;
+		}
+
+		$rewritten = self::replace_document_viewer_iframe( $preview_html, $viewer_url, $src );
+
+		if ( $rewritten !== $preview_html ) {
+			return $rewritten;
+		}
+
+		return sprintf(
+			'<iframe src="%s" id="doc-preview" title="%s" style="width:100%%; max-width:600px; height:400px;" frameborder="0"></iframe>',
+			esc_url( $viewer_url ),
+			esc_attr( __( 'Accessible document preview', 'filetoweb-integration' ) )
+		);
 	}
 
 	/**
