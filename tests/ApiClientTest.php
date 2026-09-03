@@ -219,8 +219,30 @@ class ApiClientTest extends TestCase {
 		$this->assertFalse( $result['ok'] );
 		$this->assertTrue( $result['retryable'] );
 		$this->assertSame( 'document_mutation_conflict', $result['error_code'] );
-		$this->assertSame( 'FileToWeb is still finishing another operation for this document. It will retry automatically.', $result['error'] );
+		$this->assertSame( 'FileToWeb is still finishing another operation for this document. Please check again shortly.', $result['error'] );
 		$this->assertStringNotContainsString( 'DocumentMutationLockedError', $result['error'] );
+	}
+
+	public function test_localized_wordpress_http_failure_is_retryable_by_error_code(): void {
+		$error = new class() {
+			public function get_error_message() {
+				return 'Zeitüberschreitung beim Verbindungsaufbau';
+			}
+
+			public function get_error_code() {
+				return 'http_request_failed';
+			}
+		};
+
+		Functions\expect( 'wp_remote_request' )->once()->andReturn( $error );
+		Functions\when( 'is_wp_error' )->alias( function ( $value ) use ( $error ) { return $value === $error; } );
+
+		$result = Api_Client::get_document( 'doc-localized-timeout' );
+
+		$this->assertFalse( $result['ok'] );
+		$this->assertTrue( $result['retryable'] );
+		$this->assertSame( 'http_request_failed', $result['error_code'] );
+		$this->assertSame( 'Zeitüberschreitung beim Verbindungsaufbau', $result['error'] );
 	}
 
 	public function test_legacy_internal_error_is_replaced_before_admin_storage(): void {

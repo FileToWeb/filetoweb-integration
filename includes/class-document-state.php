@@ -105,9 +105,7 @@ class Document_State {
 			return;
 		}
 
-		$external_id = isset( $document['external_id'] ) ? $document['external_id'] : $source['external_id'];
-
-		update_post_meta( $post_id, self::META_EXTERNAL_ID, self::sanitize_external_id( $external_id ) );
+		update_post_meta( $post_id, self::META_EXTERNAL_ID, self::sanitize_external_id( self::array_get( $source, 'external_id' ) ) );
 		update_post_meta( $post_id, self::META_DOCUMENT_ID, Security::sanitize_identifier( self::array_get( $document, 'id' ) ) );
 		update_post_meta( $post_id, self::META_SOURCE_FINGERPRINT, self::sanitize_fingerprint( self::array_get( $source, 'fingerprint' ) ) );
 		update_post_meta( $post_id, self::META_SOURCE_FINGERPRINT_ALGORITHM, sanitize_key( self::array_get( $source, 'fingerprint_algorithm' ) ) );
@@ -203,16 +201,22 @@ class Document_State {
 	 * @param string $trigger Sync trigger.
 	 */
 	public static function mark_scheduled( $post_id, $trigger ) {
-		update_post_meta( $post_id, self::META_STATUS, 'pending' );
-		update_post_meta( $post_id, self::META_LAST_ERROR, '' );
-		update_post_meta( $post_id, self::META_ERROR_CODE, '' );
-		update_post_meta( $post_id, self::META_ERROR_REFERENCE, '' );
-		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, '' );
+		$preserve_ready = 'ready' === get_post_meta( $post_id, self::META_STATUS, true );
+
+		if ( ! $preserve_ready ) {
+			update_post_meta( $post_id, self::META_STATUS, 'pending' );
+			update_post_meta( $post_id, self::META_LAST_ERROR, '' );
+			update_post_meta( $post_id, self::META_ERROR_CODE, '' );
+			update_post_meta( $post_id, self::META_ERROR_REFERENCE, '' );
+			update_post_meta( $post_id, self::META_ERROR_RETRYABLE, '' );
+		}
 		update_post_meta( $post_id, self::META_LAST_TRIGGER, sanitize_key( $trigger ) );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
-		update_post_meta( $post_id, self::META_NEXT_POLL_AT, time() + 60 );
-		update_post_meta( $post_id, self::META_LAST_POLLED_AT, 0 );
-		update_post_meta( $post_id, self::META_POLL_ATTEMPTS, 0 );
+		if ( ! $preserve_ready ) {
+			update_post_meta( $post_id, self::META_NEXT_POLL_AT, time() + 60 );
+			update_post_meta( $post_id, self::META_LAST_POLLED_AT, 0 );
+			update_post_meta( $post_id, self::META_POLL_ATTEMPTS, 0 );
+		}
 	}
 
 	/**
@@ -225,22 +229,52 @@ class Document_State {
 	 * @param int    $post_id Post ID.
 	 * @param array  $source Resolved source.
 	 * @param string $trigger Sync trigger.
+	 * @return bool Whether an unchanged ready state was preserved.
 	 */
 	public static function mark_submitting( $post_id, $source, $trigger ) {
 		if ( ! is_array( $source ) ) {
-			return;
+			return false;
 		}
 
+		$stored_status      = get_post_meta( $post_id, self::META_STATUS, true );
+		$stored_fingerprint = self::sanitize_fingerprint( get_post_meta( $post_id, self::META_SOURCE_FINGERPRINT, true ) );
+		$source_fingerprint = self::sanitize_fingerprint( self::array_get( $source, 'fingerprint' ) );
+		$preserve_ready     = 'ready' === $stored_status
+			&& '' !== $stored_fingerprint
+			&& '' !== $source_fingerprint
+			&& hash_equals( $stored_fingerprint, $source_fingerprint );
+
 		update_post_meta( $post_id, self::META_EXTERNAL_ID, self::sanitize_external_id( self::array_get( $source, 'external_id' ) ) );
-		update_post_meta( $post_id, self::META_SOURCE_FINGERPRINT, self::sanitize_fingerprint( self::array_get( $source, 'fingerprint' ) ) );
+		update_post_meta( $post_id, self::META_SOURCE_FINGERPRINT, $source_fingerprint );
 		update_post_meta( $post_id, self::META_SOURCE_FINGERPRINT_ALGORITHM, sanitize_key( self::array_get( $source, 'fingerprint_algorithm' ) ) );
 		update_post_meta( $post_id, self::META_ORIGINAL_URL, esc_url_raw( self::array_get( $source, 'source_url' ) ) );
-		update_post_meta( $post_id, self::META_STATUS, 'pending' );
-		update_post_meta( $post_id, self::META_LAST_ERROR, '' );
-		update_post_meta( $post_id, self::META_ERROR_CODE, '' );
-		update_post_meta( $post_id, self::META_ERROR_REFERENCE, '' );
-		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, '' );
+		if ( ! $preserve_ready ) {
+			update_post_meta( $post_id, self::META_STATUS, 'pending' );
+			update_post_meta( $post_id, self::META_LAST_ERROR, '' );
+			update_post_meta( $post_id, self::META_ERROR_CODE, '' );
+			update_post_meta( $post_id, self::META_ERROR_REFERENCE, '' );
+			update_post_meta( $post_id, self::META_ERROR_RETRYABLE, '' );
+		}
 		update_post_meta( $post_id, self::META_LAST_TRIGGER, sanitize_key( $trigger ) );
+		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
+
+		return $preserve_ready;
+	}
+
+	/**
+	 * Store a sync error without taking an unchanged ready preview offline.
+	 *
+	 * @param int    $post_id Post ID.
+	 * @param string $error Customer-safe error.
+	 * @param string $code Public error code.
+	 * @param string $reference Support reference.
+	 * @param bool   $retryable Whether the operation may succeed later.
+	 */
+	public static function record_sync_error( $post_id, $error, $code = '', $reference = '', $retryable = false ) {
+		update_post_meta( $post_id, self::META_LAST_ERROR, Security::sanitize_public_error( $error ) );
+		update_post_meta( $post_id, self::META_ERROR_CODE, sanitize_key( $code ) );
+		update_post_meta( $post_id, self::META_ERROR_REFERENCE, self::sanitize_error_reference( $reference ) );
+		update_post_meta( $post_id, self::META_ERROR_RETRYABLE, $retryable ? '1' : '0' );
 		update_post_meta( $post_id, self::META_LAST_SYNCED_AT, current_time( 'mysql', true ) );
 	}
 

@@ -33,6 +33,7 @@ class Proud_HTML_Preview {
 	const MAX_ASSET_BYTES          = 52428800;
 	const MAX_OPTIONAL_ASSET_COUNT = 20;
 	const MAX_OPTIONAL_ASSET_BYTES = 10485760;
+	const DEFAULT_PUBLISH_TIMEOUT  = 75;
 
 	/**
 	 * Customer-safe reason the latest publication attempt failed.
@@ -87,6 +88,12 @@ class Proud_HTML_Preview {
 
 	/** @var bool */
 	private static $optional_asset_fetches_disabled = false;
+
+	/** @var float */
+	private static $publication_deadline = 0.0;
+
+	/** @var bool */
+	private static $publication_timed_out = false;
 
 	/**
 	 * Register preview publication lifecycle hooks.
@@ -246,6 +253,8 @@ class Proud_HTML_Preview {
 		self::$optional_asset_count    = 0;
 		self::$optional_asset_bytes    = 0;
 		self::$optional_asset_fetches_disabled = false;
+		self::$publication_deadline            = 0.0;
+		self::$publication_timed_out            = false;
 
 		$post_id     = absint( $post_id );
 		$html        = is_string( $html ) ? trim( $html ) : '';
@@ -256,6 +265,8 @@ class Proud_HTML_Preview {
 		if ( ! $post_id || ! $html || ! $viewer_url || ! $source_url || ! $fingerprint ) {
 			return self::publish_failure( __( 'FileToWeb preview publication data was incomplete.', 'filetoweb-integration' ) );
 		}
+
+		self::start_publication_timer( $post_id );
 
 		$uploads = wp_upload_dir();
 		$basedir = isset( $uploads['basedir'] ) ? wp_normalize_path( $uploads['basedir'] ) : '';
@@ -283,6 +294,10 @@ class Proud_HTML_Preview {
 		$legacy_artifacts = self::legacy_artifacts_for_record( $current );
 
 		if ( self::record_matches( $current, $source_url, $fingerprint, $artifact_key ) && is_readable( $index_path ) ) {
+			if ( ! self::publication_budget_available() ) {
+				return self::publish_timeout_failure();
+			}
+
 			$manifest  = self::artifact_manifest( $bundle_dir, $basedir, $baseurl, $storage );
 			$algorithm = sanitize_key( get_post_meta( $post_id, Document_State::META_SOURCE_FINGERPRINT_ALGORITHM, true ) );
 			if ( empty( $manifest ) ) {
@@ -292,7 +307,10 @@ class Proud_HTML_Preview {
 			$needs_storage_sync = empty( $current['artifacts'] ) || $manifest !== $current['artifacts'] || $algorithm !== ( isset( $current['source_fingerprint_algorithm'] ) ? $current['source_fingerprint_algorithm'] : '' );
 
 			if ( $needs_storage_sync ) {
-				if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage ) ) {
+				if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage, true ) ) {
+					if ( self::$publication_timed_out ) {
+						return self::publish_timeout_failure();
+					}
 					return self::publish_failure( __( 'FileToWeb preview files could not be verified in WordPress storage.', 'filetoweb-integration' ) );
 				}
 
@@ -323,6 +341,11 @@ class Proud_HTML_Preview {
 		$complete   = true;
 		$html       = self::mirror_assets( $html, $viewer_url, $temp_dir, $bundle_url, $mirrored, $complete );
 
+		if ( self::$publication_timed_out || ! self::publication_budget_available() ) {
+			self::remove_directory( $temp_dir );
+			return self::publish_timeout_failure();
+		}
+
 		if ( ! $complete ) {
 			self::remove_directory( $temp_dir );
 			$message = self::$last_asset_error
@@ -332,11 +355,16 @@ class Proud_HTML_Preview {
 			return self::publish_failure( $message, self::$has_asset_failure && self::$asset_failures_retryable );
 		}
 
-		$html       = self::sanitize_html( $html );
+		$html = self::sanitize_html( $html );
 
 		if ( ! $html || self::contains_filetoweb_asset_reference( $html, $viewer_url ) || false === file_put_contents( trailingslashit( $temp_dir ) . 'index.html', $html ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_read_file_put_contents
 			self::remove_directory( $temp_dir );
 			return self::publish_failure( __( 'FileToWeb preview HTML could not be written to WordPress storage.', 'filetoweb-integration' ) );
+		}
+
+		if ( ! self::publication_budget_available() ) {
+			self::remove_directory( $temp_dir );
+			return self::publish_timeout_failure();
 		}
 
 		if ( is_dir( $bundle_dir ) ) {
@@ -391,8 +419,15 @@ class Proud_HTML_Preview {
 			$record['superseded_artifacts'] = $superseded_artifacts;
 		}
 
-		if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage ) ) {
+		if ( ! self::sync_bundle_with_stateless( $bundle_dir, $basedir, $baseurl, $storage, true ) ) {
+			if ( self::$publication_timed_out ) {
+				return self::publish_timeout_failure();
+			}
 			return self::publish_failure( __( 'FileToWeb preview files could not be verified in WordPress storage.', 'filetoweb-integration' ) );
+		}
+
+		if ( ! self::publication_budget_available() ) {
+			return self::publish_timeout_failure();
 		}
 
 		self::store_record( $post_id, $record );
@@ -432,6 +467,60 @@ class Proud_HTML_Preview {
 		self::$last_publish_retryable = (bool) $retryable;
 
 		return false;
+	}
+
+	/**
+	 * Begin the aggregate wall-clock budget for one publication attempt.
+	 *
+	 * @param int $post_id Source post ID.
+	 */
+	private static function start_publication_timer( $post_id ) {
+		$seconds = apply_filters( 'filetoweb_integration_preview_publish_timeout', self::DEFAULT_PUBLISH_TIMEOUT, absint( $post_id ) );
+		$seconds = is_numeric( $seconds ) ? (float) $seconds : (float) self::DEFAULT_PUBLISH_TIMEOUT;
+		$seconds = max( 1.0, min( 90.0, $seconds ) );
+
+		self::$publication_deadline = microtime( true ) + $seconds;
+	}
+
+	/**
+	 * Whether another publication step may begin within the aggregate budget.
+	 *
+	 * @return bool
+	 */
+	private static function publication_budget_available() {
+		if ( self::$publication_deadline <= 0 || microtime( true ) < self::$publication_deadline ) {
+			return true;
+		}
+
+		self::$publication_timed_out = true;
+		return false;
+	}
+
+	/**
+	 * Seconds left for a bounded network request in this publication.
+	 *
+	 * @return float
+	 */
+	private static function publication_seconds_remaining() {
+		if ( self::$publication_deadline <= 0 ) {
+			return (float) self::DEFAULT_PUBLISH_TIMEOUT;
+		}
+
+		return max( 0.0, self::$publication_deadline - microtime( true ) );
+	}
+
+	/**
+	 * Return the common retryable failure for an exhausted publication budget.
+	 *
+	 * @return false
+	 */
+	private static function publish_timeout_failure() {
+		self::$publication_timed_out = true;
+
+		return self::publish_failure(
+			__( 'FileToWeb preview publication exceeded its time limit. It will retry automatically.', 'filetoweb-integration' ),
+			true
+		);
 	}
 
 	/**
@@ -1402,6 +1491,11 @@ class Proud_HTML_Preview {
 			return '';
 		}
 
+		if ( ! self::publication_budget_available() ) {
+			self::record_asset_error( $remote_url, __( 'the preview publication time limit was exceeded', 'filetoweb-integration' ), $required, true );
+			return '';
+		}
+
 		if ( isset( $mirrored[ $remote_url ] ) ) {
 			return $mirrored[ $remote_url ];
 		}
@@ -1439,19 +1533,35 @@ class Proud_HTML_Preview {
 		}
 
 		$mirrored[ $remote_url ] = $url;
+		$default_timeout = $required ? 20 : 5;
+		$remaining       = self::publication_seconds_remaining();
+		$request_timeout = $remaining >= $default_timeout ? $default_timeout : $remaining;
+		if ( $request_timeout <= 0 ) {
+			unset( $mirrored[ $remote_url ] );
+			self::$publication_timed_out = true;
+			self::record_asset_error( $remote_url, __( 'the preview publication time limit was exceeded', 'filetoweb-integration' ), $required, true );
+			return '';
+		}
+
 		$response = wp_remote_get(
 			$remote_url,
 			array(
-				'timeout'            => $required ? 20 : 5,
+				'timeout'            => $request_timeout,
 				'redirection'        => 0,
 				'reject_unsafe_urls' => true,
 			)
 		);
 
+		if ( ! self::publication_budget_available() ) {
+			unset( $mirrored[ $remote_url ] );
+			self::record_asset_error( $remote_url, __( 'the preview publication time limit was exceeded', 'filetoweb-integration' ), $required, true );
+			return '';
+		}
+
 		if ( is_wp_error( $response ) ) {
 			unset( $mirrored[ $remote_url ] );
 			$message = $response->get_error_message();
-			$retryable = Api_Client::is_retryable_error( $message );
+			$retryable = Api_Client::is_retryable_wp_error( $response );
 			if ( ! $required ) {
 				self::$optional_asset_fetches_disabled = true;
 			}
@@ -1991,9 +2101,14 @@ class Proud_HTML_Preview {
 	 * @param string $uploads_basedir Upload base directory.
 	 * @param string $uploads_baseurl Upload base URL.
 	 * @param array  $storage Resolved storage context.
+	 * @param bool   $enforce_budget Whether this call is part of publish().
 	 * @return bool
 	 */
-	private static function sync_bundle_with_stateless( $bundle_dir, $uploads_basedir, $uploads_baseurl, $storage = array() ) {
+	private static function sync_bundle_with_stateless( $bundle_dir, $uploads_basedir, $uploads_baseurl, $storage = array(), $enforce_budget = false ) {
+		if ( $enforce_budget && ! self::publication_budget_available() ) {
+			return false;
+		}
+
 		if ( ! function_exists( 'has_action' ) || ! has_action( 'sm:sync::syncFile' ) ) {
 			return true;
 		}
@@ -2013,10 +2128,14 @@ class Proud_HTML_Preview {
 		}
 
 		foreach ( $files as $path ) {
+			if ( $enforce_budget && ! self::publication_budget_available() ) {
+				return false;
+			}
+
 			$name        = ltrim( str_replace( wp_normalize_path( $uploads_basedir ), '', wp_normalize_path( $path ) ), '/' );
 			$object_name = self::storage_artifact_key( $name, $storage );
 
-			if ( ! self::sync_file_with_stateless( $name, $path, $object_name, $storage['client'] ) ) {
+			if ( ! self::sync_file_with_stateless( $name, $path, $object_name, $storage['client'], $enforce_budget ) || ( $enforce_budget && ! self::publication_budget_available() ) ) {
 				return false;
 			}
 		}
@@ -2037,9 +2156,10 @@ class Proud_HTML_Preview {
 	 * @param string $path Absolute artifact path.
 	 * @param string $object_name Exact bucket-relative object name.
 	 * @param object $client WP Stateless GCS client.
+	 * @param bool   $enforce_budget Whether GCS requests must share the publication deadline.
 	 * @return bool
 	 */
-	private static function sync_file_with_stateless( $name, $path, $object_name, $client ) {
+	private static function sync_file_with_stateless( $name, $path, $object_name, $client, $enforce_budget = false ) {
 		$args = array(
 			'ephemeral'      => false,
 			'use_root'      => true,
@@ -2053,21 +2173,106 @@ class Proud_HTML_Preview {
 		};
 
 		$args['name_with_root'] = $marker;
+		$deadline_scope         = $enforce_budget ? self::install_stateless_http_deadline( $client ) : null;
 		add_filter( 'wp_stateless_file_name', $filter, PHP_INT_MAX, 2 );
 
 		try {
 			do_action( 'sm:sync::syncFile', $name, $path, 2, $args );
+
+			if ( ! is_object( $client ) || ! is_callable( array( $client, 'media_exists' ) ) ) {
+				return false;
+			}
+
+			$remote = $client->media_exists( $object_name );
+
+			return ! is_wp_error( $remote ) && (bool) $remote;
+		} catch ( \Throwable $exception ) {
+			if ( $enforce_budget && ( self::$publication_timed_out || ! self::publication_budget_available() ) ) {
+				self::$publication_timed_out = true;
+				return false;
+			}
+
+			throw $exception;
 		} finally {
 			remove_filter( 'wp_stateless_file_name', $filter, PHP_INT_MAX );
+			self::remove_stateless_http_deadline( $deadline_scope );
+		}
+	}
+
+	/**
+	 * Add a request-level deadline to WP Stateless's Google HTTP client.
+	 *
+	 * WP Stateless 4.4.1 disables PHP's execution timer while it uploads. Its
+	 * public GS client exposes the Google client and Guzzle handler stack, so a
+	 * scoped middleware can give every upload, ACL, and verification request the
+	 * time remaining in this publication attempt. The middleware is removed as
+	 * soon as the artifact has been verified.
+	 *
+	 * @param object $client WP Stateless GCS client.
+	 * @return array|null Handler scope, or null when this WP Stateless version does not expose one.
+	 */
+	private static function install_stateless_http_deadline( $client ) {
+		if ( self::$publication_deadline <= 0 || ! is_object( $client ) || ! isset( $client->client ) || ! is_object( $client->client ) ) {
+			return null;
 		}
 
-		if ( ! is_object( $client ) || ! is_callable( array( $client, 'media_exists' ) ) ) {
-			return false;
+		$google_client = $client->client;
+		if ( ! is_callable( array( $google_client, 'getHttpClient' ) ) ) {
+			return null;
 		}
 
-		$remote = $client->media_exists( $object_name );
+		try {
+			$http_client = $google_client->getHttpClient();
+			$handler     = is_object( $http_client ) && is_callable( array( $http_client, 'getConfig' ) )
+				? $http_client->getConfig( 'handler' )
+				: null;
+		} catch ( \Throwable $exception ) {
+			unset( $exception );
+			return null;
+		}
 
-		return ! is_wp_error( $remote ) && (bool) $remote;
+		if ( ! is_object( $handler ) || ! is_callable( array( $handler, 'push' ) ) || ! is_callable( array( $handler, 'remove' ) ) ) {
+			return null;
+		}
+
+		$name       = 'filetoweb-publication-deadline-' . spl_object_hash( $handler );
+		$middleware = function ( $next ) {
+			return function ( $request, $options ) use ( $next ) {
+				$remaining = self::publication_seconds_remaining();
+				if ( $remaining <= 0 ) {
+					self::$publication_timed_out = true;
+					throw new \RuntimeException( 'FileToWeb preview publication exceeded its time limit.' );
+				}
+
+				$current_timeout          = isset( $options['timeout'] ) ? (float) $options['timeout'] : 0.0;
+				$options['timeout']       = $current_timeout > 0 ? min( $current_timeout, $remaining ) : $remaining;
+				$current_connect_timeout  = isset( $options['connect_timeout'] ) ? (float) $options['connect_timeout'] : 0.0;
+				$connect_timeout          = min( 5.0, $remaining );
+				$options['connect_timeout'] = $current_connect_timeout > 0 ? min( $current_connect_timeout, $connect_timeout ) : $connect_timeout;
+
+				return $next( $request, $options );
+			};
+		};
+
+		$handler->push( $middleware, $name );
+
+		return array(
+			'handler' => $handler,
+			'name'    => $name,
+		);
+	}
+
+	/**
+	 * Remove a scoped WP Stateless HTTP deadline.
+	 *
+	 * @param array|null $scope Handler scope returned by install_stateless_http_deadline().
+	 */
+	private static function remove_stateless_http_deadline( $scope ) {
+		if ( ! is_array( $scope ) || empty( $scope['handler'] ) || empty( $scope['name'] ) ) {
+			return;
+		}
+
+		$scope['handler']->remove( $scope['name'] );
 	}
 
 	/**

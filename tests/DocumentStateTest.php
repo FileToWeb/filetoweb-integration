@@ -103,6 +103,124 @@ class DocumentStateTest extends TestCase {
 		$this->assertSame( '', $stored[ Document_State::META_ERROR_CODE ] );
 		$this->assertSame( '', $stored[ Document_State::META_ERROR_REFERENCE ] );
 		$this->assertSame( '', $stored[ Document_State::META_ERROR_RETRYABLE ] );
+		$this->assertSame( 'wordpress:test:attachment:123', $stored[ Document_State::META_EXTERNAL_ID ] );
+	}
+
+	public function test_api_document_cannot_replace_the_local_external_identity(): void {
+		$stored = array();
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+
+		Document_State::write_from_api(
+			123,
+			array(
+				'id'          => 'doc-foreign',
+				'external_id' => 'wordpress:another-site:attachment:123',
+				'status'      => 'ready',
+			),
+			array(
+				'external_id'           => 'wordpress:this-site:attachment:123',
+				'source_url'            => 'https://example.com/file.pdf',
+				'fingerprint'           => 'abc123',
+				'fingerprint_algorithm' => 'sha256',
+			)
+		);
+
+		$this->assertSame( 'wordpress:this-site:attachment:123', $stored[ Document_State::META_EXTERNAL_ID ] );
+	}
+
+	public function test_submitting_unchanged_ready_source_preserves_public_state(): void {
+		$stored = array(
+			Document_State::META_STATUS             => 'ready',
+			Document_State::META_SOURCE_FINGERPRINT => 'same-fingerprint',
+			Document_State::META_LAST_ERROR         => 'existing diagnostic',
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				return isset( $stored[ $key ] ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+
+		$preserved = Document_State::mark_submitting(
+			123,
+			array(
+				'external_id'           => 'wordpress:test:attachment:123',
+				'source_url'            => 'https://example.com/file.pdf',
+				'fingerprint'           => 'same-fingerprint',
+				'fingerprint_algorithm' => 'sha256',
+			),
+			'attachment_save'
+		);
+
+		$this->assertTrue( $preserved );
+		$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'existing diagnostic', $stored[ Document_State::META_LAST_ERROR ] );
+	}
+
+	public function test_submitting_changed_source_moves_ready_record_to_pending(): void {
+		$stored = array(
+			Document_State::META_STATUS             => 'ready',
+			Document_State::META_SOURCE_FINGERPRINT => 'old-fingerprint',
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				return isset( $stored[ $key ] ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+
+		$preserved = Document_State::mark_submitting(
+			123,
+			array(
+				'external_id'           => 'wordpress:test:attachment:123',
+				'source_url'            => 'https://example.com/file.pdf',
+				'fingerprint'           => 'new-fingerprint',
+				'fingerprint_algorithm' => 'sha256',
+			),
+			'attachment_save'
+		);
+
+		$this->assertFalse( $preserved );
+		$this->assertSame( 'pending', $stored[ Document_State::META_STATUS ] );
+	}
+
+	public function test_scheduling_unchanged_attachment_does_not_preemptively_hide_ready_preview(): void {
+		$stored = array(
+			Document_State::META_STATUS     => 'ready',
+			Document_State::META_LAST_ERROR => 'existing diagnostic',
+		);
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				return isset( $stored[ $key ] ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+
+		Document_State::mark_scheduled( 123, 'attachment_save' );
+
+		$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'existing diagnostic', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertArrayNotHasKey( Document_State::META_NEXT_POLL_AT, $stored );
 	}
 
 	public function test_failed_document_stores_safe_structured_failure(): void {

@@ -596,7 +596,7 @@ class Local_HTML {
 				'ok'        => false,
 				'error'     => $message,
 				'html'      => '',
-				'retryable' => Api_Client::is_retryable_error( $message ),
+				'retryable' => Api_Client::is_retryable_wp_error( $response ),
 			);
 		}
 

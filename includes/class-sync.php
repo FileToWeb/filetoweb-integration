@@ -232,9 +232,7 @@ class Sync {
 			return 'skipped';
 		}
 
-		$retry_processing = 'pending' === get_post_meta( $post_id, Document_State::META_STATUS, true )
-			&& 'retry_processing' === get_post_meta( $post_id, Document_State::META_LAST_TRIGGER, true );
-		$attempts          = self::record_poll_attempt( $post_id );
+		$attempts = self::record_poll_attempt( $post_id );
 		$response = Api_Client::get_document( $document_id );
 
 		if ( ! $response['ok'] ) {
@@ -265,12 +263,6 @@ class Sync {
 		if ( isset( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
 			$document = $response['body']['document'];
 			$status   = Security::sanitize_status( isset( $document['status'] ) ? $document['status'] : '' );
-
-			if ( 'failed' === $status && $retry_processing ) {
-				$retry_result = self::retry_processing_unlocked( $post_id );
-
-				return 'failed' === ( isset( $retry_result['status'] ) ? $retry_result['status'] : '' ) ? 'failed' : 'updated';
-			}
 
 			Document_State::write_polled_state( $post_id, $document );
 			do_action( 'filetoweb_integration_after_poll_post', $post_id, $document, (bool) $force_latest_preview );
@@ -898,9 +890,13 @@ class Sync {
 		$fingerprint_matches = ! $stored_fingerprint || hash_equals( $stored_fingerprint, (string) $source['fingerprint'] );
 		$recover_by_external = ! $stored_document_id
 			&& $fingerprint_matches
-			&& ( $external_id_matches || Api_Client::is_retryable_error( $stored_error ) );
+			&& (
+				$external_id_matches
+				|| '1' === get_post_meta( $post_id, Document_State::META_ERROR_RETRYABLE, true )
+				|| Api_Client::is_retryable_error( $stored_error )
+			);
 
-		Document_State::mark_submitting( $post_id, $source, $trigger );
+		$preserve_ready = Document_State::mark_submitting( $post_id, $source, $trigger );
 
 		$payload = array(
 			'external_id' => $source['external_id'],
@@ -934,18 +930,14 @@ class Sync {
 				return self::apply_sync_document( $post_id, $source, $recovery['body']['document'] );
 			}
 
-			$recovery_not_found = 'document_not_found' === ( isset( $recovery['error_code'] ) ? $recovery['error_code'] : '' )
-				|| 404 === absint( isset( $recovery['status'] ) ? $recovery['status'] : 0 );
-
-			if ( empty( $recovery['ok'] ) && ! $recovery_not_found ) {
-				return self::apply_sync_error( $post_id, $recovery );
-			}
+			// Recovery is advisory. The normal upsert is idempotent and remains the
+			// authoritative path when lookup is unavailable or returns a mismatch.
 		}
 
 		$response = Api_Client::upsert_document( $payload );
 
 		if ( ! $response['ok'] ) {
-			return self::apply_sync_error( $post_id, $response );
+			return self::apply_sync_error( $post_id, $response, $preserve_ready );
 		}
 
 		if ( isset( $response['body']['document'] ) && is_array( $response['body']['document'] ) ) {
@@ -972,13 +964,18 @@ class Sync {
 	 * @return bool
 	 */
 	private static function recovered_document_matches_source( $document, $source ) {
+		$remote_external_id = isset( $document['external_id'] ) ? (string) $document['external_id'] : '';
+		$local_external_id  = isset( $source['external_id'] ) ? (string) $source['external_id'] : '';
 		$remote_source = isset( $document['source'] ) && is_array( $document['source'] ) ? $document['source'] : array();
 		$remote_value  = isset( $remote_source['fingerprint'] ) ? (string) $remote_source['fingerprint'] : '';
 		$remote_method = isset( $remote_source['fingerprint_algorithm'] ) ? sanitize_key( (string) $remote_source['fingerprint_algorithm'] ) : '';
 		$local_value   = isset( $source['fingerprint'] ) ? (string) $source['fingerprint'] : '';
 		$local_method  = isset( $source['fingerprint_algorithm'] ) ? sanitize_key( (string) $source['fingerprint_algorithm'] ) : '';
 
-		return '' !== $remote_value
+		return '' !== $remote_external_id
+			&& '' !== $local_external_id
+			&& hash_equals( $local_external_id, $remote_external_id )
+			&& '' !== $remote_value
 			&& '' !== $remote_method
 			&& '' !== $local_value
 			&& '' !== $local_method
@@ -1017,11 +1014,27 @@ class Sync {
 	 *
 	 * @param int   $post_id Post that owns FileToWeb state.
 	 * @param array $response API error response.
+	 * @param bool  $preserve_ready Keep an unchanged working preview public.
 	 * @return array
 	 */
-	private static function apply_sync_error( $post_id, $response ) {
+	private static function apply_sync_error( $post_id, $response, $preserve_ready = false ) {
 		$error     = isset( $response['error'] ) ? $response['error'] : __( 'FileToWeb could not complete this request.', 'filetoweb-integration' );
 		$retryable = ! empty( $response['retryable'] ) || Api_Client::is_retryable_error( $error );
+
+		if ( $preserve_ready ) {
+			Document_State::record_sync_error(
+				$post_id,
+				$error,
+				isset( $response['error_code'] ) ? $response['error_code'] : '',
+				isset( $response['reference'] ) ? $response['reference'] : '',
+				$retryable
+			);
+
+			return array(
+				'status' => 'ready',
+				'error'  => $error,
+			);
+		}
 
 		if ( $retryable ) {
 			Document_State::mark_pending_retry(

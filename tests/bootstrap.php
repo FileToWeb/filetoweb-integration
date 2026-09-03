@@ -21,6 +21,7 @@ if ( ! class_exists( 'FtwTestStatelessClient' ) ) {
 		public $exists = true;
 		public $checked = array();
 		public $objects = array();
+		public $client;
 
 		public function media_exists( $path ) {
 			$this->checked[] = $path;
@@ -40,6 +41,64 @@ if ( ! class_exists( 'FtwTestStatelessClient' ) ) {
 			}
 
 			return false === file_put_contents( $target, $this->objects[ $path ] ) ? 500 : 200;
+		}
+	}
+}
+
+if ( ! class_exists( 'FtwTestHttpHandlerStack' ) ) {
+	class FtwTestHttpHandlerStack {
+		public $middleware = array();
+
+		public function push( $middleware, $name = '' ) {
+			$this->middleware[ $name ] = $middleware;
+		}
+
+		public function remove( $name ) {
+			unset( $this->middleware[ $name ] );
+		}
+
+		public function dispatch( $options, $next = null ) {
+			$next = $next ?: function ( $request_options ) {
+				return $request_options;
+			};
+			$handler = function ( $request, $request_options ) use ( $next ) {
+				unset( $request );
+				return $next( $request_options );
+			};
+
+			foreach ( array_reverse( $this->middleware ) as $middleware ) {
+				$handler = $middleware( $handler );
+			}
+
+			return $handler( (object) array(), $options );
+		}
+	}
+}
+
+if ( ! class_exists( 'FtwTestGoogleHttpClient' ) ) {
+	class FtwTestGoogleHttpClient {
+		private $handler;
+
+		public function __construct( $handler ) {
+			$this->handler = $handler;
+		}
+
+		public function getConfig( $name = null ) {
+			return 'handler' === $name ? $this->handler : array( 'handler' => $this->handler );
+		}
+	}
+}
+
+if ( ! class_exists( 'FtwTestGoogleClient' ) ) {
+	class FtwTestGoogleClient {
+		private $http;
+
+		public function __construct( $http ) {
+			$this->http = $http;
+		}
+
+		public function getHttpClient() {
+			return $this->http;
 		}
 	}
 }

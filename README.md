@@ -7,6 +7,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - Newly created or edited PDF attachments are submitted to FileToWeb.
 - Upload-triggered syncs nudge WP-Cron, and polling retries intentionally scheduled or transiently timed-out uploads.
 - Pending conversions and PDF-to-Page jobs share an oldest-due-first queue budget with bounded backoff and a one-minute worker so large migrations cannot indefinitely block completed files.
+- Scheduled status polls only read document state; reprocessing requires an administrator's explicit **Retry processing** action.
 - A connection-scoped database lock prevents overlapping workers without expiring during a healthy long-running batch.
 - Proud Document saves reuse the linked attachment when one is present; otherwise the plugin resolves the document URL back to a WordPress attachment with `attachment_url_to_postid()`.
 - ProudCity Meeting Agenda, Agenda Packet, and Minutes attachments sync independently when the Meeting is saved, and supported ProudCity builds show inline status, preview errors, and ready-preview refresh controls below those upload fields.
@@ -14,6 +15,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - Repeated saves are idempotent because FileToWeb receives a stable `external_id` and source fingerprint.
 - Ready FileToWeb output is published as a sanitized, fingerprinted bundle under WordPress uploads during sync/poll/admin actions, not during citizen page loads.
 - Completed previews that encounter a transient fetch or storage error use a bounded, per-document publication retry without resubmitting or reconverting the PDF.
+- Each preview publication has a 75-second aggregate wall-clock budget, including asset mirroring and WP Stateless synchronization.
 - True WP Stateless installations preserve the bundle's complete nested Google Cloud Storage object paths when making preview artifacts public.
 - Each completed bundle publishes a provider-neutral `_proud_html_preview` record with a complete artifact manifest that updated ProudCity core/theme releases can serve after this plugin is deactivated and clean up after uninstall. On WP Stateless sites, bundle paths and generated asset URLs use the exact tenant-prefixed GCS namespace and are verified directly through authenticated storage.
 - Public front-end PDF links are replaced with the WordPress-local HTML copy. If no local HTML exists, the original PDF remains in use.

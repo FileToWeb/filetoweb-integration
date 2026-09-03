@@ -174,6 +174,7 @@ class SyncTest extends TestCase {
 		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
 		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://cdn.example.org/uploads/sample.pdf' );
 		Functions\when( 'get_attached_file' )->justReturn( $attachment_file );
+		Functions\when( 'get_post_meta' )->justReturn( '' );
 		Functions\when( 'wp_next_scheduled' )->justReturn( false );
 		Functions\when( 'site_url' )->justReturn( 'https://city.example/wp-cron.php' );
 		Functions\when( 'wp_remote_post' )->justReturn( true );
@@ -435,6 +436,10 @@ class SyncTest extends TestCase {
 						public function get_error_message() {
 							return 'cURL error 28: Operation timed out after 20002 milliseconds with 0 bytes received';
 						}
+
+						public function get_error_code() {
+							return 'http_request_failed';
+						}
 					};
 				}
 
@@ -534,6 +539,10 @@ class SyncTest extends TestCase {
 						public function get_error_message() {
 							return 'cURL error 28: Operation timed out after 20002 milliseconds with 0 bytes received';
 						}
+
+						public function get_error_code() {
+							return 'http_request_failed';
+						}
 					};
 				}
 
@@ -604,6 +613,149 @@ class SyncTest extends TestCase {
 			),
 			$requests
 		);
+	}
+
+	public function test_external_id_recovery_rejects_same_pdf_from_another_identity(): void {
+		$attachment_id = 25963;
+		$fingerprint   = hash_file( 'sha256', __FILE__ );
+		$external_id   = 'wordpress:fe457a395a16:attachment:25963';
+		$stored        = array(
+			Document_State::META_EXTERNAL_ID        => $external_id,
+			Document_State::META_SOURCE_FINGERPRINT => $fingerprint,
+			Document_State::META_ERROR_RETRYABLE    => '1',
+		);
+		$requests = array();
+
+		$this->mock_attachment_sync_environment(
+			$stored,
+			function ( $url, $args ) use ( &$requests, $fingerprint, $external_id ) {
+				$requests[] = array( $url, $args['method'] );
+				if ( 'GET' === $args['method'] ) {
+					return array(
+						'code' => 200,
+						'body' => json_encode(
+							array(
+								'document' => array(
+									'id'          => 'doc-foreign',
+									'external_id' => 'wordpress:another-site:attachment:25963',
+									'status'      => 'ready',
+									'source'      => array(
+										'fingerprint'           => $fingerprint,
+										'fingerprint_algorithm' => 'sha256',
+									),
+								),
+							)
+						),
+					);
+				}
+
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'          => 'doc-local',
+								'external_id' => $external_id,
+								'status'      => 'processing',
+								'source'      => array(
+									'fingerprint'           => $fingerprint,
+									'fingerprint_algorithm' => 'sha256',
+								),
+							),
+						)
+					),
+				);
+			}
+		);
+
+		$result = Sync::sync_attachment_now( $attachment_id, 'cron_retry' );
+
+		$this->assertSame( 'processing', $result['status'] );
+		$this->assertSame( 'doc-local', $stored[ Document_State::META_DOCUMENT_ID ] );
+		$this->assertSame( $external_id, $stored[ Document_State::META_EXTERNAL_ID ] );
+		$this->assertSame( array( 'GET', 'POST' ), array_column( $requests, 1 ) );
+	}
+
+	public function test_unavailable_external_id_recovery_falls_through_to_idempotent_upsert(): void {
+		$attachment_id = 25963;
+		$fingerprint   = hash_file( 'sha256', __FILE__ );
+		$external_id   = 'wordpress:fe457a395a16:attachment:25963';
+		$stored        = array(
+			Document_State::META_EXTERNAL_ID        => $external_id,
+			Document_State::META_SOURCE_FINGERPRINT => $fingerprint,
+			Document_State::META_ERROR_RETRYABLE    => '1',
+		);
+		$requests = array();
+
+		$this->mock_attachment_sync_environment(
+			$stored,
+			function ( $url, $args ) use ( &$requests, $fingerprint, $external_id ) {
+				$requests[] = array( $url, $args['method'] );
+				if ( 'GET' === $args['method'] ) {
+					return array(
+						'code' => 503,
+						'body' => '{"error":{"code":"service_unavailable","message":"temporary","retryable":true}}',
+					);
+				}
+
+				return array(
+					'code' => 200,
+					'body' => json_encode(
+						array(
+							'document' => array(
+								'id'          => 'doc-after-lookup-failure',
+								'external_id' => $external_id,
+								'status'      => 'processing',
+								'source'      => array(
+									'fingerprint'           => $fingerprint,
+									'fingerprint_algorithm' => 'sha256',
+								),
+							),
+						)
+					),
+				);
+			}
+		);
+
+		$result = Sync::sync_attachment_now( $attachment_id, 'cron_retry' );
+
+		$this->assertSame( 'processing', $result['status'] );
+		$this->assertSame( 'doc-after-lookup-failure', $stored[ Document_State::META_DOCUMENT_ID ] );
+		$this->assertSame( array( 'GET', 'POST' ), array_column( $requests, 1 ) );
+	}
+
+	public function test_unchanged_ready_preview_stays_ready_during_transient_sync_failure(): void {
+		$attachment_id = 25963;
+		$fingerprint   = hash_file( 'sha256', __FILE__ );
+		$stored        = array(
+			Document_State::META_DOCUMENT_ID       => 'doc-ready',
+			Document_State::META_STATUS            => 'ready',
+			Document_State::META_SOURCE_FINGERPRINT => $fingerprint,
+		);
+		$error = new class() {
+			public function get_error_message() {
+				return 'Connexion temporairement indisponible';
+			}
+
+			public function get_error_code() {
+				return 'http_request_failed';
+			}
+		};
+
+		$this->mock_attachment_sync_environment(
+			$stored,
+			function () use ( &$stored, $error ) {
+				$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
+				return $error;
+			}
+		);
+
+		$result = Sync::sync_attachment_now( $attachment_id, 'attachment_save' );
+
+		$this->assertSame( 'ready', $result['status'] );
+		$this->assertSame( 'ready', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 'Connexion temporairement indisponible', $stored[ Document_State::META_LAST_ERROR ] );
+		$this->assertSame( '1', $stored[ Document_State::META_ERROR_RETRYABLE ] );
 	}
 
 	public function test_processing_document_becomes_ready_and_clears_old_timeout(): void {
@@ -727,7 +879,7 @@ class SyncTest extends TestCase {
 		$this->assertSame( '', $stored[ Document_State::META_ERROR_REFERENCE ] );
 	}
 
-	public function test_retryable_mutation_conflict_stays_pending(): void {
+	public function test_retryable_mutation_conflict_never_reprocesses_from_cron_polling(): void {
 		$stored = array(
 			Document_State::META_DOCUMENT_ID => 'doc-locked',
 			Document_State::META_STATUS      => 'failed',
@@ -746,6 +898,12 @@ class SyncTest extends TestCase {
 				return true;
 			}
 		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				unset( $stored[ $key ] );
+				return true;
+			}
+		);
 		Functions\when( 'is_wp_error' )->justReturn( false );
 		$requests = array();
 		Functions\when( 'wp_remote_request' )->alias(
@@ -759,14 +917,13 @@ class SyncTest extends TestCase {
 					);
 				}
 
-				$status = 2 === count( $requests ) ? 'failed' : 'processing';
 				return array(
 					'code' => 200,
 					'body' => json_encode(
 						array(
 							'document' => array(
 								'id'     => 'doc-locked',
-								'status' => $status,
+								'status' => 'failed',
 							),
 						)
 					),
@@ -785,9 +942,14 @@ class SyncTest extends TestCase {
 		$this->assertSame( '1', $stored[ Document_State::META_ERROR_RETRYABLE ] );
 		$this->assertArrayHasKey( Document_State::META_NEXT_POLL_AT, $stored );
 
-		$this->assertSame( 'updated', Sync::poll_post( 25907 ) );
-		$this->assertSame( 'processing', $stored[ Document_State::META_STATUS ] );
-		$this->assertSame( array( 'POST', 'GET', 'POST' ), $requests );
+		for ( $index = 0; $index < 10; ++$index ) {
+			$this->assertSame( 'updated', Sync::poll_post( 25907 ) );
+		}
+
+		$this->assertSame( 'failed', $stored[ Document_State::META_STATUS ] );
+		$this->assertSame( 1, count( array_filter( $requests, function ( $method ) { return 'POST' === $method; } ) ) );
+		$this->assertSame( 10, count( array_filter( $requests, function ( $method ) { return 'GET' === $method; } ) ) );
+		$this->assertSame( 10, $stored[ Document_State::META_POLL_ATTEMPTS ] );
 	}
 
 	public function test_item_lock_prevents_overlapping_manual_and_cron_submission(): void {
@@ -917,6 +1079,40 @@ class SyncTest extends TestCase {
 				return $response['body'];
 			}
 		);
+	}
+
+	private function mock_attachment_sync_environment( &$stored, $request_handler ) {
+		Functions\when( 'untrailingslashit' )->alias( function ( $value ) { return rtrim( (string) $value, '/' ); } );
+		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+		Functions\when( 'get_post_mime_type' )->justReturn( 'application/pdf' );
+		Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://city.example/uploads/july-financials.pdf' );
+		Functions\when( 'get_attached_file' )->justReturn( __FILE__ );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				return array_key_exists( $key, $stored ) ? $stored[ $key ] : '';
+			}
+		);
+		Functions\when( 'update_post_meta' )->alias(
+			function ( $post_id, $key, $value ) use ( &$stored ) {
+				$stored[ $key ] = $value;
+				return true;
+			}
+		);
+		Functions\when( 'delete_post_meta' )->alias(
+			function ( $post_id, $key ) use ( &$stored ) {
+				unset( $stored[ $key ] );
+				return true;
+			}
+		);
+		Functions\when( 'is_wp_error' )->alias(
+			function ( $response ) {
+				return is_object( $response ) && method_exists( $response, 'get_error_message' );
+			}
+		);
+		Functions\when( 'wp_remote_request' )->alias( $request_handler );
+		Functions\when( 'wp_remote_retrieve_response_code' )->alias( function ( $response ) { return $response['code']; } );
+		Functions\when( 'wp_remote_retrieve_body' )->alias( function ( $response ) { return $response['body']; } );
+		Functions\when( 'do_action' )->justReturn( null );
 	}
 
 	private function meta_query_contains_compare( $query, $compare ) {

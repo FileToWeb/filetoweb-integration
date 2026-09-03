@@ -1073,6 +1073,10 @@ class ProudHtmlPreviewTest extends TestCase {
 			public function get_error_message() {
 				return 'cURL error 28: Operation timed out';
 			}
+
+			public function get_error_code() {
+				return 'http_request_failed';
+			}
 		};
 		Functions\when( 'wp_remote_get' )->alias(
 			function ( $url ) use ( $error ) {
@@ -1150,6 +1154,10 @@ class ProudHtmlPreviewTest extends TestCase {
 			public function get_error_message() {
 				return 'cURL error 28: Operation timed out';
 			}
+
+			public function get_error_code() {
+				return 'http_request_failed';
+			}
 		};
 		$requests = array();
 		Functions\when( 'wp_remote_get' )->alias(
@@ -1189,6 +1197,113 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertCount( 1, glob( $bundle_dir . '/assets/*.png' ) );
 		$html = file_get_contents( $bundle_dir . '/index.html' );
 		$this->assertSame( 2, substr_count( $html, 'data-filetoweb-asset-unavailable="true"' ) );
+	}
+
+	public function test_publish_stops_when_aggregate_wall_clock_budget_is_exhausted(): void {
+		$requests = array();
+		Functions\when( 'wp_remote_get' )->alias(
+			function ( $url, $args ) use ( &$requests ) {
+				$requests[] = array( $url, $args['timeout'] );
+				$deadline = new \ReflectionProperty( Proud_HTML_Preview::class, 'publication_deadline' );
+				$deadline->setValue( null, microtime( true ) - 1.0 );
+				return array( 'code' => 200, 'body' => 'PNG' );
+			}
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			65,
+			'<html><body><img src="/d/demo/assets/first.png"><img src="/d/demo/assets/second.png"><img src="/d/demo/assets/third.png"></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/wall-clock.pdf',
+			'wall-clock-fingerprint'
+		);
+
+		$this->assertFalse( $record );
+		$this->assertTrue( Proud_HTML_Preview::last_publish_retryable() );
+		$this->assertStringContainsString( 'exceeded its time limit', Proud_HTML_Preview::last_publish_error() );
+		$this->assertCount( 1, $requests );
+		$this->assertSame( 20, $requests[0][1] );
+	}
+
+	public function test_stateless_requests_receive_the_remaining_publication_budget(): void {
+		$handler_stack                  = new FtwTestHttpHandlerStack();
+		$this->stateless_client->client = new FtwTestGoogleClient( new FtwTestGoogleHttpClient( $handler_stack ) );
+		$request_options                = array();
+
+		$deadline = new ReflectionProperty( Proud_HTML_Preview::class, 'publication_deadline' );
+		$deadline->setValue( null, microtime( true ) + 4.0 );
+
+		Functions\when( 'do_action' )->alias(
+			function () use ( $handler_stack, &$request_options ) {
+				$request_options = $handler_stack->dispatch(
+					array(
+						'timeout'         => 30,
+						'connect_timeout' => 10,
+					)
+				);
+			}
+		);
+
+		$method = new ReflectionMethod( Proud_HTML_Preview::class, 'sync_file_with_stateless' );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$method->setAccessible( true );
+		}
+
+		$this->assertTrue(
+			$method->invoke(
+				null,
+				'filetoweb-integration/previews/65/fingerprint/index.html',
+				'/tmp/index.html',
+				'oakwoodohio/2026/08/filetoweb-integration/previews/65/fingerprint/index.html',
+				$this->stateless_client,
+				true
+			)
+		);
+
+		$this->assertGreaterThan( 0, $request_options['timeout'] );
+		$this->assertLessThanOrEqual( 4.0, $request_options['timeout'] );
+		$this->assertGreaterThan( 0, $request_options['connect_timeout'] );
+		$this->assertLessThanOrEqual( 4.0, $request_options['connect_timeout'] );
+		$this->assertSame( array(), $handler_stack->middleware );
+	}
+
+	public function test_stateless_deadline_expiration_returns_a_retryable_publication_failure(): void {
+		$handler_stack                  = new FtwTestHttpHandlerStack();
+		$this->stateless_client->client = new FtwTestGoogleClient( new FtwTestGoogleHttpClient( $handler_stack ) );
+		$filter_removed                 = false;
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\when( 'remove_filter' )->alias(
+			function ( $hook ) use ( &$filter_removed ) {
+				if ( 'wp_stateless_file_name' === $hook ) {
+					$filter_removed = true;
+				}
+
+				return true;
+			}
+		);
+		Functions\when( 'do_action' )->alias(
+			function () use ( $handler_stack ) {
+				$deadline = new ReflectionProperty( Proud_HTML_Preview::class, 'publication_deadline' );
+				$deadline->setValue( null, microtime( true ) - 1.0 );
+				$handler_stack->dispatch( array() );
+			}
+		);
+
+		$record = Proud_HTML_Preview::publish(
+			66,
+			'<html><body><main>Bounded GCS publication</main></body></html>',
+			'https://filetoweb.com/d/demo/continuous?chrome=0',
+			'https://city.example/wp-content/uploads/bounded-gcs.pdf',
+			'bounded-gcs-fingerprint'
+		);
+
+		$this->assertFalse( $record );
+		$this->assertTrue( Proud_HTML_Preview::last_publish_retryable() );
+		$this->assertStringContainsString( 'exceeded its time limit', Proud_HTML_Preview::last_publish_error() );
+		$this->assertArrayNotHasKey( 66, $this->meta );
+		$this->assertTrue( $filter_removed );
+		$this->assertSame( array(), $handler_stack->middleware );
 	}
 
 	public function test_missing_optional_download_does_not_suppress_preview(): void {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.53
+
+- Make scheduled status polling read-only so only an administrator's explicit **Retry processing** action can call FileToWeb's reprocess endpoint.
+- Require exact external-ID and source-fingerprint matches before adopting a recovered document, while treating recovery lookup failures as advisory before the idempotent upsert.
+- Classify WordPress transport failures from structured error codes and cURL error data instead of depending on localized message text.
+- Bound each preview publication attempt to an aggregate 75-second wall-clock budget and retry publication independently when that budget expires.
+- Keep an existing ready preview public while an unchanged source is resubmitted or a transient API request fails.
+
 ## 0.1.52
 
 - Recover accepted imports after a WordPress HTTP timeout by looking up their stable external ID before making another idempotent submission.

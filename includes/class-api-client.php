@@ -112,7 +112,12 @@ class Api_Client {
 		);
 
 		if ( is_wp_error( $response ) ) {
-			return self::error( $response->get_error_message() );
+			return self::error(
+				$response->get_error_message(),
+				method_exists( $response, 'get_error_code' ) ? $response->get_error_code() : '',
+				'',
+				self::is_retryable_wp_error( $response )
+			);
 		}
 
 		$code = absint( wp_remote_retrieve_response_code( $response ) );
@@ -169,7 +174,12 @@ class Api_Client {
 		$response = wp_remote_request( $url, $args );
 
 		if ( is_wp_error( $response ) ) {
-			return self::error( $response->get_error_message() );
+			return self::error(
+				$response->get_error_message(),
+				method_exists( $response, 'get_error_code' ) ? $response->get_error_code() : '',
+				'',
+				self::is_retryable_wp_error( $response )
+			);
 		}
 
 		$code     = absint( wp_remote_retrieve_response_code( $response ) );
@@ -187,7 +197,7 @@ class Api_Client {
 				$api_error['message']   = __( 'FileToWeb could not complete this request. Please try again later.', 'filetoweb-integration' );
 				$api_error['code']      = $api_error['code'] ? $api_error['code'] : 'service_unavailable';
 			} elseif ( 409 === $code && 'document_mutation_conflict' === $api_error['code'] ) {
-				$api_error['message'] = __( 'FileToWeb is still finishing another operation for this document. It will retry automatically.', 'filetoweb-integration' );
+				$api_error['message'] = __( 'FileToWeb is still finishing another operation for this document. Please check again shortly.', 'filetoweb-integration' );
 			}
 
 			return self::error(
@@ -222,6 +232,55 @@ class Api_Client {
 		}
 
 		return false;
+	}
+
+	/**
+	 * Classify WordPress HTTP transport failures without relying on localized text.
+	 *
+	 * WordPress reports cURL and other transport-layer failures through the
+	 * `http_request_failed` code. Some transports expose a numeric errno in the
+	 * error data, which is also accepted when it represents a transient network
+	 * condition.
+	 *
+	 * @param object $error WP_Error-like object.
+	 * @return bool
+	 */
+	public static function is_retryable_wp_error( $error ) {
+		if ( ! is_object( $error ) ) {
+			return false;
+		}
+
+		$codes = array();
+		if ( method_exists( $error, 'get_error_codes' ) ) {
+			$codes = (array) $error->get_error_codes();
+		} elseif ( method_exists( $error, 'get_error_code' ) ) {
+			$codes = array( $error->get_error_code() );
+		}
+
+		foreach ( $codes as $code ) {
+			if ( in_array( sanitize_key( (string) $code ), array( 'http_request_failed', 'http_request_not_executed' ), true ) ) {
+				return true;
+			}
+		}
+
+		if ( ! method_exists( $error, 'get_error_data' ) ) {
+			return false;
+		}
+
+		$data  = $error->get_error_data();
+		$errno = 0;
+		if ( is_numeric( $data ) ) {
+			$errno = absint( $data );
+		} elseif ( is_array( $data ) ) {
+			foreach ( array( 'errno', 'curl_errno', 'error_number' ) as $key ) {
+				if ( isset( $data[ $key ] ) && is_numeric( $data[ $key ] ) ) {
+					$errno = absint( $data[ $key ] );
+					break;
+				}
+			}
+		}
+
+		return in_array( $errno, array( 5, 6, 7, 18, 28, 35, 52, 55, 56 ), true );
 	}
 
 	/**

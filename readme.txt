@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.52
+Stable tag: 0.1.53
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -81,6 +81,14 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.53 =
+
+* Makes scheduled status polling read-only; only an administrator's explicit Retry processing action can request reprocessing.
+* Requires exact external-ID and source-fingerprint matches before adopting a recovered document, and falls back safely to the idempotent upsert when lookup is unavailable.
+* Classifies WordPress transport failures from structured error codes instead of localized message text.
+* Gives preview publication a 75-second aggregate budget and retries a timed-out publication without resubmitting the PDF.
+* Keeps an existing ready preview public while an unchanged source is resubmitted or a transient API request fails.
 
 = 0.1.52 =
 

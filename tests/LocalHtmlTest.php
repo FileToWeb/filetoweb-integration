@@ -446,6 +446,10 @@ class LocalHtmlTest extends TestCase {
 			public function get_error_message() {
 				return 'cURL error 28: Operation timed out after 20002 milliseconds with 0 bytes received';
 			}
+
+			public function get_error_code() {
+				return 'http_request_failed';
+			}
 		};
 
 		Functions\when( 'wp_remote_get' )->justReturn( $error );
@@ -493,6 +497,10 @@ class LocalHtmlTest extends TestCase {
 		$error = new class {
 			public function get_error_message() {
 				return 'cURL error 28: Operation timed out';
+			}
+
+			public function get_error_code() {
+				return 'http_request_failed';
 			}
 		};
 		Functions\when( 'wp_remote_get' )->justReturn( $error );
@@ -553,6 +561,10 @@ class LocalHtmlTest extends TestCase {
 		$error = new class {
 			public function get_error_message() {
 				return 'cURL error 28: Operation timed out';
+			}
+
+			public function get_error_code() {
+				return 'http_request_failed';
 			}
 		};
 
