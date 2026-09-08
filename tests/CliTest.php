@@ -53,6 +53,9 @@ class CliTest extends TestCase {
 			}
 		);
 		Functions\when( 'get_post_types' )->justReturn( array( 'post', 'page', 'document', 'attachment' ) );
+		Functions\when( 'get_post_stati' )->justReturn(
+			array( 'publish', 'future', 'draft', 'pending', 'private', 'inherit', 'trash', 'auto-draft' )
+		);
 		Functions\when( 'wp_upload_dir' )->justReturn(
 			array(
 				'basedir' => '/tmp/uploads',
@@ -71,6 +74,7 @@ class CliTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
+		Preview_Command::set_refresher( null );
 		Monkey\tearDown();
 		parent::tearDown();
 	}
@@ -141,10 +145,14 @@ class CliTest extends TestCase {
 			->andReturnUsing(
 				function ( $args ) use ( $ids ) {
 					$this->assertSame( Proud_HTML_Preview::META_KEY, $args['meta_key'] );
-					$this->assertSame( 'any', $args['post_status'] );
+					$this->assertContains( 'inherit', $args['post_status'] );
+					$this->assertNotContains( 'trash', $args['post_status'] );
+					$this->assertNotContains( 'auto-draft', $args['post_status'] );
 					$this->assertContains( 'attachment', $args['post_type'] );
 					$this->assertSame( 'ids', $args['fields'] );
-					$this->assertSame( -1, $args['posts_per_page'] );
+					$this->assertSame( Preview_Command::SOURCE_QUERY_BATCH_SIZE, $args['posts_per_page'] );
+					$this->assertSame( 1, $args['paged'] );
+					$this->assertFalse( $args['update_post_meta_cache'] );
 
 					return $ids;
 				}
@@ -194,6 +202,59 @@ class CliTest extends TestCase {
 		$this->expect_source_query( array( 7, 8 ) );
 
 		$this->assertSame( array( 7, 8 ), Preview_Command::source_ids() );
+	}
+
+	public function test_source_ids_queries_in_bounded_pages() {
+		$first_page  = range( 1, Preview_Command::SOURCE_QUERY_BATCH_SIZE );
+		$second_page = array( 101, 102 );
+		$page        = 0;
+
+		Functions\expect( 'get_posts' )
+			->twice()
+			->andReturnUsing(
+				function ( $args ) use ( $first_page, $second_page, &$page ) {
+					$page++;
+					$this->assertSame( $page, $args['paged'] );
+					$this->assertSame( Preview_Command::SOURCE_QUERY_BATCH_SIZE, $args['posts_per_page'] );
+
+					return 1 === $page ? $first_page : $second_page;
+				}
+			);
+
+		$this->assertSame( range( 1, 102 ), Preview_Command::source_ids() );
+	}
+
+	public function test_source_ids_applies_a_limit_to_the_database_query() {
+		Functions\expect( 'get_posts' )
+			->once()
+			->andReturnUsing(
+				function ( $args ) {
+					$this->assertSame( Preview_Command::SOURCE_QUERY_BATCH_SIZE, $args['posts_per_page'] );
+					return array( 7, 8 );
+				}
+			);
+
+		$this->assertSame( array( 7, 8 ), Preview_Command::source_ids( 2 ) );
+	}
+
+	public function test_source_ids_keeps_a_stable_page_size_when_limit_crosses_a_page() {
+		$first_page  = range( 1, Preview_Command::SOURCE_QUERY_BATCH_SIZE );
+		$second_page = range( 101, 200 );
+		$page        = 0;
+
+		Functions\expect( 'get_posts' )
+			->twice()
+			->andReturnUsing(
+				function ( $args ) use ( $first_page, $second_page, &$page ) {
+					$page++;
+					$this->assertSame( $page, $args['paged'] );
+					$this->assertSame( Preview_Command::SOURCE_QUERY_BATCH_SIZE, $args['posts_per_page'] );
+
+					return 1 === $page ? $first_page : $second_page;
+				}
+			);
+
+		$this->assertSame( range( 1, 101 ), Preview_Command::source_ids( 101 ) );
 	}
 
 	public function test_stale_ids_returns_only_non_durable_records() {
@@ -282,7 +343,7 @@ class CliTest extends TestCase {
 		$command->repair( array(), array( 'dry-run' => true ) );
 
 		$this->assertSame( array(), $this->refreshed );
-		$this->assertStringContainsString( '1 stale preview', implode( "\n", FtwTestWpCli::$logs ) );
+		$this->assertStringContainsString( '1 preview source selected', implode( "\n", FtwTestWpCli::$logs ) );
 	}
 
 	public function test_repair_honours_an_explicit_post_list() {
@@ -302,6 +363,97 @@ class CliTest extends TestCase {
 		$command->repair( array(), array( 'post' => '9' ) );
 
 		$this->assertSame( array( 9 ), $this->refreshed );
+	}
+
+	public function test_repair_accepts_a_post_file_for_a_removed_preview_record() {
+		$this->seed_source( 7, false );
+		unset( $this->meta[7][ Proud_HTML_Preview::META_KEY ] );
+
+		$id_file = tempnam( sys_get_temp_dir(), 'ftw-preview-ids-' );
+		file_put_contents( $id_file, "7\n7\n" );
+
+		Preview_Command::set_refresher(
+			function ( $post_id ) {
+				$this->refreshed[] = $post_id;
+				$this->meta[ $post_id ][ Proud_HTML_Preview::META_KEY ] = $this->record( true );
+
+				return 'updated';
+			}
+		);
+
+		$command = new Preview_Command();
+		$command->repair( array(), array( 'post-file' => $id_file ) );
+		unlink( $id_file );
+
+		$this->assertSame( array( 7 ), $this->refreshed );
+		$this->assertStringContainsString( 'Preview records republished', (string) FtwTestWpCli::$success );
+	}
+
+	public function test_repair_rejects_invalid_post_file_content() {
+		$id_file = tempnam( sys_get_temp_dir(), 'ftw-preview-ids-' );
+		file_put_contents( $id_file, "7\nnot-an-id\n" );
+
+		$command = new Preview_Command();
+		$command->repair( array(), array( 'post-file' => $id_file ) );
+		unlink( $id_file );
+
+		$this->assertSame( array(), $this->refreshed );
+		$this->assertStringContainsString( 'Invalid post ID', (string) FtwTestWpCli::$error );
+	}
+
+	public function test_repair_rejects_an_oversized_post_file() {
+		$id_file = tempnam( sys_get_temp_dir(), 'ftw-preview-ids-' );
+		file_put_contents( $id_file, str_repeat( '1', Preview_Command::POST_FILE_MAX_BYTES + 1 ) );
+
+		$command = new Preview_Command();
+		$command->repair( array(), array( 'post-file' => $id_file, 'limit' => 1 ) );
+		unlink( $id_file );
+
+		$this->assertSame( array(), $this->refreshed );
+		$this->assertStringContainsString( '1 MiB safety limit', (string) FtwTestWpCli::$error );
+	}
+
+	public function test_repair_rejects_conflicting_target_selectors() {
+		$command = new Preview_Command();
+		$command->repair( array(), array( 'post' => '7', 'all' => true ) );
+
+		$this->assertStringContainsString( 'Use only one', (string) FtwTestWpCli::$error );
+	}
+
+	public function test_repair_rejects_an_empty_explicit_post_list() {
+		$command = new Preview_Command();
+		$command->repair( array(), array( 'post' => '' ) );
+
+		$this->assertStringContainsString( 'No valid post IDs', (string) FtwTestWpCli::$error );
+	}
+
+	public function test_repair_reports_a_skipped_post_file_target_as_incomplete() {
+		$this->seed_source( 7, false, 'processing' );
+		$id_file = tempnam( sys_get_temp_dir(), 'ftw-preview-ids-' );
+		file_put_contents( $id_file, "7\n" );
+
+		$command = new Preview_Command();
+		$command->repair( array(), array( 'post-file' => $id_file ) );
+		unlink( $id_file );
+
+		$this->assertSame( array(), $this->refreshed );
+		$this->assertStringContainsString( 'Repair incomplete', (string) FtwTestWpCli::$error );
+		$this->assertStringContainsString( '1 were skipped', (string) FtwTestWpCli::$error );
+	}
+
+	public function test_repair_dry_run_reports_an_ineligible_post_file_target() {
+		$this->seed_source( 7, false, 'processing' );
+		$id_file = tempnam( sys_get_temp_dir(), 'ftw-preview-ids-' );
+		file_put_contents( $id_file, "7\n" );
+
+		$command = new Preview_Command();
+		$command->repair( array(), array( 'post-file' => $id_file, 'dry-run' => true ) );
+		unlink( $id_file );
+
+		$this->assertSame( array(), $this->refreshed );
+		$this->assertStringContainsString( 'would skip 7 (not-ready)', implode( "\n", FtwTestWpCli::$logs ) );
+		$this->assertStringContainsString( 'Dry run incomplete', (string) FtwTestWpCli::$error );
+		$this->assertNull( FtwTestWpCli::$success );
 	}
 
 	public function test_repair_stops_at_the_requested_limit() {
@@ -348,7 +500,7 @@ class CliTest extends TestCase {
 		$command->repair( array(), array() );
 
 		$this->assertSame( array( 7, 9 ), $this->refreshed );
-		$this->assertNull( FtwTestWpCli::$error );
+		$this->assertStringContainsString( 'Repair incomplete', (string) FtwTestWpCli::$error );
 
 		$summary = implode( "\n", FtwTestWpCli::$logs ) . implode( "\n", FtwTestWpCli::$warnings );
 		$this->assertStringContainsString( 'failed', $summary );

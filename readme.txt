@@ -87,6 +87,8 @@ FileToWeb service information:
 
 * Adds a `wp filetoweb preview` WP-CLI command group for listing, summarising, and republishing preview records.
 * Adds a public check for whether a site can publish previews to shared object storage, so container-local records are only reported as stale where shared storage exists.
+* Includes attachment-owned previews in bounded discovery queries and accepts backed-up source IDs from a size-limited `--post-file` after stale records have been removed.
+* Returns a failing command status when any selected preview fails or is skipped.
 
 = 0.1.54 =
 

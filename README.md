@@ -105,9 +105,12 @@ wp filetoweb preview repair --sleep=1
 
 # Republish two known sources.
 wp filetoweb preview repair --post=6104,5899
+
+# Republish source IDs saved before their broken preview records were removed.
+wp filetoweb preview repair --post-file=/tmp/filetoweb-preview-ids.txt --sleep=1
 ```
 
-A repair re-fetches the already-converted HTML and republishes it. It does not reconvert the source PDF, so it makes no billable conversion request.
+A repair re-fetches the already-converted HTML and republishes it. It does not reconvert the source PDF, so it makes no billable conversion request. Discovery includes attachment-owned records and reads them in bounded batches; `--post-file` accepts positive post IDs separated by commas or whitespace, up to a 1 MiB safety limit. The command exits unsuccessfully if any selected source fails or is skipped so automation cannot mistake a partial repair for success.
 
 ## Development
 

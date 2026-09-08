@@ -4,6 +4,9 @@
 
 - Add a `wp filetoweb preview` WP-CLI command group so preview records can be inspected and repaired without admin-screen access.
 - Add `Proud_HTML_Preview::supports_durable_storage()` so callers can tell a site that cannot publish to shared storage from one whose records simply predate it.
+- Discover attachment-owned preview records, including the normal WordPress `inherit` status, in bounded database pages.
+- Accept backed-up source IDs from `--post-file` so intentionally removed stale records can be republished without reconversion.
+- Bound recovery ID files to 1 MiB and exit unsuccessfully after a failed or skipped repair so fleet automation cannot mistake an incomplete run for success.
 
 ## 0.1.54
 

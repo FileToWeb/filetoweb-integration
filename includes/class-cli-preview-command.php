@@ -26,6 +26,16 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class Preview_Command {
 	/**
+	 * Maximum source records fetched by one WordPress query.
+	 */
+	const SOURCE_QUERY_BATCH_SIZE = 100;
+
+	/**
+	 * Maximum recovery ID file size read into memory.
+	 */
+	const POST_FILE_MAX_BYTES = 1048576;
+
+	/**
 	 * Test seam for the refresh call.
 	 *
 	 * @var callable|null
@@ -61,41 +71,133 @@ class Preview_Command {
 	 * Preview records are published against the source that owns the PDF, which
 	 * is frequently an attachment, so this cannot rely on `post_type => any`.
 	 *
+	 * @param int $limit Maximum number of source IDs to return. Zero means all.
 	 * @return int[]
 	 */
-	public static function source_ids() {
-		$ids = get_posts(
-			array(
-				'post_type'              => array_values( get_post_types( array(), 'names' ) ),
-				'post_status'            => 'any',
-				'posts_per_page'         => -1,
-				'fields'                 => 'ids',
-				'orderby'                => 'ID',
-				'order'                  => 'ASC',
-				'meta_key'               => Proud_HTML_Preview::META_KEY, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
-				'no_found_rows'          => true,
-				'update_post_term_cache' => false,
-			)
-		);
+	public static function source_ids( $limit = 0 ) {
+		return iterator_to_array( self::source_id_iterator( $limit ), false );
+	}
 
-		return array_map( 'absint', is_array( $ids ) ? $ids : array() );
+	/**
+	 * Iterate over source IDs in bounded database queries.
+	 *
+	 * WordPress's `post_status => any` explicitly excludes `inherit`, which is
+	 * the normal status for Media Library attachments. Use every registered
+	 * status except deleted/draft placeholders so attachment-owned preview
+	 * records are included without selecting trashed content.
+	 *
+	 * @param int $limit Maximum number of source IDs to yield. Zero means all.
+	 * @return \Generator<int>
+	 */
+	private static function source_id_iterator( $limit = 0 ) {
+		$limit      = max( 0, (int) $limit );
+		$page       = 1;
+		$yielded    = 0;
+		$post_types = array_values( get_post_types( array(), 'names' ) );
+		$statuses   = array_values( get_post_stati( array(), 'names' ) );
+		$statuses   = array_values( array_diff( $statuses, array( 'trash', 'auto-draft' ) ) );
+
+		if ( ! in_array( 'inherit', $statuses, true ) ) {
+			$statuses[] = 'inherit';
+		}
+
+		do {
+			$page_size = self::SOURCE_QUERY_BATCH_SIZE;
+
+			$ids = get_posts(
+				array(
+					'post_type'              => $post_types,
+					'post_status'            => $statuses,
+					'posts_per_page'         => $page_size,
+					'paged'                  => $page,
+					'fields'                 => 'ids',
+					'orderby'                => 'ID',
+					'order'                  => 'ASC',
+					'meta_key'               => Proud_HTML_Preview::META_KEY, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+					'no_found_rows'          => true,
+					'update_post_meta_cache' => false,
+					'update_post_term_cache' => false,
+				)
+			);
+			$ids = array_map( 'absint', is_array( $ids ) ? $ids : array() );
+
+			foreach ( $ids as $post_id ) {
+				yield $post_id;
+				$yielded++;
+
+				if ( $limit > 0 && $yielded >= $limit ) {
+					return;
+				}
+			}
+
+			$page++;
+		} while ( count( $ids ) === $page_size );
 	}
 
 	/**
 	 * Source posts whose preview record is not on shared storage.
 	 *
+	 * @param int $limit Maximum number of stale IDs to return. Zero means all.
 	 * @return int[]
 	 */
-	public static function stale_ids() {
+	public static function stale_ids( $limit = 0 ) {
+		$limit = max( 0, (int) $limit );
 		$stale = array();
 
-		foreach ( self::source_ids() as $post_id ) {
+		foreach ( self::source_id_iterator() as $post_id ) {
 			if ( ! Proud_HTML_Preview::is_durable_record( Proud_HTML_Preview::record_for_post( $post_id ) ) ) {
 				$stale[] = $post_id;
+
+				if ( $limit > 0 && count( $stale ) >= $limit ) {
+					break;
+				}
 			}
 		}
 
 		return $stale;
+	}
+
+	/**
+	 * Parse post IDs separated by commas or whitespace.
+	 *
+	 * @param string $value Raw ID list.
+	 * @return int[]
+	 * @throws \InvalidArgumentException When a token is not a positive integer.
+	 */
+	private static function parse_post_ids( $value ) {
+		$tokens = preg_split( '/[\s,]+/', trim( (string) $value ), -1, PREG_SPLIT_NO_EMPTY );
+		$ids    = array();
+
+		foreach ( is_array( $tokens ) ? $tokens : array() as $token ) {
+			if ( ! preg_match( '/^[1-9][0-9]*$/', $token ) ) {
+				throw new \InvalidArgumentException( sprintf( 'Invalid post ID: %s', $token ) );
+			}
+
+			$ids[] = absint( $token );
+		}
+
+		return array_values( array_unique( $ids ) );
+	}
+
+	/**
+	 * Explain why a source cannot currently be repaired.
+	 *
+	 * @param int $post_id Source post ID.
+	 * @return string Empty when the source is eligible for repair.
+	 */
+	private static function repair_ineligibility_reason( $post_id ) {
+		$post_id = absint( $post_id );
+		$post    = $post_id ? get_post( $post_id ) : null;
+
+		if ( ! is_object( $post ) ) {
+			return 'no-post';
+		}
+
+		if ( 'ready' !== (string) get_post_meta( $post_id, Document_State::META_STATUS, true ) ) {
+			return 'not-ready';
+		}
+
+		return '';
 	}
 
 	/**
@@ -130,20 +232,12 @@ class Preview_Command {
 	 */
 	public static function repair_post( $post_id ) {
 		$post_id = absint( $post_id );
-		$post    = $post_id ? get_post( $post_id ) : null;
+		$reason  = self::repair_ineligibility_reason( $post_id );
 
-		if ( ! is_object( $post ) ) {
+		if ( $reason ) {
 			return array(
 				'result'  => 'skipped',
-				'reason'  => 'no-post',
-				'durable' => false,
-			);
-		}
-
-		if ( 'ready' !== (string) get_post_meta( $post_id, Document_State::META_STATUS, true ) ) {
-			return array(
-				'result'  => 'skipped',
-				'reason'  => 'not-ready',
+				'reason'  => $reason,
 				'durable' => false,
 			);
 		}
@@ -273,6 +367,11 @@ class Preview_Command {
 	 * [--post=<ids>]
 	 * : Comma-separated source post IDs. Defaults to every stale record.
 	 *
+	 * [--post-file=<path>]
+	 * : File containing source post IDs separated by commas or whitespace. Use
+	 *   this to repair records that were removed after their IDs were backed up.
+	 *   Files larger than 1 MiB are rejected.
+	 *
 	 * [--all]
 	 * : Republish every record, not only the stale ones.
 	 *
@@ -296,33 +395,75 @@ class Preview_Command {
 	 *     # Republish two known sources.
 	 *     $ wp filetoweb preview repair --post=6104,5899
 	 *
+	 *     # Republish source IDs preserved during an earlier cleanup.
+	 *     $ wp filetoweb preview repair --post-file=/tmp/filetoweb-preview-ids.txt --sleep=1
+	 *
 	 * @param array $args Positional arguments.
 	 * @param array $assoc_args Associative arguments.
 	 */
 	public function repair( $args, $assoc_args ) {
 		unset( $args );
 
-		$dry_run = ! empty( $assoc_args['dry-run'] );
-		$sleep   = isset( $assoc_args['sleep'] ) ? max( 0, (int) $assoc_args['sleep'] ) : 0;
-		$limit   = isset( $assoc_args['limit'] ) ? max( 0, (int) $assoc_args['limit'] ) : 0;
+		$dry_run   = ! empty( $assoc_args['dry-run'] );
+		$sleep     = isset( $assoc_args['sleep'] ) ? max( 0, (int) $assoc_args['sleep'] ) : 0;
+		$limit     = isset( $assoc_args['limit'] ) ? max( 0, (int) $assoc_args['limit'] ) : 0;
+		$selectors = array_filter(
+			array(
+				isset( $assoc_args['post'] ),
+				isset( $assoc_args['post-file'] ),
+				! empty( $assoc_args['all'] ),
+			)
+		);
 
-		if ( isset( $assoc_args['post'] ) ) {
-			$targets = array_values(
-				array_filter(
-					array_map( 'absint', explode( ',', (string) $assoc_args['post'] ) )
-				)
-			);
-		} elseif ( ! empty( $assoc_args['all'] ) ) {
-			$targets = self::source_ids();
-		} else {
-			$targets = self::stale_ids();
+		if ( count( $selectors ) > 1 ) {
+			\WP_CLI::error( 'Use only one of --post, --post-file, or --all.' );
+			return;
 		}
 
-		if ( $limit > 0 ) {
+		try {
+			if ( isset( $assoc_args['post'] ) ) {
+				$targets = self::parse_post_ids( $assoc_args['post'] );
+			} elseif ( isset( $assoc_args['post-file'] ) ) {
+				$path = (string) $assoc_args['post-file'];
+
+				if ( ! is_readable( $path ) ) {
+					\WP_CLI::error( sprintf( 'Post ID file is not readable: %s', $path ) );
+					return;
+				}
+
+				$contents = file_get_contents( $path, false, null, 0, self::POST_FILE_MAX_BYTES + 1 );
+
+				if ( false === $contents ) {
+					\WP_CLI::error( sprintf( 'Post ID file could not be read: %s', $path ) );
+					return;
+				}
+
+				if ( strlen( $contents ) > self::POST_FILE_MAX_BYTES ) {
+					\WP_CLI::error( 'Post ID file is larger than the 1 MiB safety limit.' );
+					return;
+				}
+
+				$targets = self::parse_post_ids( $contents );
+			} elseif ( ! empty( $assoc_args['all'] ) ) {
+				$targets = self::source_ids( $limit );
+			} else {
+				$targets = self::stale_ids( $limit );
+			}
+		} catch ( \InvalidArgumentException $exception ) {
+			\WP_CLI::error( $exception->getMessage() );
+			return;
+		}
+
+		if ( $limit > 0 && ( isset( $assoc_args['post'] ) || isset( $assoc_args['post-file'] ) ) ) {
 			$targets = array_slice( $targets, 0, $limit );
 		}
 
 		if ( empty( $targets ) ) {
+			if ( isset( $assoc_args['post'] ) || isset( $assoc_args['post-file'] ) ) {
+				\WP_CLI::error( 'No valid post IDs were supplied.' );
+				return;
+			}
+
 			\WP_CLI::success( 'No stale preview records found.' );
 			return;
 		}
@@ -336,16 +477,31 @@ class Preview_Command {
 
 		\WP_CLI::log(
 			sprintf(
-				'%d stale preview %s to republish.',
+				'%d preview %s selected for republishing.',
 				count( $targets ),
-				1 === count( $targets ) ? 'record' : 'records'
+				1 === count( $targets ) ? 'source' : 'sources'
 			)
 		);
 
 		if ( $dry_run ) {
+			$skipped = 0;
+
 			foreach ( $targets as $post_id ) {
-				$row = self::inspect( $post_id );
+				$row    = self::inspect( $post_id );
+				$reason = self::repair_ineligibility_reason( $post_id );
+
+				if ( $reason ) {
+					$skipped++;
+					\WP_CLI::log( sprintf( '  would skip %d (%s)', $row['id'], $reason ) );
+					continue;
+				}
+
 				\WP_CLI::log( sprintf( '  would repair %d (%s) %s', $row['id'], $row['post_type'], $row['title'] ) );
+			}
+
+			if ( $skipped > 0 ) {
+				\WP_CLI::error( sprintf( 'Dry run incomplete: %d selected source(s) would be skipped.', $skipped ) );
+				return;
 			}
 
 			\WP_CLI::success( 'Dry run complete. Nothing was changed.' );
@@ -415,8 +571,14 @@ class Preview_Command {
 			)
 		);
 
-		if ( $counts['failed'] > 0 ) {
-			\WP_CLI::warning( sprintf( '%d preview record(s) failed to republish.', $counts['failed'] ) );
+		if ( $counts['failed'] > 0 || $counts['skipped'] > 0 ) {
+			\WP_CLI::error(
+				sprintf(
+					'Repair incomplete: %d preview record(s) failed and %d were skipped.',
+					$counts['failed'],
+					$counts['skipped']
+				)
+			);
 			return;
 		}
 
