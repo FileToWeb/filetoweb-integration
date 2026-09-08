@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.55-rc.1
 
 - Add a `wp filetoweb preview` WP-CLI command group so preview records can be inspected and repaired without admin-screen access.
 - Add `Proud_HTML_Preview::supports_durable_storage()` so callers can tell a site that cannot publish to shared storage from one whose records simply predate it.
