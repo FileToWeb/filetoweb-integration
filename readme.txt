@@ -35,6 +35,7 @@ Features:
 * Render-time FileToWeb attribution on public accessibility statement pages when the integration is enabled.
 * Original PDF links are preserved in admin screens.
 * Per-PDF controls can temporarily show the original PDF publicly while FileToWeb syncing and editing continue in the background.
+* WP-CLI commands for inspecting and repairing published preview records on sites where the admin screens are not the practical way in.
 
 == Installation ==
 
@@ -81,6 +82,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= Unreleased =
+
+* Adds a `wp filetoweb preview` WP-CLI command group for listing, summarising, and republishing preview records.
+* Adds a public check for whether a site can publish previews to shared object storage, so container-local records are only reported as stale where shared storage exists.
 
 = 0.1.54 =
 

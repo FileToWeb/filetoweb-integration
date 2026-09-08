@@ -665,6 +665,18 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertTrue( $filter_removed );
 	}
 
+	public function test_supports_durable_storage_is_false_without_wp_stateless(): void {
+		Functions\when( 'has_action' )->justReturn( false );
+
+		$this->assertFalse( Proud_HTML_Preview::supports_durable_storage() );
+	}
+
+	public function test_supports_durable_storage_is_true_when_wp_stateless_is_running(): void {
+		Functions\when( 'has_action' )->justReturn( 1 );
+
+		$this->assertTrue( Proud_HTML_Preview::supports_durable_storage() );
+	}
+
 	public function test_stateless_storage_prefixes_prevent_cross_tenant_bundle_collisions(): void {
 		$tenant = 'delawarecountyin';
 		Functions\when( 'has_action' )->justReturn( 1 );

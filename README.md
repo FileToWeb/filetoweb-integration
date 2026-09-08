@@ -86,6 +86,29 @@ FileToWeb service information:
 - Terms: https://filetoweb.com/terms-of-service
 - Privacy: https://filetoweb.com/privacy-policy
 
+## WP-CLI
+
+Preview records are published against the source that owns the PDF and point at the storage the site had available when they were written. On a site with shared object storage (WP Stateless) that is a bucket URL, which any container can serve. Without it the record points at one container's uploads directory, and the preview stops resolving as soon as that container is replaced. Nothing republishes those records on its own: polling only revisits sources that are still converting, so a source that reached `ready` is never looked at again.
+
+```bash
+# How many published previews are pinned to this container?
+wp filetoweb preview status
+
+# Which ones, and what are they?
+wp filetoweb preview list --stale
+
+# What would a repair touch?
+wp filetoweb preview repair --dry-run
+
+# Republish them, pausing a second between sources.
+wp filetoweb preview repair --sleep=1
+
+# Republish two known sources.
+wp filetoweb preview repair --post=6104,5899
+```
+
+A repair re-fetches the already-converted HTML and republishes it. It does not reconvert the source PDF, so it makes no billable conversion request.
+
 ## Development
 
 ```bash

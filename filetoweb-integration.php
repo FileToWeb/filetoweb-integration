@@ -40,6 +40,8 @@ require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-bulk-queue.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-link-rewriter.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-accessibility-attribution.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-widget.php';
+require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-cli-preview-command.php';
+require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-cli.php';
 require_once FILETOWEB_INTEGRATION_PATH . 'includes/class-plugin.php';
 
 register_activation_hook( __FILE__, array( 'FileToWeb\\Integration\\Plugin', 'activate' ) );

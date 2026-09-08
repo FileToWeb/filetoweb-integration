@@ -22,6 +22,7 @@ class Plugin {
 			dirname( plugin_basename( FILETOWEB_INTEGRATION_FILE ) ) . '/languages'
 		);
 
+		CLI::init();
 		Settings::init();
 		Proud_HTML_Preview::init();
 		Sync::init();
