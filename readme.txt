@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.55-rc.1
+Stable tag: 0.1.55
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -83,7 +83,7 @@ FileToWeb service information:
 
 == Changelog ==
 
-= 0.1.55-rc.1 =
+= 0.1.55 =
 
 * Adds a `wp filetoweb preview` WP-CLI command group for listing, summarising, and republishing preview records.
 * Adds a public check for whether a site can publish previews to shared object storage, so container-local records are only reported as stale where shared storage exists.

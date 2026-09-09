@@ -81,10 +81,10 @@ class Preview_Command {
 	/**
 	 * Iterate over source IDs in bounded database queries.
 	 *
-	 * WordPress's `post_status => any` explicitly excludes `inherit`, which is
-	 * the normal status for Media Library attachments. Use every registered
-	 * status except deleted/draft placeholders so attachment-owned preview
-	 * records are included without selecting trashed content.
+	 * Use every registered status explicitly so attachment-owned `inherit`
+	 * records and site-specific custom statuses remain in scope regardless of
+	 * how WordPress expands `post_status => any`. Exclude deleted/draft
+	 * placeholders so trashed content is never selected.
 	 *
 	 * @param int $limit Maximum number of source IDs to yield. Zero means all.
 	 * @return \Generator<int>
