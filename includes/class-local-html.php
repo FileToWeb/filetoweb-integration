@@ -426,7 +426,7 @@ class Local_HTML {
 			$fallback = Source_Resolver::admin_original_source_url( get_post( $post_id ) );
 
 			if ( $fallback ) {
-				wp_safe_redirect( $fallback );
+				self::serve_local_fallback( $fallback );
 				exit;
 			}
 
@@ -438,6 +438,77 @@ class Local_HTML {
 		header( 'Content-Type: text/html; charset=UTF-8' );
 		echo $html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 		exit;
+	}
+
+	/**
+	 * Build the page shown when the cached HTML cannot be read.
+	 *
+	 * This endpoint is requested inside the sandboxed iframe the link rewriter
+	 * emits, and that sandbox withholds scripts. Nothing able to display a PDF
+	 * survives there: the browser's own viewer, `<object>` and Google Docs
+	 * Viewer all need capabilities it does not grant. Redirecting to the
+	 * original therefore does not show the document, it shows a browser error
+	 * page. A plain page that says so and links out is the honest answer, and
+	 * the link works whenever the endpoint is opened directly.
+	 *
+	 * Self-contained on purpose: no scripts, no frames, no external assets.
+	 *
+	 * @param string $source_url Original document URL, when there is one.
+	 * @return string
+	 */
+	public static function local_fallback_document( $source_url ) {
+		$source_url = esc_url_raw( (string) $source_url );
+		$language   = function_exists( 'get_bloginfo' ) ? (string) get_bloginfo( 'language' ) : 'en';
+		$language   = $language ? $language : 'en';
+		$heading    = __( 'The HTML version of this document is not available', 'filetoweb-integration' );
+		$body       = __( 'The original file is still available to download.', 'filetoweb-integration' );
+		$link       = __( 'Open the original document', 'filetoweb-integration' );
+
+		$markup = '<!DOCTYPE html>' . "\n"
+			. '<html lang="' . esc_attr( $language ) . '">' . "\n"
+			. '<head>' . "\n"
+			. '<meta charset="utf-8">' . "\n"
+			. '<meta name="viewport" content="width=device-width, initial-scale=1">' . "\n"
+			. '<meta name="robots" content="noindex, nofollow">' . "\n"
+			. '<title>' . esc_html( $heading ) . '</title>' . "\n"
+			. '<style>'
+			. 'body{margin:0;padding:2rem;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;'
+			. 'line-height:1.5;color:#1a1a1a;background:#fff}'
+			. 'h1{font-size:1.125rem;margin:0 0 .5rem}'
+			. 'p{margin:0 0 1rem}'
+			. 'a{color:#1a4480}'
+			. '</style>' . "\n"
+			. '</head>' . "\n"
+			. '<body>' . "\n"
+			. '<h1>' . esc_html( $heading ) . '</h1>' . "\n"
+			. '<p>' . esc_html( $body ) . '</p>' . "\n";
+
+		if ( $source_url ) {
+			$markup .= '<p><a href="' . esc_url( $source_url ) . '" target="_blank" rel="noopener noreferrer">'
+				. esc_html( $link ) . '</a></p>' . "\n";
+		}
+
+		return $markup . '</body>' . "\n" . '</html>' . "\n";
+	}
+
+	/**
+	 * Send the unavailable-cache page with conservative headers.
+	 *
+	 * @param string $source_url Original document URL, when there is one.
+	 */
+	private static function serve_local_fallback( $source_url ) {
+		nocache_headers();
+		header( 'Content-Type: text/html; charset=UTF-8' );
+		header( 'X-Content-Type-Options: nosniff' );
+		header( 'Referrer-Policy: no-referrer' );
+		header( 'X-Frame-Options: SAMEORIGIN' );
+		header(
+			"Content-Security-Policy: default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; "
+			. "img-src 'none'; font-src 'none'; connect-src 'none'; object-src 'none'; media-src 'none'; "
+			. "frame-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+		);
+
+		echo self::local_fallback_document( $source_url ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 	}
 
 	/**

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Serve a self-contained HTML page from the local preview endpoint when the cached rendition cannot be read, instead of redirecting to the original file. The endpoint is fetched inside a sandboxed iframe where no PDF viewer runs, so the redirect produced a browser error rather than the document.
+
 ## 0.1.55
 
 - Add a `wp filetoweb preview` WP-CLI command group so preview records can be inspected and repaired without admin-screen access.

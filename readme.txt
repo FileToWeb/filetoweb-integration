@@ -83,6 +83,10 @@ FileToWeb service information:
 
 == Changelog ==
 
+= Unreleased =
+
+* Serves a self-contained HTML page when a cached rendition is unavailable, instead of redirecting to the original file inside a sandboxed iframe where it cannot render.
+
 = 0.1.55 =
 
 * Adds a `wp filetoweb preview` WP-CLI command group for listing, summarising, and republishing preview records.

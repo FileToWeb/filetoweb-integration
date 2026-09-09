@@ -625,4 +625,49 @@ class LocalHtmlTest extends TestCase {
 			$this->meta[123][ \FileToWeb\Integration\Proud_HTML_Preview::META_KEY ]['artifacts']
 		);
 	}
+
+	public function test_unavailable_cache_offers_the_original_without_scripts_or_frames(): void {
+		Functions\when( 'esc_url' )->returnArg();
+		Functions\when( 'esc_html' )->returnArg();
+		Functions\when( 'esc_attr' )->returnArg();
+		Functions\when( 'get_bloginfo' )->justReturn( 'en-US' );
+
+		$html = Local_HTML::local_fallback_document( 'https://example.test/wp-content/uploads/agenda.pdf' );
+
+		$this->assertStringStartsWith( '<!DOCTYPE html>', $html );
+		$this->assertStringContainsString( 'https://example.test/wp-content/uploads/agenda.pdf', $html );
+
+		// The viewer requests this endpoint inside a sandboxed iframe, so any
+		// markup that needs scripts or a plugin to render is inert there.
+		$this->assertStringNotContainsString( '<script', $html );
+		$this->assertStringNotContainsString( '<iframe', $html );
+		$this->assertStringNotContainsString( '<object', $html );
+		$this->assertStringNotContainsString( '<embed', $html );
+		$this->assertStringNotContainsString( 'http-equiv="refresh"', $html );
+	}
+
+	public function test_unavailable_cache_page_escapes_its_source_url_and_text(): void {
+		Functions\when( 'esc_url' )->justReturn( 'ESCAPED_URL' );
+		Functions\when( 'esc_html' )->justReturn( 'ESCAPED_TEXT' );
+		Functions\when( 'esc_attr' )->justReturn( 'ESCAPED_ATTR' );
+		Functions\when( 'get_bloginfo' )->justReturn( 'en-US' );
+
+		$html = Local_HTML::local_fallback_document( 'javascript:alert(1)' );
+
+		$this->assertStringContainsString( 'ESCAPED_URL', $html );
+		$this->assertStringContainsString( 'ESCAPED_TEXT', $html );
+		$this->assertStringNotContainsString( 'javascript:', $html );
+	}
+
+	public function test_unavailable_cache_page_is_built_without_a_source_url(): void {
+		Functions\when( 'esc_url' )->returnArg();
+		Functions\when( 'esc_html' )->returnArg();
+		Functions\when( 'esc_attr' )->returnArg();
+		Functions\when( 'get_bloginfo' )->justReturn( 'en-US' );
+
+		$html = Local_HTML::local_fallback_document( '' );
+
+		$this->assertStringStartsWith( '<!DOCTYPE html>', $html );
+		$this->assertStringNotContainsString( '<a href', $html );
+	}
 }
