@@ -558,6 +558,30 @@ class Proud_HTML_Preview {
 	}
 
 	/**
+	 * Can this site publish previews to storage that outlives one container?
+	 *
+	 * A `local` storage backend is the correct answer on a single-server site
+	 * and a stale one on a site that runs WP Stateless, so callers reporting on
+	 * record health need to tell those two cases apart before they treat a
+	 * non-durable record as something to repair.
+	 *
+	 * @return bool
+	 */
+	public static function supports_durable_storage() {
+		$uploads = wp_upload_dir();
+		$basedir = isset( $uploads['basedir'] ) ? wp_normalize_path( $uploads['basedir'] ) : '';
+		$baseurl = isset( $uploads['baseurl'] ) ? untrailingslashit( $uploads['baseurl'] ) : '';
+
+		if ( ! $basedir || ! $baseurl ) {
+			return false;
+		}
+
+		$storage = self::storage_context( $basedir, $baseurl, self::BUNDLE_ROOT . '/0/probe/index.html' );
+
+		return ! empty( $storage['stateless'] );
+	}
+
+	/**
 	 * Whether one record still needs FileToWeb's explicit storage migration.
 	 *
 	 * @param mixed $record Preview record.

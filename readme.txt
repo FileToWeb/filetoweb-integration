@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.54
+Stable tag: 0.1.55
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -35,6 +35,7 @@ Features:
 * Render-time FileToWeb attribution on public accessibility statement pages when the integration is enabled.
 * Original PDF links are preserved in admin screens.
 * Per-PDF controls can temporarily show the original PDF publicly while FileToWeb syncing and editing continue in the background.
+* WP-CLI commands for inspecting and repairing published preview records on sites where the admin screens are not the practical way in.
 
 == Installation ==
 
@@ -81,6 +82,13 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.55 =
+
+* Adds a `wp filetoweb preview` WP-CLI command group for listing, summarising, and republishing preview records.
+* Adds a public check for whether a site can publish previews to shared object storage, so container-local records are only reported as stale where shared storage exists.
+* Includes attachment-owned previews in bounded discovery queries and accepts backed-up source IDs from a size-limited `--post-file` after stale records have been removed.
+* Returns a failing command status when any selected preview fails or is skipped.
 
 = 0.1.54 =
 

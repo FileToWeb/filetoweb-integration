@@ -123,6 +123,76 @@ if ( ! class_exists( 'FtwTestStatelessBootstrap' ) ) {
 	}
 }
 
+if ( ! defined( 'WP_CLI' ) ) {
+	define( 'WP_CLI', true );
+}
+
+if ( ! class_exists( 'FtwTestWpCli' ) ) {
+	/**
+	 * Records what a command wrote, so tests can assert on CLI output.
+	 */
+	class FtwTestWpCli {
+		public static $commands = array();
+		public static $logs     = array();
+		public static $warnings = array();
+		public static $success  = null;
+		public static $error    = null;
+		public static $items    = array();
+		public static $fields   = array();
+		public static $format   = '';
+
+		public static function reset() {
+			self::$commands = array();
+			self::$logs     = array();
+			self::$warnings = array();
+			self::$success  = null;
+			self::$error    = null;
+			self::$items    = array();
+			self::$fields   = array();
+			self::$format   = '';
+		}
+	}
+}
+
+if ( ! class_exists( 'WP_CLI' ) ) {
+	/**
+	 * Minimal stand-in for the WP-CLI runtime.
+	 */
+	class WP_CLI {
+		public static function add_command( $name, $class ) {
+			FtwTestWpCli::$commands[] = array(
+				'name'  => $name,
+				'class' => $class,
+			);
+		}
+
+		public static function log( $message ) {
+			FtwTestWpCli::$logs[] = (string) $message;
+		}
+
+		public static function line( $message = '' ) {
+			FtwTestWpCli::$logs[] = (string) $message;
+		}
+
+		public static function warning( $message ) {
+			FtwTestWpCli::$warnings[] = (string) $message;
+		}
+
+		public static function success( $message ) {
+			FtwTestWpCli::$success = (string) $message;
+			FtwTestWpCli::$logs[]  = (string) $message;
+		}
+
+		public static function error( $message ) {
+			FtwTestWpCli::$error = (string) $message;
+		}
+	}
+}
+
+if ( ! function_exists( 'WP_CLI\Utils\format_items' ) ) {
+	require_once __DIR__ . '/wp-cli-utils-stub.php';
+}
+
 require_once __DIR__ . '/../vendor/autoload.php';
 require_once __DIR__ . '/proud-core-stubs.php';
 
@@ -144,4 +214,6 @@ require_once __DIR__ . '/../includes/class-bulk-queue.php';
 require_once __DIR__ . '/../includes/class-link-rewriter.php';
 require_once __DIR__ . '/../includes/class-accessibility-attribution.php';
 require_once __DIR__ . '/../includes/class-widget.php';
+require_once __DIR__ . '/../includes/class-cli-preview-command.php';
+require_once __DIR__ . '/../includes/class-cli.php';
 require_once __DIR__ . '/../includes/class-plugin.php';
