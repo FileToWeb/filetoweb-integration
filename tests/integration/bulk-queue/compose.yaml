@@ -1,0 +1,36 @@
+services:
+  db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: isolated-test-only
+      MARIADB_ROOT_PASSWORD: isolated-root-only
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 1s
+      timeout: 5s
+      retries: 60
+    tmpfs:
+      - /var/lib/mysql
+  wp-a: &wordpress
+    image: wordpress:6.9.4-php8.2-apache
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: isolated-test-only
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_CONFIG_EXTRA: |
+        define('DISABLE_WP_CRON', true);
+        define('WP_CRON_LOCK_TIMEOUT', 1);
+        define('WP_ENVIRONMENT_TYPE', 'local');
+    volumes:
+      - ${FTW_BULK_TEST_PLUGIN_DIR:-../../..}:/var/www/html/wp-content/plugins/filetoweb-integration:ro
+      - ./fixture.php:/var/www/html/wp-content/mu-plugins/ftw-bulk-test.php:ro
+      - .:/ftw-tests:ro
+    # No shared uploads volume, host ports, cloud credentials or customer keys.
+  wp-b:
+    <<: *wordpress

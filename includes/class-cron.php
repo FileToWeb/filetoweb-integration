@@ -101,6 +101,23 @@ class Cron {
 	}
 
 	/**
+	 * Run one bulk queue batch while holding the site-wide bulk queue lock.
+	 *
+	 * A run is scheduled before its items are synced, so a re-armed run can
+	 * fire while an earlier one is still working. The lock keeps the second
+	 * one from syncing the same items twice.
+	 *
+	 * @param callable $callback Work to run after acquiring the lock.
+	 * @param mixed    $busy_result Value returned when another worker owns it.
+	 * @return mixed
+	 */
+	public static function with_bulk_lock( $callback, $busy_result = null ) {
+		$scope = self::database_supports_multiple_locks() ? 'bulk' : 'poll';
+
+		return self::with_named_lock( $scope, $callback, $busy_result, true );
+	}
+
+	/**
 	 * Run one document operation while holding its cross-pod database lock.
 	 *
 	 * @param int      $post_id Attachment or post that owns FileToWeb state.

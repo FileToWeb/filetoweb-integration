@@ -29,7 +29,14 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - PDF-to-Page drafts update in place when FileToWeb conversion is ready, and the uploading admin receives a one-time email with the edit link.
 - Manual backfill is available from **Settings > FileToWeb** and is bounded by the configured batch size.
 - A bulk sync queue can process all Proud Documents or all ProudCity Meeting PDFs in bounded batches.
+- Each bulk queue run schedules its successor before syncing, saves progress after every item, and stops starting new items once its wall-clock budget is spent, so an interrupted worker cannot strand the queue. The one-minute worker re-arms a queue that still holds items but has no run scheduled and no recent progress. `filetoweb_integration_bulk_batch_interval`, `filetoweb_integration_bulk_batch_timeout`, and `filetoweb_integration_bulk_recovery_stale_seconds` tune the three bounds.
 - Existing media-library PDFs are not discovered by cron automatically; migration/backfill requires an explicit admin action.
+
+Bulk recovery resumes only an explicitly created queue; it does not discover or migrate additional content. The default 45-second budget limits **starting more items**, not the duration of an item already running. An interruption after remote acceptance but before the per-item checkpoint can replay that one item using the same external ID and fingerprint; this is at-least-once execution, not an exactly-once guarantee. Temporarily disabled integrations retain their queue. Queue replacement is rejected while a bulk worker holds the lock, and busy documents remain pending instead of being counted as completed.
+
+The existing periodic worker re-arms an unscheduled queue after five minutes without a saved checkpoint (plus normal cron scheduling delay). Healthy runs keep their own continuation scheduled. Recovery depends on working WordPress scheduled jobs and database/storage access; it cannot make a consistently failing document or an unavailable scheduler healthy.
+
+See [the isolated bulk-queue integration tests](tests/integration/bulk-queue/README.md) for reproducible interruption and multi-replica checks.
 
 ## Settings
 

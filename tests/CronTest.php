@@ -164,6 +164,38 @@ class CronTest extends TestCase {
 		$this->assertStringContainsString( 'RELEASE_LOCK', $GLOBALS['wpdb']->queries[3] );
 	}
 
+	public function test_bulk_lock_uses_distinct_scope_on_modern_database(): void {
+		$GLOBALS['wpdb'] = $this->fake_wpdb( true, '8.0.43' );
+		$result = Cron::with_bulk_lock( function () {
+			return Cron::with_item_lock( 25963, function () { return 'complete'; } );
+		} );
+		$this->assertSame( 'complete', $result );
+		$this->assertCount( 4, $GLOBALS['wpdb']->queries );
+		$this->assertNotSame( $GLOBALS['wpdb']->queries[0], $GLOBALS['wpdb']->queries[1] );
+	}
+
+	public function test_bulk_lock_reuses_poll_scope_on_legacy_database(): void {
+		$GLOBALS['wpdb'] = $this->fake_wpdb( true, '5.6.51' );
+		$result = Cron::with_bulk_lock( function () {
+			return Cron::with_item_lock( 25963, function () { return 'complete'; } );
+		} );
+		$this->assertSame( 'complete', $result );
+		$this->assertCount( 2, $GLOBALS['wpdb']->queries );
+	}
+
+	public function test_bulk_lock_is_released_after_exception_and_can_be_reacquired(): void {
+		$GLOBALS['wpdb'] = $this->fake_wpdb( true );
+		try {
+			Cron::with_bulk_lock( function () { throw new RuntimeException( 'Interrupted' ); } );
+			$this->fail( 'Expected exception.' );
+		} catch ( RuntimeException $e ) {
+			$this->assertSame( 'Interrupted', $e->getMessage() );
+		}
+		$this->assertStringContainsString( 'RELEASE_LOCK', $GLOBALS['wpdb']->queries[1] );
+		$this->assertSame( 'again', Cron::with_bulk_lock( function () { return 'again'; } ) );
+		$this->assertCount( 4, $GLOBALS['wpdb']->queries );
+	}
+
 	private function fake_wpdb( $lock_available, $version = '8.0.43' ) {
 		return new class( $lock_available, $version ) {
 			public $queries = array();
