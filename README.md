@@ -29,6 +29,7 @@ Regular WordPress plugin that connects PDF attachments and Proud Document record
 - PDF-to-Page drafts update in place when FileToWeb conversion is ready, and the uploading admin receives a one-time email with the edit link.
 - Manual backfill is available from **Settings > FileToWeb** and is bounded by the configured batch size.
 - A bulk sync queue can process all Proud Documents or all ProudCity Meeting PDFs in bounded batches.
+- Each bulk queue run schedules its successor before syncing, saves progress after every item, and stops starting new items once its wall-clock budget is spent, so an interrupted worker cannot strand the queue. The one-minute worker re-arms a queue that still holds items but has no run scheduled and no recent progress. `filetoweb_integration_bulk_batch_interval`, `filetoweb_integration_bulk_batch_timeout`, and `filetoweb_integration_bulk_recovery_stale_seconds` tune the three bounds.
 - Existing media-library PDFs are not discovered by cron automatically; migration/backfill requires an explicit admin action.
 
 ## Settings

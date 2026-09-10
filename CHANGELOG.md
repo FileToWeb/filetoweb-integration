@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Schedule the next bulk queue run before its items are synced and save queue progress after every item, so a worker terminated mid-batch cannot leave the queue with a stale count and no scheduled run.
+- Bound each bulk queue run to a wall-clock budget instead of always starting the full configured batch size, and always start at least one item.
+- Re-arm a bulk queue that still holds items but has no scheduled run and no recent progress from the existing one-minute worker.
+- Serialize bulk queue runs with a connection-scoped database lock so a re-armed run cannot overlap one that is still working.
+
 ## 0.1.55
 
 - Add a `wp filetoweb preview` WP-CLI command group so preview records can be inspected and repaired without admin-screen access.

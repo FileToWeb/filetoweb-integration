@@ -19,10 +19,29 @@ class Bulk_Queue {
 	const ACTION_RUN    = 'filetoweb_integration_run_bulk_queue';
 
 	/**
+	 * Seconds between one queue run and the next.
+	 */
+	const DEFAULT_BATCH_INTERVAL = 60;
+
+	/**
+	 * Wall-clock seconds one queue run may spend starting new items.
+	 *
+	 * A single item can spend minutes on remote calls, so a batch that starts
+	 * every item it is allowed can outlive the request that owns it.
+	 */
+	const DEFAULT_BATCH_TIMEOUT = 45;
+
+	/**
+	 * Seconds without a saved item before an unscheduled queue counts as abandoned.
+	 */
+	const RECOVERY_STALE_SECONDS = 300;
+
+	/**
 	 * Register hooks.
 	 */
 	public static function init() {
 		add_action( self::HOOK_PROCESS, array( __CLASS__, 'process_next_batch' ) );
+		add_action( Cron::HOOK_POLL_PENDING, array( __CLASS__, 'maybe_recover_queue' ), 5 );
 		add_action( 'admin_post_' . self::ACTION_DOCS, array( __CLASS__, 'handle_queue_documents' ) );
 		add_action( 'admin_post_' . self::ACTION_MEET, array( __CLASS__, 'handle_queue_meetings' ) );
 		add_action( 'admin_post_' . self::ACTION_RUN, array( __CLASS__, 'handle_run_queue' ) );
@@ -92,6 +111,20 @@ class Bulk_Queue {
 	 * @return array
 	 */
 	public static function process_next_batch() {
+		return Cron::with_bulk_lock( array( __CLASS__, 'run_next_batch' ), self::empty_counts() );
+	}
+
+	/**
+	 * Process the next bounded queue batch while holding the bulk queue lock.
+	 *
+	 * The next run is scheduled before any item is synced and progress is saved
+	 * after every item, so a worker that dies mid-batch leaves both a scheduled
+	 * run and an accurate remaining list behind it. A deploy rolling the pod, an
+	 * execution-time limit and an exhausted memory limit all end a run this way.
+	 *
+	 * @return array
+	 */
+	public static function run_next_batch() {
 		$state  = self::queue_state();
 		$limit  = Settings::batch_size();
 		$counts = self::empty_counts();
@@ -100,30 +133,78 @@ class Bulk_Queue {
 			$counts['skipped'] = count( $state['items'] );
 			$state['items']    = array();
 			self::save_queue_state( $state, $counts );
+			self::clear_next_batch();
 			return $counts;
 		}
 
-		$batch = array_splice( $state['items'], 0, $limit );
+		self::schedule_next_batch();
 
-		foreach ( $batch as $item ) {
-			$result = self::sync_item( $item, $state['type'] );
+		$deadline = microtime( true ) + self::batch_timeout();
+
+		for ( $processed = 0; $processed < $limit; $processed++ ) {
+			if ( empty( $state['items'] ) ) {
+				break;
+			}
+
+			if ( $processed > 0 && microtime( true ) >= $deadline ) {
+				break;
+			}
+
+			$item        = array_shift( $state['items'] );
+			$result      = self::sync_item( $item, $state['type'] );
+			$item_counts = self::empty_counts();
 
 			if ( isset( $result['status'] ) && ! in_array( $result['status'], array( 'failed', 'skipped' ), true ) ) {
-				++$counts['queued'];
+				++$item_counts['queued'];
 			} elseif ( isset( $result['status'] ) && 'failed' === $result['status'] ) {
-				++$counts['failed'];
+				++$item_counts['failed'];
 			} else {
-				++$counts['skipped'];
+				++$item_counts['skipped'];
 			}
+
+			$counts['queued']  += $item_counts['queued'];
+			$counts['failed']  += $item_counts['failed'];
+			$counts['skipped'] += $item_counts['skipped'];
+
+			$state = self::save_queue_state( $state, $item_counts );
 		}
 
-		self::save_queue_state( $state, $counts );
-
-		if ( ! empty( $state['items'] ) ) {
-			self::schedule_next_batch();
+		if ( empty( $state['items'] ) ) {
+			self::clear_next_batch();
 		}
 
 		return $counts;
+	}
+
+	/**
+	 * Re-arm a queue whose run was lost with the worker that owned it.
+	 *
+	 * Runs on the one-minute poll. A queue that still holds items, has no run
+	 * scheduled, and has saved nothing recently cannot make progress on its
+	 * own, because a run is only ever scheduled by another run.
+	 *
+	 * @return bool Whether a run was scheduled.
+	 */
+	public static function maybe_recover_queue() {
+		$state = self::queue_state();
+
+		if ( empty( $state['items'] ) || ! Settings::configured() ) {
+			return false;
+		}
+
+		if ( wp_next_scheduled( self::HOOK_PROCESS ) ) {
+			return false;
+		}
+
+		$updated = $state['updated_at'] ? strtotime( $state['updated_at'] . ' UTC' ) : 0;
+
+		if ( $updated && ( time() - $updated ) < self::recovery_stale_seconds() ) {
+			return false;
+		}
+
+		self::schedule_next_batch( 0 );
+
+		return true;
 	}
 
 	/**
@@ -256,6 +337,7 @@ class Bulk_Queue {
 	 *
 	 * @param array $state State.
 	 * @param array $counts Counts.
+	 * @return array Saved state.
 	 */
 	private static function save_queue_state( $state, $counts ) {
 		$processed = absint( $counts['queued'] ) + absint( $counts['skipped'] ) + absint( $counts['failed'] );
@@ -267,15 +349,70 @@ class Bulk_Queue {
 		$state['updated_at'] = current_time( 'mysql', true );
 
 		update_option( self::OPTION_QUEUE, $state, false );
+
+		return $state;
 	}
 
 	/**
 	 * Schedule next queue batch.
+	 *
+	 * @param int|null $delay Seconds to wait, or null for the configured interval.
 	 */
-	private static function schedule_next_batch() {
-		if ( ! wp_next_scheduled( self::HOOK_PROCESS ) ) {
-			wp_schedule_single_event( time() + 60, self::HOOK_PROCESS );
+	private static function schedule_next_batch( $delay = null ) {
+		if ( wp_next_scheduled( self::HOOK_PROCESS ) ) {
+			return;
 		}
+
+		$delay = null === $delay ? self::batch_interval() : max( 0, absint( $delay ) );
+
+		wp_schedule_single_event( time() + $delay, self::HOOK_PROCESS );
+	}
+
+	/**
+	 * Drop the scheduled run left behind by a drained queue.
+	 */
+	private static function clear_next_batch() {
+		if ( wp_next_scheduled( self::HOOK_PROCESS ) ) {
+			wp_clear_scheduled_hook( self::HOOK_PROCESS );
+		}
+	}
+
+	/**
+	 * Seconds between one queue run and the next.
+	 *
+	 * @return int
+	 */
+	private static function batch_interval() {
+		$seconds = apply_filters( 'filetoweb_integration_bulk_batch_interval', self::DEFAULT_BATCH_INTERVAL );
+		$seconds = is_numeric( $seconds ) ? (int) $seconds : self::DEFAULT_BATCH_INTERVAL;
+
+		return max( 0, min( 3600, $seconds ) );
+	}
+
+	/**
+	 * Wall-clock seconds one run may spend starting new items.
+	 *
+	 * A run always starts one item, so a zero budget means one item per run.
+	 *
+	 * @return float
+	 */
+	private static function batch_timeout() {
+		$seconds = apply_filters( 'filetoweb_integration_bulk_batch_timeout', self::DEFAULT_BATCH_TIMEOUT );
+		$seconds = is_numeric( $seconds ) ? (float) $seconds : (float) self::DEFAULT_BATCH_TIMEOUT;
+
+		return max( 0.0, min( 600.0, $seconds ) );
+	}
+
+	/**
+	 * Seconds without a saved item before an unscheduled queue counts as abandoned.
+	 *
+	 * @return int
+	 */
+	private static function recovery_stale_seconds() {
+		$seconds = apply_filters( 'filetoweb_integration_bulk_recovery_stale_seconds', self::RECOVERY_STALE_SECONDS );
+		$seconds = is_numeric( $seconds ) ? (int) $seconds : self::RECOVERY_STALE_SECONDS;
+
+		return max( 60, min( 86400, $seconds ) );
 	}
 
 	/**
