@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.56-rc.1
+Stable tag: 0.1.56
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -83,7 +83,7 @@ FileToWeb service information:
 
 == Changelog ==
 
-= 0.1.56-rc.1 =
+= 0.1.56 =
 
 * Resume interrupted bulk queues automatically using scheduled continuations, per-item checkpoints and the existing periodic worker.
 * Serialize bulk runs and queue replacement, retain busy documents for retry, and stop starting new items after a bounded wall-clock budget.

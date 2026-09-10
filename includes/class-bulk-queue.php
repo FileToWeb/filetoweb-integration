@@ -169,6 +169,7 @@ class Bulk_Queue {
 
 			// A manual sync or the poller may own this document's lock. It has
 			// not been processed by this queue yet; leave it available to retry.
+			// Preserve queue order: later items wait for the next scheduled run.
 			if ( ! empty( $result['busy'] ) ) {
 				break;
 			}
@@ -397,6 +398,9 @@ class Bulk_Queue {
 		$state['failed']     = absint( $state['failed'] ) + absint( $counts['failed'] );
 		$state['updated_at'] = current_time( 'mysql', true );
 
+		// This private helper is called only after exactly one item is counted,
+		// so processed always changes. update_option() cannot return false for
+		// an unchanged value here; preserve that invariant in future callers.
 		if ( ! update_option( self::OPTION_QUEUE, $state, false ) ) {
 			return null;
 		}

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.56-rc.1
+## 0.1.56
 
 - Schedule the next bulk queue run before its items are synced and save queue progress after every item, so a worker terminated mid-batch cannot leave the queue with a stale count and no scheduled run.
 - Bound each bulk queue run to a wall-clock budget instead of always starting the full configured batch size, and always start at least one item.
