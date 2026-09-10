@@ -15,10 +15,14 @@ class BulkQueueTest extends TestCase {
 	private $scheduled  = array();
 	private $cleared    = array();
 	private $saves      = array();
+	private $enabled    = true;
+	private $previous_wpdb;
 
 	protected function setUp(): void {
 		parent::setUp();
 		Monkey\setUp();
+		$this->previous_wpdb = isset( $GLOBALS['wpdb'] ) ? $GLOBALS['wpdb'] : null;
+		$GLOBALS['wpdb'] = null;
 
 		$this->options    = array();
 		$this->batch_size = 1;
@@ -44,6 +48,7 @@ class BulkQueueTest extends TestCase {
 			}
 		);
 		Functions\when( 'home_url' )->justReturn( 'https://city.example' );
+		Functions\when( 'wp_cache_delete' )->justReturn( true );
 		Functions\when( 'absint' )->alias(
 			function ( $value ) {
 				return abs( intval( $value ) );
@@ -79,7 +84,7 @@ class BulkQueueTest extends TestCase {
 			function ( $name, $default = false ) {
 				if ( Settings::OPTION_SETTINGS === $name ) {
 					return array(
-						Settings::KEY_ENABLED       => '1',
+						Settings::KEY_ENABLED       => $this->enabled ? '1' : '0',
 						Settings::KEY_API_BASE_URL  => 'https://filetoweb.com',
 						Settings::KEY_API_KEY       => 'ftw_api_test',
 						Settings::KEY_REPLACE_LINKS => '1',
@@ -122,6 +127,7 @@ class BulkQueueTest extends TestCase {
 	}
 
 	protected function tearDown(): void {
+		$GLOBALS['wpdb'] = $this->previous_wpdb;
 		Monkey\tearDown();
 		parent::tearDown();
 	}
@@ -254,6 +260,114 @@ class BulkQueueTest extends TestCase {
 
 		$this->assertFalse( Bulk_Queue::maybe_recover_queue() );
 		$this->assertFalse( wp_next_scheduled( Bulk_Queue::HOOK_PROCESS ) );
+	}
+
+	public function test_busy_worker_replaces_the_single_event_it_consumed(): void {
+		$this->seed_queue( 3 );
+		$GLOBALS['wpdb'] = $this->busy_database();
+
+		$counts = Bulk_Queue::process_next_batch();
+
+		$this->assertSame( 0, $counts['queued'] );
+		$this->assertSame( 0, $this->options[ Bulk_Queue::OPTION_QUEUE ]['processed'] );
+		$this->assertSame( array(), $this->saves );
+		$this->assertNotFalse( wp_next_scheduled( Bulk_Queue::HOOK_PROCESS ) );
+	}
+
+	public function test_busy_worker_does_not_schedule_a_drained_queue(): void {
+		$this->seed_queue( 0 );
+		$GLOBALS['wpdb'] = $this->busy_database();
+		Bulk_Queue::process_next_batch();
+		$this->assertFalse( wp_next_scheduled( Bulk_Queue::HOOK_PROCESS ) );
+	}
+
+	public function test_new_queue_cannot_replace_a_running_workers_checkpoint(): void {
+		$this->seed_queue( 3 );
+		$before = $this->options[ Bulk_Queue::OPTION_QUEUE ];
+		$GLOBALS['wpdb'] = $this->busy_database();
+		Functions\when( 'get_posts' )->justReturn( array( 55 ) );
+
+		$result = Bulk_Queue::queue_documents();
+
+		$this->assertTrue( $result['busy'] );
+		$this->assertSame( $before, $this->options[ Bulk_Queue::OPTION_QUEUE ] );
+		$this->assertSame( array(), $this->saves );
+	}
+
+	public function test_disabled_integration_preserves_existing_queue_for_reenable(): void {
+		$this->seed_queue( 3 );
+		$before = $this->options[ Bulk_Queue::OPTION_QUEUE ];
+		$this->enabled = false;
+		$this->scheduled[ Bulk_Queue::HOOK_PROCESS ] = time() + 60;
+
+		Bulk_Queue::process_next_batch();
+
+		$this->assertSame( $before, $this->options[ Bulk_Queue::OPTION_QUEUE ] );
+		$this->assertFalse( Bulk_Queue::maybe_recover_queue() );
+		$this->assertFalse( wp_next_scheduled( Bulk_Queue::HOOK_PROCESS ) );
+		$this->enabled = true;
+		$this->assertTrue( Bulk_Queue::maybe_recover_queue() );
+	}
+
+	public function test_checkpoint_failure_stops_before_starting_another_item(): void {
+		$this->seed_queue( 3 );
+		$this->batch_size = 3;
+		$this->skip_every_item();
+		Functions\when( 'update_option' )->justReturn( false );
+
+		$counts = Bulk_Queue::process_next_batch();
+
+		$this->assertContains( 'sync:901', $this->calls );
+		$this->assertNotContains( 'sync:902', $this->calls );
+		$this->assertSame( 0, $counts['skipped'] );
+		$this->assertSame( 0, $this->options[ Bulk_Queue::OPTION_QUEUE ]['processed'] );
+		$this->assertCount( 3, $this->options[ Bulk_Queue::OPTION_QUEUE ]['items'] );
+		$this->assertNotFalse( wp_next_scheduled( Bulk_Queue::HOOK_PROCESS ) );
+	}
+
+	public function test_recovery_does_not_report_success_when_scheduling_fails(): void {
+		$this->seed_queue( 3 );
+		Functions\when( 'wp_schedule_single_event' )->justReturn( false );
+		$this->assertFalse( Bulk_Queue::maybe_recover_queue() );
+		$this->assertFalse( wp_next_scheduled( Bulk_Queue::HOOK_PROCESS ) );
+	}
+
+	public function test_running_worker_rearms_a_successor_consumed_during_sync(): void {
+		$this->seed_queue( 3 );
+		Functions\when( 'get_post_type' )->alias(
+			function () {
+				unset( $this->scheduled[ Bulk_Queue::HOOK_PROCESS ] );
+				return 'post';
+			}
+		);
+
+		Bulk_Queue::process_next_batch();
+
+		$this->assertSame( 1, $this->options[ Bulk_Queue::OPTION_QUEUE ]['processed'] );
+		$this->assertNotFalse( wp_next_scheduled( Bulk_Queue::HOOK_PROCESS ) );
+	}
+
+	public function test_worker_refreshes_only_the_queue_option_after_locking(): void {
+		$this->seed_queue( 1 );
+		$this->skip_every_item();
+		$invalidated = array();
+		Functions\when( 'wp_cache_delete' )->alias(
+			function ( $key, $group ) use ( &$invalidated ) {
+				$invalidated[] = array( $key, $group );
+				return true;
+			}
+		);
+		Bulk_Queue::process_next_batch();
+		$this->assertSame( array( array( Bulk_Queue::OPTION_QUEUE, 'options' ) ), $invalidated );
+		$this->assertSame( 1, $this->options[ Bulk_Queue::OPTION_QUEUE ]['processed'] );
+	}
+
+	private function busy_database() {
+		return new class {
+			public function db_version() { return '8.0.43'; }
+			public function prepare( $query, $value ) { return $query; }
+			public function get_var( $query ) { return '0'; }
+		};
 	}
 
 	/**

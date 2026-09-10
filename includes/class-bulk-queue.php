@@ -111,7 +111,18 @@ class Bulk_Queue {
 	 * @return array
 	 */
 	public static function process_next_batch() {
-		return Cron::with_bulk_lock( array( __CLASS__, 'run_next_batch' ), self::empty_counts() );
+		$result = Cron::with_bulk_lock( array( __CLASS__, 'run_next_batch' ), null );
+
+		// WP-Cron removes single events before invoking them. A competing run
+		// must replace the event it consumed, even though it did no work.
+		if ( null === $result ) {
+			if ( Settings::configured() && ! empty( self::queue_state()['items'] ) ) {
+				self::schedule_next_batch();
+			}
+			return self::empty_counts();
+		}
+
+		return $result;
 	}
 
 	/**
@@ -125,14 +136,16 @@ class Bulk_Queue {
 	 * @return array
 	 */
 	public static function run_next_batch() {
+		// A previous callback in this request may have cached the option before
+		// another worker checkpointed it. Refresh this one row after locking.
+		wp_cache_delete( self::OPTION_QUEUE, 'options' );
 		$state  = self::queue_state();
 		$limit  = Settings::batch_size();
 		$counts = self::empty_counts();
 
 		if ( empty( $state['items'] ) || ! Settings::configured() ) {
-			$counts['skipped'] = count( $state['items'] );
-			$state['items']    = array();
-			self::save_queue_state( $state, $counts );
+			// Disabling the integration pauses an existing queue; it does not
+			// silently count the remaining documents as skipped and discard them.
 			self::clear_next_batch();
 			return $counts;
 		}
@@ -150,9 +163,17 @@ class Bulk_Queue {
 				break;
 			}
 
-			$item        = array_shift( $state['items'] );
+			$item        = $state['items'][0];
 			$result      = self::sync_item( $item, $state['type'] );
 			$item_counts = self::empty_counts();
+
+			// A manual sync or the poller may own this document's lock. It has
+			// not been processed by this queue yet; leave it available to retry.
+			if ( ! empty( $result['busy'] ) ) {
+				break;
+			}
+
+			array_shift( $state['items'] );
 
 			if ( isset( $result['status'] ) && ! in_array( $result['status'], array( 'failed', 'skipped' ), true ) ) {
 				++$item_counts['queued'];
@@ -162,15 +183,23 @@ class Bulk_Queue {
 				++$item_counts['skipped'];
 			}
 
+			$state = self::save_queue_state( $state, $item_counts );
+			if ( null === $state ) {
+				// Do not start another item after a failed durable checkpoint.
+				self::schedule_next_batch();
+				return $counts;
+			}
+
 			$counts['queued']  += $item_counts['queued'];
 			$counts['failed']  += $item_counts['failed'];
 			$counts['skipped'] += $item_counts['skipped'];
-
-			$state = self::save_queue_state( $state, $item_counts );
 		}
 
 		if ( empty( $state['items'] ) ) {
 			self::clear_next_batch();
+		} else {
+			// Also cover a successor consumed during a long-running item.
+			self::schedule_next_batch();
 		}
 
 		return $counts;
@@ -202,9 +231,7 @@ class Bulk_Queue {
 			return false;
 		}
 
-		self::schedule_next_batch( 0 );
-
-		return true;
+		return self::schedule_next_batch( 0 );
 	}
 
 	/**
@@ -283,7 +310,11 @@ class Bulk_Queue {
 
 		$state = 'meeting_pdfs' === $type ? self::queue_meeting_pdfs() : self::queue_documents();
 
-		Admin::set_notice( sprintf( __( 'Bulk sync queued %d item(s).', 'filetoweb-integration' ), absint( $state['total'] ) ) );
+		if ( ! empty( $state['busy'] ) ) {
+			Admin::set_notice( __( 'A bulk sync batch is running. The existing queue was not replaced; please wait for it to finish before creating a new queue.', 'filetoweb-integration' ) );
+		} else {
+			Admin::set_notice( sprintf( __( 'Bulk sync queued %d item(s).', 'filetoweb-integration' ), absint( $state['total'] ) ) );
+		}
 		wp_safe_redirect( admin_url( 'options-general.php?page=' . Admin::PAGE_SLUG ) );
 		exit;
 	}
@@ -296,6 +327,24 @@ class Bulk_Queue {
 	 * @return array
 	 */
 	private static function replace_queue( $items, $type ) {
+		$result = Cron::with_bulk_lock(
+			function () use ( $items, $type ) {
+				return self::replace_queue_unlocked( $items, $type );
+			},
+			null
+		);
+
+		return null === $result ? array_merge( self::queue_state(), array( 'busy' => true ) ) : $result;
+	}
+
+	/**
+	 * Replace queue while holding the same lock as its workers.
+	 *
+	 * @param array  $items Items.
+	 * @param string $type Queue type.
+	 * @return array
+	 */
+	private static function replace_queue_unlocked( $items, $type ) {
 		$normalized = array();
 		$seen       = array();
 
@@ -333,11 +382,11 @@ class Bulk_Queue {
 	}
 
 	/**
-	 * Persist queue state after a processed batch.
+	 * Persist queue state after one processed item.
 	 *
 	 * @param array $state State.
 	 * @param array $counts Counts.
-	 * @return array Saved state.
+	 * @return array|null Saved state, or null when the checkpoint failed.
 	 */
 	private static function save_queue_state( $state, $counts ) {
 		$processed = absint( $counts['queued'] ) + absint( $counts['skipped'] ) + absint( $counts['failed'] );
@@ -348,7 +397,9 @@ class Bulk_Queue {
 		$state['failed']     = absint( $state['failed'] ) + absint( $counts['failed'] );
 		$state['updated_at'] = current_time( 'mysql', true );
 
-		update_option( self::OPTION_QUEUE, $state, false );
+		if ( ! update_option( self::OPTION_QUEUE, $state, false ) ) {
+			return null;
+		}
 
 		return $state;
 	}
@@ -357,15 +408,16 @@ class Bulk_Queue {
 	 * Schedule next queue batch.
 	 *
 	 * @param int|null $delay Seconds to wait, or null for the configured interval.
+	 * @return bool Whether a continuation is scheduled.
 	 */
 	private static function schedule_next_batch( $delay = null ) {
 		if ( wp_next_scheduled( self::HOOK_PROCESS ) ) {
-			return;
+			return true;
 		}
 
 		$delay = null === $delay ? self::batch_interval() : max( 0, absint( $delay ) );
 
-		wp_schedule_single_event( time() + $delay, self::HOOK_PROCESS );
+		return (bool) wp_schedule_single_event( time() + $delay, self::HOOK_PROCESS );
 	}
 
 	/**
