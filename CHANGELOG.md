@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.57
+
+- Keep **Show original PDF publicly** available when a current FileToWeb preview is stored in the active ProudCity tenant's durable GCS namespace but is absent from the WordPress replica's ephemeral uploads directory.
+- Let **Restore HTML preview** reactivate that same durable preview from any replica without fetching generated HTML, republishing the bundle, reconverting the PDF, or using credits.
+- Continue requiring an exact current-source fingerprint, source URL, tenant prefix, storage host, and artifact URL before a durable record can bypass the local-file check.
+
 ## 0.1.56
 
 - Schedule the next bulk queue run before its items are synced and save queue progress after every item, so a worker terminated mid-batch cannot leave the queue with a stale count and no scheduled run.

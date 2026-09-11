@@ -2,9 +2,11 @@
 
 use Brain\Monkey;
 use Brain\Monkey\Functions;
+use FileToWeb\Integration\Admin;
 use FileToWeb\Integration\Bulk_Queue;
 use FileToWeb\Integration\Cron;
 use FileToWeb\Integration\Document_State;
+use FileToWeb\Integration\Local_HTML;
 use FileToWeb\Integration\Plugin;
 use FileToWeb\Integration\Proud_HTML_Preview;
 use FileToWeb\Integration\Settings;
@@ -330,6 +332,98 @@ class ProudHtmlPreviewTest extends TestCase {
 		$this->assertSame( $record, $this->meta[91][ Proud_HTML_Preview::META_KEY ] );
 		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_PUBLIC_PAUSED, $this->meta[91] );
 		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_PAUSED_RECORD, $this->meta[91] );
+	}
+
+	public function test_durable_preview_can_toggle_without_a_replica_local_file(): void {
+		$post_id      = 96;
+		$fingerprint  = 'durable-fingerprint-96';
+		$source_url   = 'https://storage.googleapis.com/proudcity/oakwoodohio/uploads/current.pdf';
+		$local_key    = 'filetoweb-integration/previews/96/durablefingerprint96/index.html';
+		$artifact_key = 'oakwoodohio/2026/08/' . $local_key;
+		$artifact_url = 'https://storage.googleapis.com/proudcity/' . $artifact_key;
+		$record       = array(
+			'version'                           => Proud_HTML_Preview::CORE_SCHEMA_VERSION,
+			Proud_HTML_Preview::RECORD_STORAGE_SCHEMA => Proud_HTML_Preview::SCHEMA_VERSION,
+			'provider'                          => 'filetoweb',
+			'storage_backend'                   => Proud_HTML_Preview::STORAGE_BACKEND_STATELESS,
+			'source_url'                        => $source_url,
+			'source_fingerprint'                => $fingerprint,
+			'artifact_key'                      => $artifact_key,
+			'artifact_url'                      => $artifact_url,
+			'local_artifact_key'                => $local_key,
+			'artifacts'                         => array(
+				array(
+					'artifact_key' => $artifact_key,
+					'artifact_url' => $artifact_url,
+				),
+			),
+			'token'                             => 'durable-token-96',
+			'published_at'                      => '2026-09-11 19:20:49',
+		);
+
+		$this->meta[ $post_id ] = array(
+			Proud_HTML_Preview::META_KEY                  => $record,
+			Document_State::META_STATUS                   => 'ready',
+			Document_State::META_SOURCE_FINGERPRINT       => $fingerprint,
+			Document_State::META_LOCAL_HTML_SOURCE_FP     => $fingerprint,
+			Document_State::META_ORIGINAL_URL             => $source_url,
+			Document_State::META_LOCAL_HTML_PATH          => $this->uploads_dir . '/missing-on-this-replica.html',
+		);
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+		Functions\when( 'esc_attr' )->returnArg();
+		Functions\when( 'esc_html__' )->returnArg();
+		Functions\when( 'esc_url' )->returnArg();
+
+		$this->assertFalse( Local_HTML::has_local_html( $post_id ) );
+		$this->assertTrue( Proud_HTML_Preview::has_current_local_preview( $post_id ) );
+
+		ob_start();
+		Admin::render_public_replacement_controls( $post_id, 'https://city.example/pause', 'https://city.example/restore' );
+		$active_controls = ob_get_clean();
+		$this->assertStringContainsString( 'Show original PDF publicly', $active_controls );
+
+		$this->assertTrue( Proud_HTML_Preview::pause_public( $post_id ) );
+		$this->assertSame( '1', $this->meta[ $post_id ][ Proud_HTML_Preview::META_PUBLIC_PAUSED ] );
+		$this->assertTrue( Proud_HTML_Preview::has_current_local_preview( $post_id ) );
+
+		ob_start();
+		Admin::render_public_replacement_controls( $post_id, 'https://city.example/pause', 'https://city.example/restore' );
+		$paused_controls = ob_get_clean();
+		$this->assertStringContainsString( 'Restore HTML preview', $paused_controls );
+
+		$this->assertTrue( Proud_HTML_Preview::restore_public( $post_id ) );
+		$this->assertSame( $record, $this->meta[ $post_id ][ Proud_HTML_Preview::META_KEY ] );
+		$this->assertArrayNotHasKey( Proud_HTML_Preview::META_PUBLIC_PAUSED, $this->meta[ $post_id ] );
+		$this->assertSame( array(), $this->stateless_client->checked );
+	}
+
+	public function test_durable_preview_from_another_tenant_does_not_bypass_local_file_check(): void {
+		$post_id      = 97;
+		$fingerprint  = 'durable-fingerprint-97';
+		$source_url   = 'https://storage.googleapis.com/proudcity/oakwoodohio/uploads/current.pdf';
+		$artifact_key = 'somervillenj/2026/08/filetoweb-integration/previews/97/durablefingerprint97/index.html';
+
+		$this->meta[ $post_id ] = array(
+			Proud_HTML_Preview::META_KEY => array(
+				'version'                           => Proud_HTML_Preview::CORE_SCHEMA_VERSION,
+				Proud_HTML_Preview::RECORD_STORAGE_SCHEMA => Proud_HTML_Preview::SCHEMA_VERSION,
+				'provider'                          => 'filetoweb',
+				'storage_backend'                   => Proud_HTML_Preview::STORAGE_BACKEND_STATELESS,
+				'source_url'                        => $source_url,
+				'source_fingerprint'                => $fingerprint,
+				'artifact_key'                      => $artifact_key,
+				'artifact_url'                      => 'https://storage.googleapis.com/proudcity/' . $artifact_key,
+			),
+			Document_State::META_STATUS               => 'ready',
+			Document_State::META_SOURCE_FINGERPRINT   => $fingerprint,
+			Document_State::META_LOCAL_HTML_SOURCE_FP => $fingerprint,
+			Document_State::META_ORIGINAL_URL         => $source_url,
+		);
+
+		Functions\when( 'has_action' )->justReturn( 1 );
+
+		$this->assertFalse( Proud_HTML_Preview::has_current_local_preview( $post_id ) );
 	}
 
 	public function test_publish_while_paused_refreshes_private_record_only(): void {

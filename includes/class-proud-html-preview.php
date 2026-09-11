@@ -713,19 +713,67 @@ class Proud_HTML_Preview {
 	}
 
 	/**
-	 * Is the local preview complete and matched to the current PDF source?
+	 * Is the WordPress preview complete and matched to the current PDF source?
+	 *
+	 * A current-tenant durable record remains usable when the request reaches a
+	 * replica that does not have the bundle in its ephemeral uploads directory.
+	 * Single-server and legacy records continue to require the local cache file.
 	 *
 	 * @param int $post_id Source post ID.
 	 * @return bool
 	 */
 	public static function has_current_local_preview( $post_id ) {
+		$post_id             = absint( $post_id );
 		$current_fingerprint = (string) get_post_meta( $post_id, Document_State::META_SOURCE_FINGERPRINT, true );
 		$local_fingerprint   = (string) get_post_meta( $post_id, Document_State::META_LOCAL_HTML_SOURCE_FP, true );
 
-		return 'ready' === get_post_meta( $post_id, Document_State::META_STATUS, true )
-			&& $current_fingerprint
+		if ( 'ready' !== get_post_meta( $post_id, Document_State::META_STATUS, true ) || ! $current_fingerprint ) {
+			return false;
+		}
+
+		$record = self::record_for_post( $post_id );
+		if ( self::is_current_tenant_durable_record( $post_id, $record, $current_fingerprint ) ) {
+			return true;
+		}
+
+		return $local_fingerprint
 			&& hash_equals( $current_fingerprint, $local_fingerprint )
 			&& Local_HTML::has_local_html( $post_id );
+	}
+
+	/**
+	 * Does a durable record belong to this tenant and current PDF source?
+	 *
+	 * Publication verifies the remote objects before storing this record. This
+	 * check deliberately performs no remote request from the editor screen.
+	 *
+	 * @param int    $post_id Source post ID.
+	 * @param mixed  $record Preview record.
+	 * @param string $current_fingerprint Current source fingerprint.
+	 * @return bool
+	 */
+	private static function is_current_tenant_durable_record( $post_id, $record, $current_fingerprint ) {
+		if ( ! self::is_durable_record( $record ) ) {
+			return false;
+		}
+
+		$record_fingerprint = isset( $record['source_fingerprint'] ) ? (string) $record['source_fingerprint'] : '';
+		$current_source_url = (string) get_post_meta( $post_id, Document_State::META_ORIGINAL_URL, true );
+		$record_source_url  = isset( $record['source_url'] ) ? (string) $record['source_url'] : '';
+
+		if (
+			! $record_fingerprint
+			|| ! hash_equals( $current_fingerprint, $record_fingerprint )
+			|| ! $current_source_url
+			|| $current_source_url !== $record_source_url
+		) {
+			return false;
+		}
+
+		$artifact_key = isset( $record['artifact_key'] ) ? (string) $record['artifact_key'] : '';
+		$artifact_url = isset( $record['artifact_url'] ) ? (string) $record['artifact_url'] : '';
+
+		return ! empty( self::trusted_storage_base_urls( array(), $artifact_url, $artifact_key ) );
 	}
 
 	/**

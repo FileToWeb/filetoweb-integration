@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.56
+Stable tag: 0.1.57
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -59,7 +59,7 @@ Yes. The settings page includes a bounded Backfill batch action. Administrators 
 
 = Can I temporarily switch one published HTML preview back to its PDF? =
 
-Yes. Use **Show original PDF publicly** in the FileToWeb panel for a Proud Document or Media PDF, or beside an individual Meeting material. FileToWeb can continue syncing while the PDF stays public. When the HTML is ready, use **Restore HTML preview**. Restoration is manual and only succeeds when the local HTML matches the current PDF. A reused Media attachment is paused everywhere it appears.
+Yes. Use **Show original PDF publicly** in the FileToWeb panel for a Proud Document or Media PDF, or beside an individual Meeting material. FileToWeb can continue syncing while the PDF stays public. When the HTML is ready, use **Restore HTML preview**. Restoration is manual and only succeeds when the WordPress preview matches the current PDF; a current-tenant durable GCS preview remains eligible across ProudCity replicas. A reused Media attachment is paused everywhere it appears.
 
 = What happens if the plugin is deactivated, disabled, or uninstalled? =
 
@@ -82,6 +82,11 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.57 =
+
+* Keep the per-document PDF/HTML switch available across ProudCity replicas when the current preview is already stored in that tenant's durable GCS namespace.
+* Restore a paused durable HTML preview without republishing or reconverting it, while rejecting mismatched source or tenant records.
 
 = 0.1.56 =
 
