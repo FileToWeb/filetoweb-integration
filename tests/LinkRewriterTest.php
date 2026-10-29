@@ -275,6 +275,74 @@ class LinkRewriterTest extends TestCase {
 			$this->assertSame( 1, $get_posts_calls );
 	}
 
+	public function test_explicit_download_links_stay_unchanged_without_url_lookups(): void {
+		Functions\expect( 'get_posts' )->never();
+		Functions\expect( 'attachment_url_to_postid' )->never();
+
+		$anchors = array(
+			'<a href="%s" download="file.pdf">Download</a>',
+			'<a download="file.pdf" href="%s">Download</a>',
+			'<a href="%s" download>Download</a>',
+			'<a download href="%s">Download</a>',
+			'<a href="%s" download="">Download</a>',
+			"<a href='%s' download='file.pdf'>Download</a>",
+			'<a href="%s" download=file.pdf>Download</a>',
+			'<A DOWNLOAD = "file.pdf" HREF="%s">Download</A>',
+			"<a\ndownload\t=\n\"file.pdf\"\nhref=\"%s\">Download</a>",
+			'<a href="%s" class="btn btn-primary btn-sm" download="3d-printing-policy-2025-b0274cd6.pdf">Download</a>',
+			'<a href="%s" title="PDF > HTML" download>Download</a>',
+			'<a title="PDF > HTML" download href="%s">Download</a>',
+			'<a href="%s" download/>Download</a>',
+		);
+
+		foreach ( array( 'https://example.test/wp-content/uploads/file.pdf', 'https://storage.googleapis.com/proudcity/duchesne/uploads/file.pdf?version=1&amp;source=2' ) as $url ) {
+			foreach ( $anchors as $anchor ) {
+				$content = sprintf( $anchor, $url );
+				$this->assertSame( $content, Link_Rewriter::filter_content_pdf_links( $content ), $content );
+			}
+		}
+	}
+
+	public function test_mixed_ready_pdf_links_preserve_downloads_and_rewrite_ordinary_links(): void {
+		$source_url = 'https://example.test/wp-content/uploads/file.pdf';
+		$local_path = $this->local_html_file( 123 );
+		Functions\when( 'get_posts' )->justReturn( array( 123 ) );
+		Functions\when( 'get_post_meta' )->alias(
+			function ( $post_id, $key ) use ( $source_url, $local_path ) {
+				$values = array(
+					Document_State::META_STATUS           => 'ready',
+					Document_State::META_HTML_URL         => 'https://filetoweb.com/d/demo/1',
+					Document_State::META_ORIGINAL_URL     => $source_url,
+					Document_State::META_LOCAL_HTML_PATH  => $local_path,
+					Document_State::META_LOCAL_HTML_TOKEN => 'token-123',
+				);
+
+				return 123 === $post_id && isset( $values[ $key ] ) ? $values[ $key ] : '';
+			}
+		);
+
+		$ordinary = array(
+			'<a href="%s">Read PDF</a>',
+			'<a href="%s" class="download">Read PDF</a>',
+			'<a href="%s" data-download="file.pdf">Read PDF</a>',
+			'<a href="%s" download-label="file.pdf">Read PDF</a>',
+			'<a href="%s" title="Click to download this file">Read PDF</a>',
+			"<a title='download = file.pdf' href=\"%s\">Read PDF</a>",
+			'<a title="PDF > HTML" href="%s">Read PDF</a>',
+			'<a href="%s" title="PDF > HTML">Read PDF</a>',
+		);
+		$download = '<a href="' . $source_url . '" download="file.pdf">Download</a>';
+		$preview  = 'https://example.test/?filetoweb_local_html=123&ftw_token=token-123';
+
+		foreach ( $ordinary as $anchor ) {
+			$link     = sprintf( $anchor, $source_url );
+			$content  = $download . $link . $download;
+			$expected = $download . str_replace( $source_url, $preview, $link ) . $download;
+			$this->assertSame( $expected, Link_Rewriter::filter_content_pdf_links( $content ), $link );
+			$this->assertSame( $expected, Link_Rewriter::filter_content_pdf_links( $expected ), 'Repeated widget/content filters must preserve both targets.' );
+		}
+	}
+
 	public function test_ordinary_page_links_do_not_run_wordpress_url_lookups(): void {
 		$get_posts_calls               = 0;
 		$attachment_url_lookup_calls   = 0;
