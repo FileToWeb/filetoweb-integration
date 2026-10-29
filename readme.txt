@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.58-rc.1
+Stable tag: 0.1.58
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -83,7 +83,7 @@ FileToWeb service information:
 
 == Changelog ==
 
-= 0.1.58-rc.1 =
+= 0.1.58 =
 
 * Preserve explicit download anchors in page and text-widget content so browsers receive the original PDF instead of saving an HTML preview with a .pdf filename.
 * Continue rewriting ordinary links to ready accessible HTML, including links whose title, class, or data attributes contain the word download.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.58-rc.1
+## 0.1.58
 
 - Preserve anchors with an explicit `download` attribute before resolving public replacement URLs in page and text-widget content. Bare, empty, named, unquoted, mixed-case, and reordered download attributes keep the original PDF URL and markup.
 - Ignore the word `download` inside quoted attribute values and names such as `data-download`, and recognize quoted `>` characters without truncating the anchor.
