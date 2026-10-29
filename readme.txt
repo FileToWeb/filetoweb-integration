@@ -4,7 +4,7 @@ Tags: pdf, html, accessibility, documents, media
 Requires at least: 5.7
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 0.1.57
+Stable tag: 0.1.58-rc.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -82,6 +82,12 @@ FileToWeb service information:
 * Privacy: https://filetoweb.com/privacy-policy
 
 == Changelog ==
+
+= 0.1.58-rc.1 =
+
+* Preserve explicit download anchors in page and text-widget content so browsers receive the original PDF instead of saving an HTML preview with a .pdf filename.
+* Continue rewriting ordinary links to ready accessible HTML, including links whose title, class, or data attributes contain the word download.
+* Add regression coverage and an isolated WordPress download test. ProudCity document list widgets must also use proud_document_original_url(), shipped in wp-proud-core 2026.10.28.1351.
 
 = 0.1.57 =
 

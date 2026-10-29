@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.58-rc.1
+
+- Preserve anchors with an explicit `download` attribute before resolving public replacement URLs in page and text-widget content. Bare, empty, named, unquoted, mixed-case, and reordered download attributes keep the original PDF URL and markup.
+- Ignore the word `download` inside quoted attribute values and names such as `data-download`, and recognize quoted `>` characters without truncating the anchor.
+- Add regression tests for mixed download/preview links and repeated content filters, plus an isolated WordPress test against the installable release ZIP.
+- ProudCity's document list widget must supply the original PDF with `proud_document_original_url()`; that companion change shipped in `wp-proud-core` `2026.10.28.1351`. No reconversion or preview refresh is required.
+
 ## 0.1.57
 
 - Keep **Show original PDF publicly** available when a current FileToWeb preview is stored in the active ProudCity tenant's durable GCS namespace but is absent from the WordPress replica's ephemeral uploads directory.

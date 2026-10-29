@@ -171,7 +171,7 @@ class Link_Rewriter {
 
 		if ( $has_link_candidate ) {
 			$content = preg_replace_callback(
-				'~<a\b([^>]*?)\bhref=(["\'])(.*?)\2([^>]*)>~is',
+				'~<a\b((?:[^>"\']|"[^"]*"|\'[^\']*\')*?)\bhref=(["\'])(.*?)\2((?:[^>"\']|"[^"]*"|\'[^\']*\')*)>~is',
 				array( __CLASS__, 'replace_content_link_href' ),
 				$content
 			);
@@ -381,6 +381,14 @@ class Link_Rewriter {
 	 * @return string
 	 */
 	private static function replace_content_link_href( $matches ) {
+		// Ignore quoted values so titles/classes containing "download" are not attributes.
+		$attributes = preg_replace( '~"[^"]*"|\'[^\']*\'~s', '""', $matches[1] . ' ' . $matches[4] );
+
+		// Explicit downloads must keep the original file, even when HTML is ready.
+		if ( preg_match( '~(?:^|\s)download(?=\s|=|/|$)~i', $attributes ) ) {
+			return $matches[0];
+		}
+
 		if ( ! self::is_public_url_candidate( $matches[3] ) ) {
 			return $matches[0];
 		}
